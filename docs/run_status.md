@@ -19,6 +19,10 @@
   don't use `-n auto` until the suite is much bigger.  PyPy path:
   `winget install PyPy.PyPy.3.11` → `pypy -m pip install pytest numpy`; the
   repo's `sys.path` shims resolve the whole chain, no pip install of the repos.
+- **Update (same day): the interactive viewer runs under PyPy too** — pygame-ce
+  ships PyPy wheels (upstream pygame doesn't; import-compatible), tkinter is
+  bundled, Pillow installs.  `pypy scripts/play.py` is now the fast way to play;
+  owner confirmed interactively.  Doc updated (win16_re `377d5fd`).
 
 ## 2026-07-09 — recovered _Windows_MakeTable1x1 (the 1:1 tile packer); MakeTable family done
 - The no-zoom sibling of MakeTable4x4 (seg4:46BB): packs pairs of source tiles into one
