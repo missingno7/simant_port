@@ -6,6 +6,20 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — dos_re/win16_re bumped; PyPy measured at 8x for headless SimAnt runs
+- Chain bump: dos_re `3be9439` (modrm/displacement inlining round — byte-exact,
+  proven here by the island A/B oracles staying green) → win16_re `037bd69` → this repo.
+- dos_re established PyPy + pytest-xdist as its standard fast paths
+  (`dos_re/docs/performance.md`); measured what carries over to us
+  (`win16_re/docs/performance.md`): **PyPy 8x on headless interpretation**
+  (0.46M → 3.69M instr/s, 20M-instr boot, identical end CS:IP) — use it for
+  replay, A/B oracles, verify sweeps.  Only 1.9x on `boot.py` (trace-on string
+  formatting doesn't JIT — keep the probe on CPython, it doesn't matter).
+  Suite: PyPy 4.6s vs CPython 6.5s; **xdist is a loss** (9.6s) on 36 tests —
+  don't use `-n auto` until the suite is much bigger.  PyPy path:
+  `winget install PyPy.PyPy.3.11` → `pypy -m pip install pytest numpy`; the
+  repo's `sys.path` shims resolve the whole chain, no pip install of the repos.
+
 ## 2026-07-09 — recovered _Windows_MakeTable1x1 (the 1:1 tile packer); MakeTable family done
 - The no-zoom sibling of MakeTable4x4 (seg4:46BB): packs pairs of source tiles into one
   4bpp byte via an XLAT table at SS:0x1B56 (`al=ss:[0x1B56+t0]; al|=ss:[0x1B66+t1]`),
