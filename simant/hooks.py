@@ -690,6 +690,59 @@ def _make_gennestmap_island(machine):
     return island
 
 
+# -- _XferTileColor (seg4:47DD, _TEXT) ----------------------------------------
+#
+# A huge-pointer 2D tile-colour blit.  Recovered logic in recovered/render.py:
+# copy `height` rows of `tile_w//2` bytes (4bpp) from a source tile into a DIB
+# whose scanline is padded to a 32-bit boundary, advancing one `stride` per row.
+# The destination is a >64K huge pointer (the ASM does `es += 8` per 64K); our
+# selector heap maps consecutive selectors to contiguous memory, so the island
+# resolves a linear destination offset back to (selector, off) with the same
+# `+8 per 64K` rule — writing the identical bytes the ASM's rep-movsb loop does.
+# A `pusha`/`popa` frame restores every register, so the only observable state
+# is the destination bytes.  ABI (far, caller cleans the 22 arg bytes):
+#   entry SP -> [ret_ip][ret_cs] then, as words:
+#     +4 dst.off  +6 dst.seg  +8 dst_x  +0xA top  +0xC height  +0xE tile_w
+#     +0x10 y_extent  +0x12 map_w  +0x14 src_tile  +0x16 src.off  +0x18 src.seg
+XFERTILECOLOR_SEG_INDEX = 4
+XFERTILECOLOR_OFF = 0x47DD
+XFERTILECOLOR_HUGE_INCR = 8                       # selector delta per 64K (Win16 __AHINCR)
+XFERTILECOLOR_SIG = bytes.fromhex(                # prologue + the stride mul
+    "558bec601e068b4614f76610c1e002")
+
+
+def _make_xfertilecolor_island(machine):
+    from .recovered.render import xfer_tile_color
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        dst_off, dst_seg = arg(4), arg(6)
+        dst_x, top, height, tile_w = arg(8), arg(0x0A), arg(0x0C), arg(0x0E)
+        y_extent, map_w, src_tile = arg(0x10), arg(0x12), arg(0x14)
+        src_off, src_seg = arg(0x16), arg(0x18)
+
+        def read_src(off):
+            return m.rb(src_seg, (src_off + off) & 0xFFFF)
+
+        def write_dst(off, byte):
+            full = dst_off + off                      # 32-bit huge offset from the far ptr
+            seg = (dst_seg + XFERTILECOLOR_HUGE_INCR * (full >> 16)) & 0xFFFF
+            m.wb(seg, full & 0xFFFF, byte)
+
+        xfer_tile_color(read_src, write_dst, dst_x, top, height, tile_w,
+                        y_extent, map_w, src_tile)
+
+        # pusha/popa + push/pop ds/es/bp restore every register — touch none.
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 _ISLANDS = [
     (RT_SEG_INDEX, AFULDIV_OFF, AFULDIV_SIG,
      lambda machine, off: _make_uldiv_island(off), "__aFuldiv"),
@@ -699,6 +752,8 @@ _ISLANDS = [
      lambda machine, off: _make_getobjrect_island(machine), "_win_GetObjRect"),
     (GENNESTMAP_SEG_INDEX, GENNESTMAP_OFF, GENNESTMAP_SIG,
      lambda machine, off: _make_gennestmap_island(machine), "_GenNestMap"),
+    (XFERTILECOLOR_SEG_INDEX, XFERTILECOLOR_OFF, XFERTILECOLOR_SIG,
+     lambda machine, off: _make_xfertilecolor_island(machine), "_XferTileColor"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

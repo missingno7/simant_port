@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 21              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 22              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 21
-    assert runtime.install_hooks(runtime.create_machine()) == 21
+    assert hooks.install(m) == 22
+    assert runtime.install_hooks(runtime.create_machine()) == 22
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -378,7 +378,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 21
+        assert hooks.install(m) == 22
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -423,7 +423,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 21
+            assert hooks.install(m) == 22
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -451,7 +451,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 21
+        assert hooks.install(m) == 22
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -510,7 +510,7 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 21
+        assert hooks.install(m) == 22
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
@@ -575,7 +575,7 @@ def _run_gennestmap(with_island, terrain_bytes, alt_bytes, table_bytes, mode):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 21
+        assert hooks.install(m) == 22
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     TERR, ALT, TAB, OUT = 0x6000, 0x7000, 0x7800, 0x8000       # DGROUP scratch
@@ -631,3 +631,67 @@ def test_gennestmap_island_matches_asm(mode):
     assert isl[0] == asm[0], "output map differs"
     assert isl[1] == asm[1], f"globals differ: {isl[1]} != {asm[1]}"
     assert isl[2] == asm[2], f"registers not preserved: {isl[2]} != {asm[2]}"
+
+
+# ---- _XferTileColor (seg4:47DD) — recovered/render.py -----------------------
+# A huge-pointer 4bpp tile-colour blit: `height` rows of `tile_w//2` bytes from
+# a source tile into a padded DIB (advancing one stride per row).  pusha/popa
+# preserves every register, so the observable state is the destination bytes.
+def _run_xfertilecolor(with_island, args, src_bytes, dst_span=0x400):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 22
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    SRC, DST = 0x6000, 0x8000
+    for i in range(dst_span):
+        m.mem.wb(DG, (DST + i) & 0xFFFF, 0x11)             # poison the destination
+    for i, b in enumerate(src_bytes):
+        m.mem.wb(DG, (SRC + i) & 0xFFFF, b)
+
+    s.ds, s.es = DG, 0x9999
+    s.ax, s.bx, s.cx, s.dx = 0x0A0A, 0x0B0B, 0x0C0C, 0x0D0D
+    s.si, s.di, s.bp = 0x5151, 0x6161, 0x7171
+    s.cs, s.ip = m.seg_bases[hooks.XFERTILECOLOR_SEG_INDEX], hooks.XFERTILECOLOR_OFF
+    # dst far, dst_x, top, height, tile_w, y_extent, map_w, src_tile, src far
+    dst_x, top, height, tile_w, y_extent, map_w, src_tile = args
+    words = [DST, DG, dst_x, top, height, tile_w, y_extent, map_w, src_tile, SRC, DG]
+    sp = 0xF000
+    for v in reversed(words):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    for v in (SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(400_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _XferTileColor did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    out = bytes(m.mem.rb(DG, (DST + i) & 0xFFFF) for i in range(dst_span))
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return out, regs
+
+
+@pytest.mark.parametrize("args", [
+    # (dst_x, top, height, tile_w, y_extent, map_w, src_tile)
+    (0, 0, 2, 4, 1, 2, 0),         # 2x2-byte block at origin, stride 4
+    (0, 0, 4, 8, 1, 4, 0),         # taller/wider, stride 8
+    (2, 0, 2, 4, 1, 2, 1),         # dst_x offset + a non-zero source tile
+    (0, 1, 3, 4, 4, 2, 0),         # a non-zero start band ((y_extent-top-1)=2)
+])
+def test_xfertilecolor_island_matches_asm(args):
+    src = bytes((i * 7 + 3) & 0xFF for i in range(256))   # deterministic tile stream
+    asm = _run_xfertilecolor(False, args, src)
+    isl = _run_xfertilecolor(True, args, src)
+    assert isl[0] == asm[0], "destination bytes differ"
+    assert isl[1] == asm[1], f"registers not preserved: {isl[1]} != {asm[1]}"

@@ -6,6 +6,28 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — recovered _XferTileColor (the huge-pointer tile blit)
+- Recovered `_XferTileColor` (seg4:47DD) -> `recovered/render.py: xfer_tile_color`: a 4bpp
+  tile-colour blit that copies `height` rows of `tile_w//2` bytes into a DIB whose
+  scanline is padded to a 32-bit boundary (`stride = ceil(map_w*tile_w*4/32)` bytes),
+  starting at the `(y_extent-top-1)`-th band, source tile at 128 bytes each.
+- **The signature island-method case: a huge pointer.**  The destination is >64K; the
+  ASM walks it with `es += 8` per 64K (`__AHINCR`).  Our selector heap maps consecutive
+  selectors to contiguous memory, so the island resolves a linear dest offset back to
+  (selector, off) by the same +8/64K rule and writes the identical bytes the ASM's
+  `rep movsb` loop does — es is preserved (popa) so its intermediate value is irrelevant.
+  pusha/popa restores every register: the only observable state is the destination bytes.
+- **Emitter caveat, again:** the emit hid the `mul`/`les`/`lds` operands behind
+  interp_one (85% native), so I disassembled for the geometry, then a ground-truth probe
+  validated the whole blit (stride, start band, row advance) before writing source.  All
+  16-bit products are masked (& 0xFFFF) to match the registers.
+- Proven three ways: A/B oracle (4 geometries incl. dst_x offset, non-zero tile, non-zero
+  start band; dest bytes + all 10 regs), VM-free unit exercise, liftverify ORACLE_PASSING.
+  22 islands, 196 green.
+- Deferred (owner): _DoCalcTile (184 insts, 4 modes) needs a dedicated careful pass;
+  its lift is already ORACLE_PASSING so a byte-exact executable form exists.  Other hot
+  pure-ish targets: _XferLifeTileColor (88, likely a blit sibling), _DrawChar (89).
+
 ## 2026-07-10 — recovered _GenNestMap (the demo's #1 hot routine) — and: the lifter pays off
 - Recovered the hottest routine in the demo (~26% of PC samples): `_GenNestMap` (seg4:4754)
   -> `recovered/render.py: gen_nest_map_cells`.  Builds the 64x64 nest colour map: per

@@ -53,6 +53,43 @@ def gen_nest_map_cells(terrain: Callable[[int, int], int],
                 yield col_c & 0xFF
 
 
+def xfer_tile_color(read_src: Callable[[int], int],
+                    write_dst: Callable[[int, int], None],
+                    dst_x: int, top: int, height: int, tile_w: int,
+                    y_extent: int, map_w: int, src_tile: int) -> None:
+    """Blit a `height` x `tile_w` 4bpp tile-colour block into a padded DIB.
+
+    The destination scanline is 4 bits per pixel padded to a 32-bit boundary:
+
+        stride = ceil(map_w * tile_w * 4 bits / 32) as bytes
+
+    The block is placed at the `(y_extent - top - 1)`-th vertical band of
+    `height` rows and offset horizontally by `dst_x` pixels; the source is tile
+    number `src_tile` in a 128-byte-per-tile stream.  Each of `height` rows
+    copies `tile_w // 2` bytes (two 4bpp pixels per byte), the destination
+    advancing one full `stride` per row.
+
+    `read_src(off)` reads the source tile stream; `write_dst(linear_off, byte)`
+    writes the destination — the original walks a >64K huge pointer (es += 8 per
+    64K), which our contiguous selector model presents as one linear span, so
+    the caller resolves `linear_off` to the right selector.  All arithmetic is
+    16-bit (the original's registers), hence the `& 0xFFFF` on the products.
+
+    Recovered from `_XferTileColor` (SIMANTW.SYM seg4:47DD, _TEXT).
+    """
+    M = 0xFFFF
+    stride = (((((map_w * tile_w) & M) << 2) + 0x1F) & M) >> 5 << 2
+    row_bytes = tile_w >> 1
+    band = (((y_extent - top - 1) & M) * height) & M      # 16-bit before the stride mul
+    start = band * stride + (((dst_x * tile_w) & M) >> 1)
+    src = (src_tile << 7) & M
+    for _row in range(height):
+        for i in range(row_bytes):
+            write_dst(start + i, read_src((src + i) & M))
+        start += stride
+        src = (src + row_bytes) & M
+
+
 def windows_make_table_4x4(tiles, table):
     """Expand a row of terrain tiles into a 4-scanline pixel band.
 
