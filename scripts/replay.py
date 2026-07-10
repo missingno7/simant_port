@@ -18,7 +18,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from simant.runtime import assets_present, create_machine
-from win16.demo import DemoDivergence, DemoEnded, DemoPlayer
+from win16.demo import DemoDivergence, DemoDriver, DemoEnded
 from win16.vmsnap import digest, save_snapshot
 
 
@@ -38,41 +38,31 @@ def main() -> None:
     if not assets_present():
         raise SystemExit("assets/ANTWIN/SIMANTW.EXE not found")
 
-    player = DemoPlayer(args.demo)
-    anchor = f", anchored to snapshot {player.snapshot}" if player.snapshot else ""
-    print(f"[replay] {args.demo}: {len(player.records)} records "
-          f"(exe {player.exe}{anchor})")
+    driver = DemoDriver(args.demo)
+    anchor = f", anchored to snapshot {driver.snapshot}" if driver.snapshot else ""
+    print(f"[replay] {args.demo}: {len(driver.records)} records "
+          f"(exe {driver.exe}{anchor})")
 
-    if player.snapshot and not args.from_snapshot:
+    if driver.snapshot and not args.from_snapshot:
         raise SystemExit(
-            f"this demo was recorded from snapshot {player.snapshot!r} — "
+            f"this demo was recorded from snapshot {driver.snapshot!r} — "
             f"pass --from-snapshot <dir> pointing at it "
-            f"(e.g. artifacts/snapshots/{player.snapshot})")
+            f"(e.g. artifacts/snapshots/{driver.snapshot})")
     if args.from_snapshot:
         from win16.vmsnap import load_snapshot
         machine = load_snapshot(args.from_snapshot, create_machine)
         got = machine.cpu.instruction_count
-        if player.instruction and got != player.instruction:
+        if driver.instruction and got != driver.instruction:
             raise SystemExit(
                 f"snapshot mismatch: demo was recorded from instruction "
-                f"{player.instruction:,} but {args.from_snapshot} restores to "
+                f"{driver.instruction:,} but {args.from_snapshot} restores to "
                 f"{got:,} — wrong snapshot?")
         print(f"[replay] resumed {args.from_snapshot} (instruction {got:,})")
     else:
         machine = create_machine()
     machine.cpu.trace_enabled = False
     sysobj = machine.api.services["system"]
-    sysobj.message_source = player.next_message
-    machine.api.services["demo_player"] = player
-    if player.notes_input:
-        # v3 demos carry input-arrival notes ("a" records): polled state is
-        # applied from those, so suppress consumption-time noting exactly as
-        # a live drainer does (get_message/peek skip _note_input when an
-        # input_drainer is attached).  The drainer itself applies pending
-        # notes — a game polling GetAsyncKeyState in a NON-pumping loop (the
-        # button-release drag spin) reaches the player only through
-        # refresh_polled_input -> input_drainer.
-        sysobj.input_drainer = lambda: player._apply_async(sysobj)
+    driver.install(sysobj)          # injects input by instruction count; reproduces GetTickCount
 
     outcome = "budget exhausted"
     try:
@@ -84,14 +74,14 @@ def main() -> None:
         raise SystemExit(2)
     except Exception as exc:  # noqa: BLE001 — report and re-raise, fail loud
         print(f"[replay] VM stopped: {type(exc).__name__}: {exc}", file=sys.stderr)
-        print(f"[replay] at record {player.pos}/{len(player.records)}, "
+        print(f"[replay] at event {driver._ei}/{len(driver._events)}, "
               f"instruction {machine.cpu.instruction_count}", file=sys.stderr)
         raise
     if machine.cpu.halted:
         outcome = "app exited cleanly"
 
     print(f"[replay] {outcome}")
-    print(f"[replay] records consumed: {player.pos}/{len(player.records)}")
+    print(f"[replay] events consumed: {driver._ei}/{len(driver._events)}")
     print(f"[replay] instructions: {machine.cpu.instruction_count:,}")
     print(f"[replay] clock: {sysobj.clock_ms} ms, windows: "
           f"{[w.wndclass.name for w in sysobj.windows]}")

@@ -21,6 +21,34 @@
   flags across calls; rendering is byte-exact regardless.  Follow-up: make islands
   flag-exact so they pass the verifier clean.
 
+## 2026-07-10 — BUILT demo v4: instruction-keyed input injection + reproduced GetTickCount
+- Redesigned the win16 demo record/replay model (owner OK'd breaking old demos).
+  v4 records the raw INPUT TIMELINE instead of per-API consumption:
+  * "i" input arrival (host event) stamped with the instruction_count it landed at;
+  * "c" periodic (instr -> tick) clock sample (rate-limited);
+  * "d" dialog event; "quit".
+  On replay a `DemoDriver` injects each "i" into msg_queue at its instruction count
+  and reproduces GetTickCount by interpolating the (instr, tick) samples; the game's
+  OWN pump (GetMessage/PeekMessage/GetAsyncKeyState) then fetches exactly as live —
+  no fetch-API matching, no stream-position coupling.  Fixes the class of deadlock
+  the colddemo hit (a busy-poll couldn't reach input recorded behind a message).
+- Files: win16/demo.py (rewrite: DemoRecorder v4 + DemoDriver), win16/api/system.py
+  (tick_count/get_message/peek_message consult demo_driver; dropped m/p record taps
+  + the player path), win16/api/dialogs.py (driver.next_dialog_event; recorder stamps
+  instr), win16/interactive.py (record "i"/"c"/quit with instr), scripts/replay.py
+  (install DemoDriver).  Pre-v4 demos are rejected with a clear "re-record" error.
+- Verified: 9 new v4 unit tests (win16/tests/test_demo.py — injection, clock interp,
+  pump_get force-deliver, pump_peek busy-miss, DemoEnded, dialogs, version reject);
+  win16_re suite 98 green; simant_port suite 214 green; and a DETERMINISTIC real-
+  machine integration (hand-built demo) confirms system.py tick_count == driver
+  timeline EXACTLY at every probe and both events inject/consume.  Determinism note:
+  replay must use the SAME hooks config the demo was recorded with (instr counts are
+  config-specific).
+- **Needs owner re-record to close:** record a fresh cold-start repro with the new
+  format (pypy scripts/play.py --record <name>, F11 or --record) and replay it — that
+  is the end-to-end proof the colddemo modal-loop deadlock is gone (can't record
+  interactively headless).
+
 ## 2026-07-10 — colddemo root cause NAILED: demo replay model is fragile for poll-loops (needs instruction-count keying)
 - Traced the exact stuck iteration (260 steps from the (0,0,0) peek-miss at pos 5391):
   the WndProc spins in `_win_IsWinInFront(0x013A)` — window handle 314 = the modal
