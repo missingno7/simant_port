@@ -6,6 +6,30 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — USER.421 wvsprintf: SimAnt's panic handler can finally speak
+- Frontier hit in play (`USER.421 from 0E99:18E3`, 209M instructions in).
+  Identified from the CALL SITE, not the ordinal table: the caller is
+  `GR!_Punt` (seg2:18BE) — `enter 0x200,0` (a 512-byte local), `KillTimer`,
+  then `wvsprintf(lpOutput=the local, lpFmt=its own far char* arg,
+  lpArglist=&its varargs)`, then `MessageBox(hwnd, buf, "Fatal Error",
+  MB_ICONHAND)`, then `exit(1)`.  **_Punt is SimAnt's panic handler — 46 call
+  sites** (db_/cache/index family in seg7, win_LoadWindow, GR init, ...).
+- Implemented in win16_re `1839bfd`: `win16/wsprintf.py`, a pure VM-free
+  engine (word-sized ints, `l` -> dword, far LPSTR for `%s`, `%hs` near via DS,
+  `%p` as SSSS:OOOO, C flag/width padding).  Covers exactly the specifiers
+  present in SimAnt's 105 format strings; precision/`+`/floats raise
+  `FormatGap` rather than guess.  Verified by rendering real DGROUP format
+  strings through the actual `_Punt` in the VM — e.g. "Purge handle - handle
+  not found!! handle=1234:0010", "Packing database - 100000 bytes currently
+  wasted".  Gates: win16_re 79, simant_port 182.
+- **Open: WHY did it punt.**  The trace before it is a `KERNEL.22` GlobalFlags
+  burst — that's `GR!_mem_Freed`/`_mem_Type`/`_mem_LockLevel` (decoded: freed =
+  discardable&&discarded, type = discardable?3:1, locklevel = handle?
+  (discardable? lockcount : 1) : 0).  Our GlobalFlags returns 0 (fixed,
+  non-discardable, unlocked), which is self-consistent for the selector heap,
+  so those aren't obviously wrong.  The `_Punt` message itself now names the
+  failing subsystem — **reproduce the crash and read the Fatal Error box.**
+
 ## 2026-07-10 — recovered SIMONE's PRNG: the simulation LFSR + its 13 entry points
 - The queue's highest-fan-in leaves: SimAnt's simulation randomness is ONE
   16-bit LFSR (`seed <<= 1; if carry: seed ^= 0x1BF5`, seed word DGROUP:CBF2),
