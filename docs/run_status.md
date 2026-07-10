@@ -6,6 +6,23 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — recovered SIMONE's PRNG: the simulation LFSR + its 13 entry points
+- The queue's highest-fan-in leaves: SimAnt's simulation randomness is ONE
+  16-bit LFSR (`seed <<= 1; if carry: seed ^= 0x1BF5`, seed word DGROUP:CBF2),
+  stepped by every `_SRand*` call — `_SRand1(n)` returns `seed % n`, the nine
+  compiled copies `_SRand2.._SRand256` return `seed & (2^k-1)` (masks proven
+  byte-exact by install-time signatures built from the names).  Plus the seed
+  accessors: `_Set/GetSRandSeed`, `_GetRRandSeed` (reads the BIOS tick dword
+  0040:006C — the "real random" game seed), `_SetRRandSeed` (empty stub).
+  Readable source: `recovered/simone.py`; 13 new islands in `hooks.py` (18
+  total).
+- Oracle upgrade: these A/B tests compare **FLAGS, the seed word, and the
+  freed-frame residue** ([sp-2] saved BP, [sp-4] result scratch) on top of the
+  registers — islands reproduce flags via the CPU's own set_logic_flags/shift
+  helpers, so they match the interpreter by construction.  Gate 182 green
+  (134 new A/B cases).  getting the PRNG byte-exact is the precondition for
+  everything above it: every `_DoAntSim*` behaviour routine consumes it.
+
 ## 2026-07-10 — static call-graph probe: the bottom-up recovery queue exists
 - New `win16/insn.py` (decode-only 8086/186 length walker; handles the
   FP-emulator `INT 34h-3Dh` +modrm forms this no-x87 build is full of) and

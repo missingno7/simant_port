@@ -346,6 +346,158 @@ def _make_maketable1x1_island(machine):
     return island
 
 
+# -- the SIMONE PRNG family (seg5) -------------------------------------------
+#
+# The simulation's one LFSR (recovered in simant/recovered/simone.py): every
+# _SRand* call steps `seed <<= 1; if carry: seed ^= 0x1BF5` on the DGROUP word
+# at 0xCBF2, then reduces — `% n` in _SRand1, `& mask` in the nine compiled
+# power-of-two copies (identical code except the AND immediate, which the
+# island reads out of the matched bytes).  ABI (cdecl far, caller cleans):
+# result in AX; DX = remainder (_SRand1, where BX = n) or 0 (masked); flags
+# from the last flag-writer (shl/xor -> and, or the flagless div); freed-frame
+# residue [sp-2]=saved BP, [sp-4]=result must match (C reads uninitialised
+# locals — the _Unpack lesson).  Islands reproduce flags via the CPU's own
+# set_logic_flags/shift helpers, so they match the interpreter by construction.
+SRAND_SEG_INDEX = 5
+SRAND_SEED_OFF = 0xCBF2                          # DGROUP word: the LFSR state
+SRAND1_OFF = 0x158A
+SRAND1_SIG = bytes.fromhex(
+    "c8020000ba0000a1f2cbd1e0730335f51ba3f2cb8b5e06f7f38bc28946fe8b46fec9cb")
+# The masked variants share this shape; the 16-bit AND immediate sits between.
+SRAND_MASK_SIG_PREFIX = bytes.fromhex(
+    "c8020000ba0000a1f2cbd1e0730335f51ba3f2cb25")
+SRAND_MASK_SIG_SUFFIX = bytes.fromhex("8946fe8b46fec9cb")
+SRAND_MASK_OFFS = [
+    (0x15AE, "_SRand2"), (0x15CE, "_SRand4"), (0x15EE, "_SRand8"),
+    (0x160E, "_SRand16"), (0x162E, "_SRand32"), (0x164E, "_SRand64"),
+    (0x166E, "_SRand128"), (0x168E, "_SRand256"),
+]
+# The seed accessors that complete the module's RAND section:
+#   _SetSRandSeed(v): seed = v            (AX = v at exit, [sp-2]=saved BP)
+#   _GetSRandSeed(): DX:AX = 0:seed       (sub dx,dx sets flags)
+#   _GetRRandSeed(): DX:AX = BIOS ticks   (ES=0x046C, BX=0, xor sets flags)
+#   _SetRRandSeed(): empty stub (retf)
+SETSRANDSEED_OFF, SETSRANDSEED_SIG = 0x1506, bytes.fromhex("558bec8b4606a3f2cbc9cb")
+GETSRANDSEED_OFF, GETSRANDSEED_SIG = 0x1512, bytes.fromhex("a1f2cb2bd2cb")
+SETRRANDSEED_OFF, SETRRANDSEED_SIG = 0x1518, bytes.fromhex("cb90")
+GETRRANDSEED_OFF, GETRRANDSEED_SIG = 0x151A, bytes.fromhex(
+    "bb6c048ec333db268b07268b5702cb")
+BIOS_TICK_SEG = 0x046C                           # 0040:006C as a segment
+
+
+def _srand_common(cpu, seed: int, new: int) -> None:
+    """The shl (+ xor when the carry was set) flag effects, via the CPU's own
+    helpers — identical to interpreting the instructions."""
+    cpu.shift(4, seed, 1, 16)
+    if seed & 0x8000:
+        cpu.set_logic_flags(new, 16)
+
+
+def _make_srand1_island(machine):
+    from .recovered.simone import srand1
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        n = m.rw(s.ss, (sp + 4) & 0xFFFF)
+        seed = m.rw(s.ds, SRAND_SEED_OFF)
+        if n == 0:
+            raise ZeroDivisionError(
+                "_SRand1 island: modulus 0 — the ASM would #DE here")
+        new, result = srand1(seed, n)
+        _srand_common(cpu, seed, new)            # div writes no flags (dos_re)
+        m.ww(s.ds, SRAND_SEED_OFF, new)
+        m.ww(s.ss, (sp - 2) & 0xFFFF, s.bp)      # freed frame: enter's push bp
+        m.ww(s.ss, (sp - 4) & 0xFFFF, result)    # [bp-2] result scratch
+        s.ax = result
+        s.dx = result                            # mov ax,dx after div: both = rem
+        s.bx = n
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _make_srand_mask_island(machine, off):
+    from .recovered.simone import srand_pow2
+    cs = machine.seg_bases[SRAND_SEG_INDEX]
+    mask = machine.mem.rw(cs, off + len(SRAND_MASK_SIG_PREFIX))
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        seed = m.rw(s.ds, SRAND_SEED_OFF)
+        new, result = srand_pow2(seed, mask)
+        _srand_common(cpu, seed, new)
+        cpu.set_logic_flags(result, 16)          # the AND's flags
+        m.ww(s.ds, SRAND_SEED_OFF, new)
+        m.ww(s.ss, (sp - 2) & 0xFFFF, s.bp)
+        m.ww(s.ss, (sp - 4) & 0xFFFF, result)
+        s.ax = result
+        s.dx = 0
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _make_setsrandseed_island(machine):
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        v = m.rw(s.ss, (sp + 4) & 0xFFFF)
+        m.ww(s.ds, SRAND_SEED_OFF, v)
+        m.ww(s.ss, (sp - 2) & 0xFFFF, s.bp)      # push bp / leave residue
+        s.ax = v
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _make_getsrandseed_island(machine):
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        s.ax = m.rw(s.ds, SRAND_SEED_OFF)
+        cpu.set_sub_flags(s.dx, s.dx, 0, 16)     # sub dx,dx
+        s.dx = 0
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _make_setrrandseed_island(machine):
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ret_ip, ret_cs = m.rw(s.ss, s.sp), m.rw(s.ss, (s.sp + 2) & 0xFFFF)
+        s.sp = (s.sp + 4) & 0xFFFF               # the routine is a bare retf
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _make_getrrandseed_island(machine):
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        s.es = BIOS_TICK_SEG
+        cpu.set_logic_flags(0, 16)               # xor bx,bx
+        s.bx = 0
+        s.ax = m.rw(BIOS_TICK_SEG, 0)            # BIOS tick dword at 0040:006C
+        s.dx = m.rw(BIOS_TICK_SEG, 2)
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # Registry of (segment index, entry offset, signature, island factory, name).
 # Each factory takes (machine, off) and returns the hook fn.
 _ISLANDS = [
@@ -361,7 +513,27 @@ _ISLANDS = [
     (MAKETABLE1X1_SEG_INDEX, MAKETABLE1X1_OFF, MAKETABLE1X1_SIG,
      lambda machine, off: _make_maketable1x1_island(machine),
      "_Windows_MakeTable1x1"),
+    (SRAND_SEG_INDEX, SRAND1_OFF, SRAND1_SIG,
+     lambda machine, off: _make_srand1_island(machine), "_SRand1"),
+    (SRAND_SEG_INDEX, SETSRANDSEED_OFF, SETSRANDSEED_SIG,
+     lambda machine, off: _make_setsrandseed_island(machine), "_SetSRandSeed"),
+    (SRAND_SEG_INDEX, GETSRANDSEED_OFF, GETSRANDSEED_SIG,
+     lambda machine, off: _make_getsrandseed_island(machine), "_GetSRandSeed"),
+    (SRAND_SEG_INDEX, SETRRANDSEED_OFF, SETRRANDSEED_SIG,
+     lambda machine, off: _make_setrrandseed_island(machine), "_SetRRandSeed"),
+    (SRAND_SEG_INDEX, GETRRANDSEED_OFF, GETRRANDSEED_SIG,
+     lambda machine, off: _make_getrrandseed_island(machine), "_GetRRandSeed"),
 ]
+# The nine masked _SRand variants are compiled copies whose AND immediate is
+# the power of two in the name minus one; building each signature with that
+# mask makes install() verify the assumption byte-exactly (mismatch = refuse).
+for _off, _name in SRAND_MASK_OFFS:
+    _mask = int(_name[6:]) - 1
+    _ISLANDS.append(
+        (SRAND_SEG_INDEX, _off,
+         SRAND_MASK_SIG_PREFIX + _mask.to_bytes(2, "little")
+         + SRAND_MASK_SIG_SUFFIX,
+         lambda machine, off: _make_srand_mask_island(machine, off), _name))
 
 
 def install(machine) -> int:

@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 5               # + _Unpack, bytecopy, MakeTable4x4
+    assert hooks.install(hk) == 18              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 5
-    assert runtime.install_hooks(runtime.create_machine()) == 5
+    assert hooks.install(m) == 18
+    assert runtime.install_hooks(runtime.create_machine()) == 18
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -338,3 +338,100 @@ def test_maketable1x1_island_matches_asm(count):
     isl = _run_maketable1x1(True, count, tiles, table)
     assert isl[0] == asm[0], f"count={count}: packed bytes differ"
     assert isl[1] == asm[1], f"count={count}: exit state differs {isl[1]} != {asm[1]}"
+
+
+# -- the SIMONE PRNG family ---------------------------------------------------
+#
+# These oracles are stricter than the earlier ones: the SRand routines' last
+# flag-writing instruction is observable (callers branch on nothing here, but
+# byte-exact means byte-exact), so the comparison includes FLAGS, the LFSR
+# seed word, and the freed-frame stack residue ([sp-2] saved BP, [sp-4]
+# result scratch) that C callers can read back through uninitialised locals.
+
+def _setup_srand(m, off, seed, args=()):
+    s = m.cpu.s
+    s.cs = m.seg_bases[hooks.SRAND_SEG_INDEX]
+    s.ip = off
+    s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.bx, s.si, s.di, s.bp = MARK["bx"], MARK["si"], MARK["di"], MARK["bp"]
+    s.cx, s.dx, s.ax = 0x5555, 0x6666, 0x7777
+    s.flags = 0x0AD7 & 0x0FFF                   # a busy flag pattern to disturb
+    m.mem.ww(s.ds, hooks.SRAND_SEED_OFF, seed)
+    sp = s.sp
+    for v in (*reversed(args), SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+
+def _srand_state(m):
+    s = m.cpu.s
+    residue = tuple(m.mem.rw(s.ss, (s.sp - 6 - 2 * i) & 0xFFFF) for i in (0, 1))
+    return dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, cs=s.cs, ip=s.ip, ds=s.ds, es=s.es,
+                flags=s.flags,
+                seed=m.mem.rw(s.ds, hooks.SRAND_SEED_OFF),
+                residue=residue)
+
+
+def _run_srand(with_island, off, seed, args=()):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 18
+    _setup_srand(m, off, seed, args)
+    for _ in range(100):
+        m.cpu.step()
+        if (m.cpu.s.cs & 0xFFFF, m.cpu.s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            return _srand_state(m)
+    raise AssertionError(f"routine at {off:04X} did not return to the sentinel")
+
+
+SEEDS = [0x0000, 0x0001, 0x8000, 0x8001, 0xFFFF, 0x1BF5, 0x4444, 0xACE1]
+
+
+@pytest.mark.parametrize("off,name", hooks.SRAND_MASK_OFFS,
+                         ids=[n for _, n in hooks.SRAND_MASK_OFFS])
+@pytest.mark.parametrize("seed", SEEDS)
+def test_srand_pow2_islands_match_asm(off, name, seed):
+    asm = _run_srand(False, off, seed)
+    isl = _run_srand(True, off, seed)
+    assert isl == asm, f"{name} seed={seed:#06x}: {isl} != {asm}"
+
+
+@pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.parametrize("n", [1, 2, 3, 7, 100, 255, 0x7FFF, 0xFFFF])
+def test_srand1_island_matches_asm(seed, n):
+    asm = _run_srand(False, hooks.SRAND1_OFF, seed, (n,))
+    isl = _run_srand(True, hooks.SRAND1_OFF, seed, (n,))
+    assert isl == asm, f"seed={seed:#06x} n={n}: {isl} != {asm}"
+
+
+@pytest.mark.parametrize("seed", [0x0000, 0x1234, 0xFFFF])
+def test_srand_seed_accessors_match_asm(seed):
+    for off, args in ((hooks.SETSRANDSEED_OFF, (seed,)),
+                      (hooks.GETSRANDSEED_OFF, ()),
+                      (hooks.SETRRANDSEED_OFF, ())):
+        asm = _run_srand(False, off, 0x4321, args)
+        isl = _run_srand(True, off, 0x4321, args)
+        assert isl == asm, f"off={off:04X}: {isl} != {asm}"
+
+
+@pytest.mark.parametrize("ticks", [0, 0x00123456, 0xFFFFFFFF])
+def test_getrrandseed_island_matches_asm(ticks):
+    def run(with_island):
+        m = runtime.create_machine()
+        m.cpu.trace_enabled = False
+        if with_island:
+            assert hooks.install(m) == 18
+        m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
+        m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
+        _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
+        for _ in range(100):
+            m.cpu.step()
+            if (m.cpu.s.cs & 0xFFFF, m.cpu.s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                return _srand_state(m)
+        raise AssertionError("did not return")
+    asm, isl = run(False), run(True)
+    assert isl == asm
+    assert isl["ax"] | (isl["dx"] << 16) == ticks
