@@ -64,6 +64,15 @@ def main() -> None:
     sysobj = machine.api.services["system"]
     sysobj.message_source = player.next_message
     machine.api.services["demo_player"] = player
+    if player.notes_input:
+        # v3 demos carry input-arrival notes ("a" records): polled state is
+        # applied from those, so suppress consumption-time noting exactly as
+        # a live drainer does (get_message/peek skip _note_input when an
+        # input_drainer is attached).  The drainer itself applies pending
+        # notes — a game polling GetAsyncKeyState in a NON-pumping loop (the
+        # button-release drag spin) reaches the player only through
+        # refresh_polled_input -> input_drainer.
+        sysobj.input_drainer = lambda: player._apply_async(sysobj)
 
     outcome = "budget exhausted"
     try:

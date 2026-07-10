@@ -6,6 +6,26 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — ghost2 demo: scrolls verified clean on the fixed build; demo v3 (arrival notes)
+- Owner reported residual up-scroll ghosting + a "refresh jump" and recorded
+  `ghost2.jsonl` (1435 records).  A full per-scroll pixel scan of the replay shows all
+  23 scrolls (down/right/up/left) **pixel-perfect on the fixed win16** — 0 stale pixels
+  each.  Most likely the live session still ran the pre-fix build (play.py loads win16
+  at launch; restart required).  Watch for a re-report on a restarted session.
+- The demo itself exposed two REAL replay gaps (win16_re `6416df4`):
+  (a) **polled input is arrival-derived**: SimAnt's tick spins on
+  GetAsyncKeyState(VK_LBUTTON) without pumping (MYTIMERFUNC+0x3BA), so a
+  consumption-only replay deadlocked at record 970.  Demo v3 records the drainer's
+  arrival notes as "a" records; the player applies them at pump touchpoints and via
+  the replay input_drainer (refresh_polled_input for non-pumping polls).
+  (b) **snapshot resume left sysobj.interactive=True** (pickled from the live
+  session) — tick_count() returned the frozen clock and MAINWNDPROC's GetTickCount
+  drag loop spun forever; load_snapshot resets it (host wiring, like message_source).
+- Proof: a v3 demo emulating the ghost2 scenario (down/right/up/left scrolls + mouse
+  moves + a click; `artifacts/demos/ghost3.jsonl`, 728 records) replays 728/728,
+  digest-identical twice (`d071340d…`), clean nest.  v2 demos (ghost2) cannot replay
+  past a polled-input wait — re-record under v3 for full-session repro.
+
 ## 2026-07-10 — tile-ghosting FIXED: the update region is real (win16_re `b55a6f7`)
 - The owner's F11 repro demo (`ghost.jsonl`, 635 records, anchored to snap_125747)
   replayed deterministically and became the microscope.  Probe chain: our ValidateRgn
