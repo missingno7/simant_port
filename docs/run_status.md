@@ -6,6 +6,31 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — VM-accuracy audit of the scroll path: CLEAN (and a probe-methodology lesson)
+- Owner asked whether the residual "occasional ghosting" (demo_134538, v3, replays
+  2157/2157) indicates a VM accuracy problem.  Audit of one controlled scroll per
+  direction, from the anchored snapshot, all under pure ASM (replay installs no islands):
+  * **Pixel shifts: exact** — every scroll's surface equals the pre-surface shifted by
+    exactly (dx,dy), all four directions (per-scroll verifier, 0 violations).
+  * **Edit arrays: exact** — the game's screen-tile arrays ([143E]/[1442] far ptrs,
+    31x23 at this window size) shift perfectly on every scroll (682/682 interior match;
+    up-scroll fills the exposed row with fresh grass tiles correctly).
+  * Scrollbar scrolls take _UpdateEdit's [1456]!=0 early branch (no _ScrollEditArrays —
+    by design; the arrays are synced elsewhere and verified above).  The [1456]==0
+    guarded branch (auto-center / _CenterEdit) calls _ScrollEditArrays(dx,dy) =
+    2x _memmove (seg4:062C) + 0xFF-sentinel fill of vacated rows.
+- **Methodology lesson (important):** the earlier "residual vs ground truth" numbers
+  were PROBE ARTIFACTS — injecting `_invalidate(whole client)+WM_PAINT` out of band
+  does not reproduce the game's real full redraw (game-side state my injection skips),
+  so surface-vs-forced-repaint diffs measured the probe, not ghosts.  Injected paints
+  are NOT a valid oracle for this engine; only the game's own paints are.
+- Verdict: no VM/CPU-semantics inaccuracy found on the scroll path; islands stay
+  byte-exact-gated; suites green.  The remaining user-visible "occasional ghosting"
+  is not yet reproduced in any replayed surface — next capture: F10 screenshot + F12
+  snapshot at a visibly-ghosted moment (surface + arrays + origin in one artifact,
+  diffable offline with no injected paints).  Candidates: viewer-thread tearing
+  (play.py composite fence), or the auto-center jump reading as a flash.
+
 ## 2026-07-10 — ghost2 demo: scrolls verified clean on the fixed build; demo v3 (arrival notes)
 - Owner reported residual up-scroll ghosting + a "refresh jump" and recorded
   `ghost2.jsonl` (1435 records).  A full per-scroll pixel scan of the replay shows all
