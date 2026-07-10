@@ -6,6 +6,33 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — dos_re's automatic lifting pipeline works on Win16 (and SimAnt found 2 upstream bugs)
+- dos_re landed automatic literal lifting (M0 decode/CFG census, M1 emitter, M2
+  liftverify, M3 refactor-loop proof; `dos_re/docs/lifting_design.md`).  Applied it
+  here the same day — the OS-free layers run on Win16 code UNCHANGED:
+  * **Census: 1238/1319 named SIMANTW.SYM functions v1-liftable (94%)** — better than
+    any DOS port at scale.  Refusals: 48 jump-table dispatchers (`_GBoxFill` is one),
+    33 unsupported (inline x87 etc.).  Liftable median 48 insts, max 1233.
+  * **M1 proof**: emitted lift of `_Windows_MakeTable4x4` passes our own hand-island
+    A/B harness byte-exact (all counts, 3/3 blocks) with zero hand edits.
+  * **Call-coupled frontier UNBLOCKED**: `_win_GetObjRect` (near-calls) +
+    `_win_IsWinOpen` (far API call, IsWindowVisible) lifted and verified in situ over
+    the ghost demo replay — digest + instruction count identical to pure ASM
+    (77,519,358 instr), hooks fired (4/4, 2/3 blocks).  `emulate_call` composes
+    through the win16 API layer exactly as designed.
+- **Two real lifter bugs found by SimAnt, fixed + regression-tested upstream**
+  (dos_re `11917f2`, `fbb2ad3`): (1) entry-instruction interpreter-fallback recursed
+  into the lifted hook itself (SimAnt prologues are `enter`, a fallback op — every
+  such function hit it); (2) emulated calls only recognized C-convention returns —
+  pascal `ret n`/`retf n` (every Win16 API!) never matched, so the emulation ran away
+  through the rest of the program.  DOS ports never saw either.
+- Verify caveat learned: free-running this snapshot is NOT a terminating drive (modal
+  wndproc wait-loop → CallbackOverrun in pure ASM too) — in-situ lift verification on
+  win16 uses DEMO REPLAYS as the drive, which is our evidence baseline anyway.
+- Next: a `scripts/liftverify.py` win16-flavoured driver (snapshot+demo -> emit,
+  install, verify, ledger), then start the lift -> refactor -> `simant/recovered/`
+  loop on the hot list; jump tables + x87 functions stay hand territory.
+
 ## 2026-07-10 — VM-accuracy audit of the scroll path: CLEAN (and a probe-methodology lesson)
 - Owner asked whether the residual "occasional ghosting" (demo_134538, v3, replays
   2157/2157) indicates a VM accuracy problem.  Audit of one controlled scroll per
