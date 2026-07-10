@@ -21,6 +21,19 @@
   flags across calls; rendering is byte-exact regardless.  Follow-up: make islands
   flag-exact so they pass the verifier clean.
 
+## 2026-07-10 — demo v4 PROVEN end-to-end: cold-start replay is clean + deterministic
+- Owner re-recorded a fresh cold-start demo (`newcold`, v4: 2474 input arrivals +
+  ~1758 clock samples) clicking through the SAME registration "click to continue"
+  screen that deadlocked colddemo under the old model.
+- Replay result: **clean run to the end** — 2474/2474 events consumed, 51,728,941
+  instructions, ended via DemoEnded (deterministic exhaustion), reaching the full
+  in-game window set (RibbonWindow + the GenericWindow panels = PAST the splash).
+  No CallbackOverrun, no modal-loop deadlock — the v4 model fixes it.
+- **Deterministic + bit-exact:** replayed twice, identical instruction count AND
+  identical digest (a185d43d…) both times.  The instruction-keyed injection + clock
+  reproduction reproduces the recorded run exactly.
+- All old (v1-v3) demos ditched per owner (colddemo/ghost*/artifacts demos removed).
+
 ## 2026-07-10 — BUILT demo v4: instruction-keyed input injection + reproduced GetTickCount
 - Redesigned the win16 demo record/replay model (owner OK'd breaking old demos).
   v4 records the raw INPUT TIMELINE instead of per-API consumption:
