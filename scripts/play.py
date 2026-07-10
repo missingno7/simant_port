@@ -14,6 +14,14 @@ Controls (the game's own, from its accelerator table):
     F8 radar / F10 exit
     mouse                        the primary way to play (select, build, order)
 
+Viewer hotkeys (the dos_re convention — F10 screenshot, F11 demo-record
+toggle, F12 snapshot):
+    F10   screenshot of every game window -> artifacts/screenshots/
+          (shadows the game's own F10=exit accelerator; use File > Exit)
+    F11   toggle demo recording; starting one auto-saves an anchor snapshot
+          so the demo replays via replay.py --from-snapshot out of the box
+    F12   snapshot -> artifacts/snapshots/ (F9 kept as a legacy alias)
+
 Close the AntRoot window to quit.
 """
 from __future__ import annotations
@@ -391,8 +399,16 @@ class WindowView:
         c.bind("<ButtonRelease-3>", lambda e: self._on_mouse(e, WM_RBUTTONUP, 0))
 
     def _on_key_down(self, event) -> None:
-        if event.keysym == "F9":                # harness key: take a snapshot
+        # Harness hotkeys (dos_re convention), swallowed before the game:
+        # F10 screenshot, F11 demo-record toggle, F12 snapshot (F9 legacy).
+        if event.keysym in ("F12", "F9"):
             self.app.take_snapshot()
+            return
+        if event.keysym == "F11":
+            self.app.toggle_demo_record()
+            return
+        if event.keysym == "F10":
+            self.app.take_screenshot()
             return
         vk = keysym_to_vk(event)
         if vk is not None:
@@ -909,7 +925,7 @@ class PlayApp:
         cpu = self.machine.cpu
         cpu.trace_enabled = False
         try:
-            # Run in small chunks so a snapshot pause (F9) can park at an
+            # Run in small chunks so a snapshot pause (F12) can park at an
             # instruction boundary even while the game busy-polls PeekMessage
             # (menus, in-game) and never calls GetMessage.  4096 instrs bounds
             # the pause latency to well under a frame.
@@ -959,24 +975,79 @@ class PlayApp:
             self.box_view.destroy()
             self.box_view = None
 
-    # -- snapshots (F9) -----------------------------------------------------------
-    def take_snapshot(self) -> None:
+    # -- snapshots (F12; F9 legacy alias) -----------------------------------------
+    def take_snapshot(self, note: str = "taken from play.py (F12)") -> "Path | None":
+        """Park the CPU at a quiescent boundary and save a snapshot; returns
+        its directory (None on failure).  Also the anchor step of F11 demos."""
         from win16.vmsnap import SnapshotError, save_snapshot
         if not self.driver.pause_at_boundary():
             print("[play] snapshot failed: CPU did not reach a quiescent point "
                   "in time (stuck in a modal dialog/message box, or halted)",
                   file=sys.stderr)
-            return
+            return None
         try:
             stamp = time.strftime("%H%M%S")
             out = Path("artifacts") / "snapshots" / f"snap_{stamp}"
-            save_snapshot(self.machine, out, note="taken from play.py (F9)",
-                          game=self.game_name)
+            save_snapshot(self.machine, out, note=note, game=self.game_name)
             print(f"[play] snapshot saved to {out}", flush=True)
+            return out
         except SnapshotError as exc:
             print(f"[play] snapshot failed: {exc}", file=sys.stderr)
+            return None
         finally:
             self.driver.resume()
+
+    # -- demo recording (F11 toggle; --record records from launch) ----------------
+    def toggle_demo_record(self) -> None:
+        """Start/stop demo recording mid-session.  Starting one first saves an
+        anchor snapshot, so the demo is replayable out of the box:
+        replay.py <demo> --from-snapshot <anchor>."""
+        from win16.demo import DemoRecorder
+        if self.recorder is not None:
+            self.machine.api.services.pop("demo_recorder", None)
+            self.recorder.close()
+            print(f"[play] demo saved: {self.recorder.path} "
+                  f"({self.recorder.records} records)", flush=True)
+            print(f"[play] replay it:  python scripts/replay.py "
+                  f"{self.recorder.path}"
+                  + (f" --from-snapshot artifacts/snapshots/"
+                     f"{self.recorder.snapshot}" if self.recorder.snapshot
+                     else ""),
+                  flush=True)
+            self.recorder = None
+            return
+        anchor = self.take_snapshot(note="F11 demo-record anchor")
+        if anchor is None:
+            print("[play] demo recording NOT started (no anchor snapshot)",
+                  file=sys.stderr)
+            return
+        stamp = time.strftime("%H%M%S")
+        out = Path("artifacts") / "demos" / f"demo_{stamp}.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        self.recorder = DemoRecorder(
+            out, self.machine.exe.path.name, snapshot=anchor.name,
+            instruction=self.machine.cpu.instruction_count)
+        self.machine.api.services["demo_recorder"] = self.recorder
+        print(f"[play] recording demo to {out} (anchored to {anchor.name}) — "
+              f"F11 again to stop", flush=True)
+
+    # -- screenshots (F10) ---------------------------------------------------------
+    def take_screenshot(self) -> None:
+        """Write every game window's composited frame (what the player sees)
+        as PNGs under artifacts/screenshots/."""
+        from win16.png import write_png
+        stamp = time.strftime("%H%M%S")
+        out = Path("artifacts") / "screenshots"
+        out.mkdir(parents=True, exist_ok=True)
+        n = 0
+        for view in list(self.views.values()):
+            s = view._composited()
+            name = "".join(c for c in (view.win.title or view.win.wndclass.name)
+                           if c.isalnum()) or f"win{view.win.handle}"
+            path = out / f"shot_{stamp}_{name}.png"
+            write_png(path, s.w, s.h, bytes(s.pixels))
+            n += 1
+        print(f"[play] {n} screenshot(s) -> {out}/shot_{stamp}_*.png", flush=True)
 
     def _flush_windows(self) -> None:
         """Force the latest game frame onto the screen (e.g. the crash frame)
@@ -1117,7 +1188,7 @@ def main() -> None:
     ap.add_argument("--no-hooks", action="store_true",
                     help="run pure ASM (skip the game's lifted-island hooks)")
     ap.add_argument("--resume", metavar="SNAP_DIR", default=None,
-                    help="start from a snapshot directory (taken with F9) "
+                    help="start from a snapshot directory (taken with F12) "
                          "instead of a cold boot — exact same state")
     args = ap.parse_args()
     if not EXE_PATH.exists():

@@ -18,7 +18,7 @@ is only accepted when it reproduces the original's behaviour **byte-for-byte**.
 |-------|-----------|
 | `win16_re/` | Git submodule: the **game-agnostic** Win16 framework — NE loader, the selector-based memory model, the full Win16 API surface, windowing, dialogs, menus, palette/DIB rendering, audio, demos, snapshots. Knows nothing about SimAnt. Itself vendors `dos_re/` as a nested submodule. |
 | `simant/` | This project's game package: the adapter (`runtime`, `_env`), recovered logic (`recovered/`), lifted islands (`hooks.py`), profiler + symbol lookup (`probes/`), and `tests/`. |
-| `scripts/` | `play.py` (play interactively — real window, keyboard, mouse, audio, F9 snapshots, `--resume`), `boot.py` (bring-up frontier probe), `replay.py` (headless demo replay). |
+| `scripts/` | `play.py` (play interactively — real window, keyboard, mouse, audio, `--resume`; the dos_re hotkeys: F10 screenshot, F11 demo-record toggle, F12 snapshot), `boot.py` (bring-up frontier probe), `replay.py` (headless demo replay, `--from-snapshot` for anchored demos). |
 
 All SimAnt-specific knowledge lives in `simant/`; `win16_re/` never imports from
 it.

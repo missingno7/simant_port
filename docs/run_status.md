@@ -6,6 +6,16 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — play.py adopts the dos_re hotkeys: F10 screenshot, F11 demo toggle, F12 snapshot
+- Same muscle memory as every dos_re port (template_dos_port/docs/cookbook.md).  F12
+  replaces F9 for snapshots (F9 stays as a legacy alias); F10 screenshots every game
+  window's composited frame to `artifacts/screenshots/` (this shadows SimAnt's own
+  F10=exit accelerator — File > Exit still works); **F11 starts/stops demo recording
+  mid-session, auto-saving an anchor snapshot first** so every F11 demo replays out of
+  the box — stopping prints the exact `replay.py --from-snapshot` command.  Smoke-tested
+  scripted end-to-end: F10 (5 PNGs), F11 start→stop (17 records), the printed replay
+  command consumed 17/17 records cleanly, F12 snapshot saved.
+
 ## 2026-07-10 — in-game demo record/replay works; the scrollbar tile-ghost has a repro demo
 - **Demo v2** (win16_re `f1261f0`): a demo now records the PeekMessage timeline too
   ("p" records with the consuming filter) — in-game SimAnt never calls GetMessage, so
