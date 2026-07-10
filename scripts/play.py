@@ -1170,10 +1170,49 @@ class PlayApp:
         self.root.after(150, self.root.destroy)
 
     def run(self) -> None:
-        self.root.mainloop()
+        try:
+            self.root.mainloop()
+        finally:
+            # Make sure the CPU worker is dead before the interpreter's final GC
+            # so any remaining tkinter finalizers run on the main thread (see
+            # _silence_tk_cross_thread_finalizer for why that matters on PyPy).
+            self.driver.stop()
+            if self.worker.is_alive():
+                self.worker.join(timeout=2.0)
+
+
+def _silence_tk_cross_thread_finalizer() -> None:
+    """Swallow the harmless 'Variable.__del__ ... Call from another thread'
+    finalizer noise.
+
+    We run the VM on a daemon worker thread and tkinter on the main thread.
+    PyPy's GC is not refcounting: a dead tkinter Variable is finalized on
+    whichever thread happens to run the collection cycle — usually the worker
+    (it does nearly all the allocation).  tkinter's Variable.__del__ then calls
+    into Tcl, and PyPy's _tkinter refuses a call from a non-creating thread
+    ('NotImplementedError: Call from another thread').  The finalizer is a
+    no-op in practice (the Tcl variable is torn down with the interpreter
+    anyway), but Python prints a noisy 'Exception ignored in' traceback for it.
+    Suppress exactly that case; everything else goes through the default hook.
+    (CPython's refcounting collects these on the main thread, so it never
+    surfaced there.)"""
+    default = sys.unraisablehook
+
+    def hook(unraisable):
+        exc = unraisable.exc_value
+        # "Call from another thread" only comes from _tkinter refusing a
+        # cross-thread Tcl call.  Every real Tk call we make is on the main
+        # thread, so this can only be a GC finalizer running off-thread — safe
+        # to drop.  Anything else goes through the default hook unchanged.
+        if isinstance(exc, NotImplementedError) and "another thread" in str(exc):
+            return
+        default(unraisable)
+
+    sys.unraisablehook = hook
 
 
 def main() -> None:
+    _silence_tk_cross_thread_finalizer()
     ap = argparse.ArgumentParser(description="Play SimAnt in the win16 VM.")
     ap.add_argument("--speed", type=float, default=1.0,
                     help="time multiplier (1.0 = real speed)")
