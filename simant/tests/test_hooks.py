@@ -764,12 +764,13 @@ def test_xferlifetilecolor_island_matches_asm(args):
 # ---- _DrawChar (seg7:B033) — recovered/render.py ----------------------------
 # Sub-byte-shifted OR-composite 1bpp glyph blit.  It does NOT pusha, so it
 # clobbers ax/bx/cx/dx (values the island reproduces) while preserving
-# si/di/ds/es/bp; it writes three scratch globals and reads per-row strides and
-# a partial-mask table from the source segment.  We use DGROUP as the source
-# segment and plant the mask table at DGROUP:0xB02A (as the code segment has it).
-_DRAWCHAR_MASKS = bytes.fromhex("0080c0e0f0f8fcfeff")   # top-n-bits, n = width & 7
-
-
+# si/di/ds/es/bp; it writes three scratch globals and reads per-row strides plus
+# a partial-mask table.  The mask table is read via `xlatb` with a CS: override,
+# so it comes from the CODE segment (already loaded from the binary at seg7:B02A)
+# — NOT the glyph source segment.  We deliberately use DGROUP for the glyph
+# source (whose 0xB02A is unrelated data), so an island that read the mask from
+# the source segment would diverge from the ASM here (regression: the garbled
+# "registered to" screen in demo_195527).
 def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_stride,
                   dst_fill, span=0x80):
     m = runtime.create_machine()
@@ -779,8 +780,6 @@ def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_strid
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x7000
-    for i, b in enumerate(_DRAWCHAR_MASKS):                # mask table in the source seg
-        m.mem.wb(DG, (hooks.DRAWCHAR_MASK_TABLE_OFF + i) & 0xFFFF, b)
     for i in range(span):
         m.mem.wb(DG, (DST + i) & 0xFFFF, dst_fill[i % len(dst_fill)])
     for i, b in enumerate(glyph):

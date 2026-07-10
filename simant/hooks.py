@@ -25,6 +25,9 @@ ABI of __aFuldiv (far, callee-cleans — verified by live trace):
 """
 from __future__ import annotations
 
+from . import _env  # noqa: F401  — puts win16_re on sys.path
+import win16  # noqa: F401  — win16/_env in turn puts the dos_re submodule on sys.path
+
 from dos_re.cpu import AF, CF, OF, PF, SF, ZF
 
 from .recovered import lzss
@@ -800,7 +803,8 @@ def _make_xfertilecolor_island(machine):
 # A sub-byte-shifted OR-composite 1bpp glyph blit.  Recovered logic in
 # recovered/render.py: per row, `width//8` overlapping shifted words OR'd into
 # the destination, plus a partial edge column masked to `width & 7` top bits
-# (mask table at src-seg:0xB02A, read via xlatb).  Per-row strides come from
+# (mask table at CODE-seg:0xB02A, read via `xlatb` with a CS: override `2E`).
+# Per-row strides come from
 # DGROUP globals 0xB912 (src) / 0xB914 (dst); the routine hardcodes ds = DGROUP.
 # Unlike the tile blits it does NOT pusha — it preserves si/di/ds/es/bp but
 # CLOBBERS ax/bx/cx/dx, whose exit values the island reproduces:
@@ -813,7 +817,7 @@ def _make_xfertilecolor_island(machine):
 #   +0x10 x +0x12 y.
 DRAWCHAR_SEG_INDEX = 7
 DRAWCHAR_OFF = 0xB033
-DRAWCHAR_MASK_TABLE_OFF = 0xB02A                 # src-seg top-n-bits mask table
+DRAWCHAR_MASK_TABLE_OFF = 0xB02A                 # CODE-seg top-n-bits mask table (CS: xlat)
 DRAWCHAR_G_SRCSEG, DRAWCHAR_G_DSTSEG = 0xB90E, 0xB910   # scratch globals it writes
 DRAWCHAR_G_SRCSTRIDE, DRAWCHAR_G_DSTSTRIDE = 0xB912, 0xB914   # strides it reads
 DRAWCHAR_G_WORDS = 0xB918
@@ -824,6 +828,7 @@ DRAWCHAR_SIG = bytes.fromhex(                     # push bp;mov bp,sp;add bp,6;p
 def _make_drawchar_island(machine):
     from .recovered.render import draw_char, shift_glyph_word
     dg = machine.seg_bases[DG_SEG_INDEX]
+    code_seg = machine.seg_bases[DRAWCHAR_SEG_INDEX]     # CS: the mask table lives here
 
     def island(cpu) -> None:
         s, m = cpu.s, cpu.mem
@@ -840,7 +845,9 @@ def _make_drawchar_island(machine):
         di_base = (dst_off + (y >> 3)) & 0xFFFF
         src_stride = m.rw(dg, DRAWCHAR_G_SRCSTRIDE)
         dst_stride = m.rw(dg, DRAWCHAR_G_DSTSTRIDE)
-        partial_mask = m.rb(src_seg, (DRAWCHAR_MASK_TABLE_OFF + (width & 7)) & 0xFFFF)
+        # The partial mask is read via `xlatb` with a CS: override (2E) — so it
+        # comes from the CODE segment, NOT the glyph source segment.
+        partial_mask = m.rb(code_seg, (DRAWCHAR_MASK_TABLE_OFF + (width & 7)) & 0xFFFF)
 
         def read_src(row, col):
             return m.rw(src_seg, (si_base + row * src_stride + col) & 0xFFFF)
