@@ -53,39 +53,89 @@ def gen_nest_map_cells(terrain: Callable[[int, int], int],
                 yield col_c & 0xFF
 
 
-def xfer_tile_color(read_src: Callable[[int], int],
-                    write_dst: Callable[[int, int], None],
-                    dst_x: int, top: int, height: int, tile_w: int,
-                    y_extent: int, map_w: int, src_tile: int) -> None:
-    """Blit a `height` x `tile_w` 4bpp tile-colour block into a padded DIB.
+def _tile_blit_geometry(dst_x: int, top: int, height: int, tile_w: int,
+                        y_extent: int, map_w: int, src_tile: int):
+    """The shared destination-DIB geometry of the tile-colour blits.
 
-    The destination scanline is 4 bits per pixel padded to a 32-bit boundary:
-
-        stride = ceil(map_w * tile_w * 4 bits / 32) as bytes
-
-    The block is placed at the `(y_extent - top - 1)`-th vertical band of
-    `height` rows and offset horizontally by `dst_x` pixels; the source is tile
-    number `src_tile` in a 128-byte-per-tile stream.  Each of `height` rows
-    copies `tile_w // 2` bytes (two 4bpp pixels per byte), the destination
-    advancing one full `stride` per row.
-
-    `read_src(off)` reads the source tile stream; `write_dst(linear_off, byte)`
-    writes the destination — the original walks a >64K huge pointer (es += 8 per
-    64K), which our contiguous selector model presents as one linear span, so
-    the caller resolves `linear_off` to the right selector.  All arithmetic is
-    16-bit (the original's registers), hence the `& 0xFFFF` on the products.
-
-    Recovered from `_XferTileColor` (SIMANTW.SYM seg4:47DD, _TEXT).
+    Returns `(stride, row_bytes, start, src)`: the 4bpp scanline byte stride
+    (padded to a 32-bit boundary), the bytes copied per row, the destination's
+    starting byte offset (the `(y_extent - top - 1)`-th band of `height` rows,
+    plus a `dst_x`-pixel horizontal offset), and the source tile's byte offset
+    (128 bytes per tile).  All products are 16-bit (the original's registers).
     """
     M = 0xFFFF
     stride = (((((map_w * tile_w) & M) << 2) + 0x1F) & M) >> 5 << 2
     row_bytes = tile_w >> 1
     band = (((y_extent - top - 1) & M) * height) & M      # 16-bit before the stride mul
     start = band * stride + (((dst_x * tile_w) & M) >> 1)
-    src = (src_tile << 7) & M
+    return stride, row_bytes, start, (src_tile << 7) & M
+
+
+def xfer_tile_color(read_src: Callable[[int], int],
+                    write_dst: Callable[[int, int], None],
+                    dst_x: int, top: int, height: int, tile_w: int,
+                    y_extent: int, map_w: int, src_tile: int) -> None:
+    """Blit a `height` x `tile_w` 4bpp tile-colour block into a padded DIB.
+
+    Each of `height` rows copies `tile_w // 2` bytes (two 4bpp pixels per byte)
+    from the source tile straight into the destination, which advances one full
+    scanline `stride` per row (see :func:`_tile_blit_geometry`).
+
+    `read_src(off)` reads the source tile stream; `write_dst(linear_off, byte)`
+    writes the destination — the original walks a >64K huge pointer (es += 8 per
+    64K), which our contiguous selector model presents as one linear span, so
+    the caller resolves `linear_off` to the right selector.
+
+    Recovered from `_XferTileColor` (SIMANTW.SYM seg4:47DD, _TEXT).
+    """
+    M = 0xFFFF
+    stride, row_bytes, start, src = _tile_blit_geometry(
+        dst_x, top, height, tile_w, y_extent, map_w, src_tile)
     for _row in range(height):
         for i in range(row_bytes):
             write_dst(start + i, read_src((src + i) & M))
+        start += stride
+        src = (src + row_bytes) & M
+
+
+def xfer_life_tile_color(read_src: Callable[[int], int],
+                         read_dst: Callable[[int], int],
+                         write_dst: Callable[[int, int], None],
+                         dst_x: int, top: int, height: int, tile_w: int,
+                         y_extent: int, map_w: int, src_tile: int) -> None:
+    """Blit a 4bpp tile with per-pixel transparency (the "life" overlay).
+
+    Same destination geometry as :func:`xfer_tile_color`, but each source byte
+    is a two-pixel 4bpp pair blended over the destination rather than copied:
+
+      - the whole-byte sentinel 0xDD leaves the destination byte untouched;
+      - a pixel whose 4bpp index is 0xD is transparent — that nibble is kept
+        from the destination and the source nibble is not drawn.
+
+    So each opaque pixel overwrites and each 0xD pixel shows through:
+    `dst = (dst & keep) | draw`, where `keep` marks the transparent nibbles.
+
+    `read_dst(off)` reads the destination byte to blend against; the other
+    callbacks are as in :func:`xfer_tile_color`.
+
+    Recovered from `_XferLifeTileColor` (SIMANTW.SYM seg4:48FA, _TEXT).
+    """
+    M = 0xFFFF
+    stride, row_bytes, start, src = _tile_blit_geometry(
+        dst_x, top, height, tile_w, y_extent, map_w, src_tile)
+    for _row in range(height):
+        for i in range(row_bytes):
+            sb = read_src((src + i) & M)
+            if sb == 0xDD:
+                continue                              # both pixels transparent -> skip
+            keep, draw = 0x00, sb
+            if sb & 0x0F == 0x0D:                     # low pixel transparent
+                keep |= 0x0F
+                draw &= 0xF0
+            if draw & 0xF0 == 0xD0:                   # high pixel transparent
+                keep |= 0xF0
+                draw &= 0x0F
+            write_dst(start + i, (read_dst(start + i) & keep) | draw)
         start += stride
         src = (src + row_bytes) & M
 

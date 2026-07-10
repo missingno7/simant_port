@@ -711,6 +711,58 @@ XFERTILECOLOR_SIG = bytes.fromhex(                # prologue + the stride mul
     "558bec601e068b4614f76610c1e002")
 
 
+# -- _XferLifeTileColor (seg4:48FA, _TEXT) ------------------------------------
+#
+# The transparent sibling of _XferTileColor: identical DIB geometry + huge-
+# pointer walk, but each source byte is blended over the destination instead of
+# copied.  Recovered logic in recovered/render.py: sentinel 0xDD leaves the byte;
+# a 0xD 4bpp pixel index is transparent (kept from the dest).  Reads AND writes
+# the destination; pusha/popa preserves every register.  Same 22-byte far ABI
+# as _XferTileColor (the setup code is byte-identical, hence the same prologue).
+XFERLIFETILECOLOR_SEG_INDEX = 4
+XFERLIFETILECOLOR_OFF = 0x48FA
+XFERLIFETILECOLOR_SIG = bytes.fromhex(           # identical prologue to _XferTileColor
+    "558bec601e068b4614f76610c1e002")
+
+
+def _make_xferlifetilecolor_island(machine):
+    from .recovered.render import xfer_life_tile_color
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        dst_off, dst_seg = arg(4), arg(6)
+        dst_x, top, height, tile_w = arg(8), arg(0x0A), arg(0x0C), arg(0x0E)
+        y_extent, map_w, src_tile = arg(0x10), arg(0x12), arg(0x14)
+        src_off, src_seg = arg(0x16), arg(0x18)
+
+        def _dst_addr(off):
+            full = dst_off + off
+            return (dst_seg + XFERTILECOLOR_HUGE_INCR * (full >> 16)) & 0xFFFF, full & 0xFFFF
+
+        def read_src(off):
+            return m.rb(src_seg, (src_off + off) & 0xFFFF)
+
+        def read_dst(off):
+            seg, o = _dst_addr(off)
+            return m.rb(seg, o)
+
+        def write_dst(off, byte):
+            seg, o = _dst_addr(off)
+            m.wb(seg, o, byte)
+
+        xfer_life_tile_color(read_src, read_dst, write_dst, dst_x, top, height,
+                             tile_w, y_extent, map_w, src_tile)
+
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 def _make_xfertilecolor_island(machine):
     from .recovered.render import xfer_tile_color
 
@@ -754,6 +806,8 @@ _ISLANDS = [
      lambda machine, off: _make_gennestmap_island(machine), "_GenNestMap"),
     (XFERTILECOLOR_SEG_INDEX, XFERTILECOLOR_OFF, XFERTILECOLOR_SIG,
      lambda machine, off: _make_xfertilecolor_island(machine), "_XferTileColor"),
+    (XFERLIFETILECOLOR_SEG_INDEX, XFERLIFETILECOLOR_OFF, XFERLIFETILECOLOR_SIG,
+     lambda machine, off: _make_xferlifetilecolor_island(machine), "_XferLifeTileColor"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

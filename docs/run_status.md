@@ -6,6 +6,23 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — recovered _XferLifeTileColor (the transparent blit sibling)
+- Recovered `_XferLifeTileColor` (seg4:48FA) -> `recovered/render.py: xfer_life_tile_color`.
+  BYTE-IDENTICAL setup to _XferTileColor (same stride/start/huge-ptr walk — the compiler
+  didn't dedup the prologue), so I factored the shared geometry into `_tile_blit_geometry`
+  and both blits call it.  The difference is the inner op: a per-pixel transparent BLEND
+  instead of a copy.
+- Transparency semantics (recovered from the nibble-mask ASM): each source byte is two
+  4bpp pixels; sentinel 0xDD leaves the dest byte; a pixel whose index is 0xD is
+  transparent (kept from the dest).  `dst = (dst & keep) | draw`, keep marking the
+  transparent nibbles.  So the island READS the dest too (blend), unlike the plain copy.
+- Proven three ways: A/B oracle (3 geometries x a source spread of opaque/low-transp/
+  high-transp/0xDD over non-trivial existing dest bytes + all 10 regs), VM-free unit
+  exercise, liftverify ORACLE_PASSING.  23 islands, 199 green.
+- Session recovery tally: _win_IsWinOpen (API-coupled), _win_GetObjRect (near-call),
+  _GenNestMap (hot pure), _XferTileColor (huge-ptr copy), _XferLifeTileColor (huge-ptr
+  blend) — five shapes.  _DoCalcTile (184, 4 modes) still the deferred boss (lift ORACLE_PASSING).
+
 ## 2026-07-10 — recovered _XferTileColor (the huge-pointer tile blit)
 - Recovered `_XferTileColor` (seg4:47DD) -> `recovered/render.py: xfer_tile_color`: a 4bpp
   tile-colour blit that copies `height` rows of `tile_w//2` bytes into a DIB whose
