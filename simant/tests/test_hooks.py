@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 18              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 19              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 18
-    assert runtime.install_hooks(runtime.create_machine()) == 18
+    assert hooks.install(m) == 19
+    assert runtime.install_hooks(runtime.create_machine()) == 19
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -378,7 +378,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 18
+        assert hooks.install(m) == 19
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -423,7 +423,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 18
+            assert hooks.install(m) == 19
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -435,3 +435,68 @@ def test_getrrandseed_island_matches_asm(ticks):
     asm, isl = run(False), run(True)
     assert isl == asm
     assert isl["ax"] | (isl["dx"] << 16) == ticks
+
+
+# ---- _win_IsWinOpen (seg7:C256) — recovered/window.py ------------------------
+# The high byte of an object handle is a window-table slot; the window is open
+# iff g_window_hwnd[slot] (DGROUP:0xBCA6) holds a live HWND that IsWindowVisible
+# reports visible.  Three cases exercise every path: visible, hidden, empty slot.
+_ISWINOPEN_FLAGMASK = 0x08C5          # CF|PF|ZF|SF|OF (AF is undefined for or/xor)
+
+
+def _run_iswinopen(with_island, obj_handle, slot_kind):
+    """Fill the slot table so obj_handle's slot maps to a 'visible'/'hidden'
+    window or an empty (0) slot, run _win_IsWinOpen, return the exit state."""
+    from win16.api.objects import Window
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 19
+    s = m.cpu.s
+    sysobj = m.api.services["system"]
+    DS = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DS
+
+    slot = (obj_handle >> 8) & 0xFF
+    hwnd = 0
+    if slot_kind != "empty":
+        w = Window(wndclass=None, title="", style=0, x=0, y=0, w=0, h=0,
+                   parent=0, menu=0, visible=(slot_kind == "visible"))
+        sysobj.handles.add(w)
+        hwnd = w.handle
+    m.mem.ww(DS, (hooks.ISWINOPEN_HWND_TABLE_OFF + slot * 2) & 0xFFFF, hwnd)
+
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp = 0x2222, 0x3333, 0x4444
+    s.cs, s.ip = m.seg_bases[hooks.ISWINOPEN_SEG_INDEX], hooks.ISWINOPEN_OFF
+    sp = 0xFE00
+    for v in (obj_handle, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(4000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _win_IsWinOpen did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    return dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di, bp=s.bp,
+                sp=s.sp, ds=s.ds, es=s.es, flags=s.flags & _ISWINOPEN_FLAGMASK)
+
+
+@pytest.mark.parametrize("obj_handle,slot_kind,expect", [
+    (0x0500, "visible", 1),          # open + visible  -> 1
+    (0x0500, "hidden", 0),           # mapped but hidden -> 0
+    (0x0600, "empty", 0),            # slot holds no HWND -> 0
+    (0x1300, "visible", 1),          # a different slot, to move the table pointer
+])
+def test_iswinopen_island_matches_asm(obj_handle, slot_kind, expect):
+    asm = _run_iswinopen(False, obj_handle, slot_kind)
+    isl = _run_iswinopen(True, obj_handle, slot_kind)
+    assert asm["ax"] == expect, f"ASM oracle itself disagrees: {asm['ax']} != {expect}"
+    assert isl == asm, f"island != ASM for {slot_kind} @ {obj_handle:#06x}: {isl} != {asm}"

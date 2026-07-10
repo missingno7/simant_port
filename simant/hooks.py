@@ -500,9 +500,67 @@ def _make_getrrandseed_island(machine):
 
 # Registry of (segment index, entry offset, signature, island factory, name).
 # Each factory takes (machine, off) and returns the hook fn.
+# -- _win_IsWinOpen (seg7:C256, SIMTWO_MODULE) --------------------------------
+#
+# Recovered logic in recovered/window.py: a window "object handle" packs its
+# window-table slot in the HIGH byte; the window is open iff g_window_hwnd[slot]
+# (the word table at DGROUP:0xBCA6, read via DS) is non-zero AND USER reports it
+# visible.  The routine far-calls USER.IsWindowVisible (import thunk 0060:00F0,
+# the exact target the compiled `lcall 0x60,0xF0` names) and folds the result to
+# a 0/1 boolean.  ABI (far, caller cleans the one word arg):
+#   entry SP -> [ret_ip][ret_cs][objHandle]
+#   AX = 0/1 result; BX = &g_window_hwnd[slot] (the shl+add pointer, never
+#   restored — a compiled artifact the oracle still checks); flags = the
+#   logic-flags of that 0/1 (the final or/xor writer; IsWindowVisible returns
+#   canonical 0/1, so `set_logic_flags(result)` reproduces them exactly);
+#   CX/DX/SI/DI/BP/DS/ES preserved; retf (no arg cleanup).
+ISWINOPEN_SEG_INDEX = 7
+ISWINOPEN_OFF = 0xC256
+ISWINOPEN_HWND_TABLE_OFF = 0xBCA6                # DGROUP word table: slot -> HWND
+ISWINVISIBLE_THUNK_OFF = 0x00F0                  # USER.IsWindowVisible import thunk
+ISWINOPEN_SIG = bytes.fromhex(                   # enter..push si..sar..shl..add 0xBCA6
+    "c8020000568b76068bdec1fb08d1e381c3a6bc")
+
+
+def _make_iswinopen_island(machine):
+    from .recovered.window import win_is_win_open, _sar16
+    from win16.callback import call_far
+    from win16.loader import THUNK_SEG
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        obj_handle = m.rw(ss, (sp + 4) & 0xFFFF)
+
+        def hwnd_of_slot(slot: int) -> int:
+            off = (ISWINOPEN_HWND_TABLE_OFF + (slot * 2 & 0xFFFF)) & 0xFFFF
+            return m.rw(s.ds, off)
+
+        def is_window_visible(hwnd: int) -> int:
+            ax, _dx = call_far(cpu, THUNK_SEG, THUNK_SEG, ISWINVISIBLE_THUNK_OFF, [hwnd])
+            return ax
+
+        result = win_is_win_open(obj_handle, hwnd_of_slot, is_window_visible)
+
+        # Compiled-form residue the ASM leaves, which the register oracle checks:
+        slot = _sar16(obj_handle, 8)
+        s.bx = (ISWINOPEN_HWND_TABLE_OFF + slot * 2) & 0xFFFF   # &g_window_hwnd[slot]
+        s.ax = result
+        cpu.set_logic_flags(result, 16)                        # final or/xor flags
+
+        s.sp = (sp + 4) & 0xFFFF        # retf pops ret_ip+ret_cs; caller cleans the arg
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 _ISLANDS = [
     (RT_SEG_INDEX, AFULDIV_OFF, AFULDIV_SIG,
      lambda machine, off: _make_uldiv_island(off), "__aFuldiv"),
+    (ISWINOPEN_SEG_INDEX, ISWINOPEN_OFF, ISWINOPEN_SIG,
+     lambda machine, off: _make_iswinopen_island(machine), "_win_IsWinOpen"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

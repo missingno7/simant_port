@@ -6,6 +6,27 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — first RECOVERED call-coupled routine: _win_IsWinOpen (readable source)
+- The lift pipeline exists to FEED recovery, not replace it.  Took _win_IsWinOpen
+  (seg7:C256) the whole way: lift -> verify -> **refactor into readable
+  `simant/recovered/window.py`** -> prove the same oracle green.  The recovered source
+  reads like the original C:
+      HWND hwnd = g_window_hwnd[objHandle >> 8];   // word table at DGROUP:0xBCA6
+      return hwnd && IsWindowVisible(hwnd);
+  VM-free (imports nothing; window-table read + IsWindowVisible injected as callables),
+  so it's the actual reconstructed source, not a lifted liability.
+- Wired as a hand island (`hooks.py: _make_iswinopen_island`, 19 islands now) that
+  re-issues the far USER.IsWindowVisible call via `call_far` and reproduces the
+  compiled residue the register oracle checks: BX = &g_window_hwnd[slot] (the shl+add
+  pointer, never restored), flags = `set_logic_flags(result)` (the final or/xor; USER
+  returns canonical 0/1 so it's exact).  This is the FIRST island that calls a Windows
+  API from inside itself — the call-coupled pattern, now demonstrated end to end.
+- Proven TWO independent ways: A/B oracle (`test_iswinopen_island_matches_asm`, 4 cases
+  incl. visible/hidden/empty-slot, comparing 10 regs + CF|PF|ZF|SF|OF flags) AND the
+  machine lift (liftverify ORACLE_PASSING).  Full suite 186 green.
+- Next recovery candidate: _win_GetObjRect (seg7:C2D2, near-calls) — the near-call
+  analogue.  Then widen down the SIMTWO/GR module hot list.
+
 ## 2026-07-10 — scripts/liftverify.py: the lift→prove loop, in situ over a demo
 - New win16 lift-verify driver (`scripts/liftverify.py`): snapshot + demo + entries
   (`--entry 7:C256` or `--symbol _win_IsWinOpen`) → emit a literal hook each, install,
