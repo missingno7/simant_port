@@ -29,10 +29,16 @@
   * win16_re `c6f995c`: `win16/verify.py` — the Win16 runtime shim + cloner (pickle
     the OS graph, copy memory, re-bind API services to the clone; game-code hooks port
     over, thunk hooks stay the clone's own), wiring all three seams together.
-- **Interpreter note:** run liftverify under **CPython, not PyPy** — verification is
-  thousands of short clone+diff bursts, not one long loop, so the JIT never amortises
-  and pickle/alloc get slower (measured: clone 10.2ms vs 49.8ms, verify 42.5ms vs
-  70.5ms).  PyPy stays right for replay.py / play.py.
+- **Perf, measured & fixed:** first runs took ~28s and it looked like the verifier
+  was expensive.  It is not — the 2 functions x 5 samples = 10 ASM-oracle re-runs cost
+  ~0.3s total.  The 28s was the DRIVER over-running: after the last sample the outer
+  loop (200k-instruction step) kept replaying the demo into a GetTickCount busy-wait
+  region (~3k instr/s) before it could check "done".  Stepping the replay in 20k
+  chunks and breaking the instant every function is sampled -> **0.7s** (40x), same
+  byte-exact result.  Not too broad, not thread-bound; parallelism would not have
+  helped.  (Interpreter note: run liftverify under CPython — verification is short
+  clone+diff bursts the PyPy JIT can't amortise: clone 10.2 vs 49.8ms, verify 42.5 vs
+  70.5ms.  PyPy stays right for replay.py / play.py.)
 - Next: refactor a passing lift (start with `_win_IsWinOpen`, 22 insts) into readable
   `simant/recovered/`, keeping this same oracle green — the actual recovery goal.
 

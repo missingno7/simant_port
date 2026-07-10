@@ -212,17 +212,23 @@ def main(argv=None) -> int:
           f"{len(hooks)} lifted hook(s), {args.samples} sample(s) each...\n")
     diverged: dict[tuple[int, int], str] = {}
     runaway: dict[tuple[int, int], str] = {}
+    # Replay in SMALL steps so the outer loop regains control promptly.  The
+    # verification work itself is tiny (a handful of ASM-oracle re-runs, ~0.3s);
+    # the trap is over-running past the last sample.  A demo drives on into
+    # GetTickCount busy-wait regions that spin at ~3k instr/s, so every chunk of
+    # replay done AFTER sampling is complete is pure waste — measured as 40x the
+    # whole tool's runtime (0.7s vs 28s) between a 20k and a 200k step.
+    STEP = 20_000
     status, done = "budget reached", 0
     try:
         while done < args.budget:
             if not to_verify:
-                # Every function has met its sample budget.  Nothing is left to
-                # prove, so stop — otherwise we would replay the rest of the demo
-                # (tens of millions of instructions) as pure ASM for no reason.
+                # Every function met its sample budget: stop now rather than
+                # replay dead demo into a busy-wait.
                 status = "all functions sampled"
                 break
             try:
-                done += machine.cpu.run(min(200_000, args.budget - done))
+                done += machine.cpu.run(min(STEP, args.budget - done))
             except LiftRuntimeError as exc:
                 bad = next((k for k, n in machine.cpu.hook_names.items()
                             if k in hooks and n in str(exc)), None)
