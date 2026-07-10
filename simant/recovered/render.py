@@ -5,6 +5,53 @@ the original ASM by the A/B oracle in simant/tests/test_hooks.py.
 """
 from __future__ import annotations
 
+from typing import Callable, Iterator
+
+#: The nest map is a fixed 64x64 grid (the ASM's two nested `dl=0x40` counters).
+NEST_MAP_DIM = 64
+
+
+def gen_nest_map_cells(terrain: Callable[[int, int], int],
+                       alt: Callable[[int, int], int],
+                       empty_lookup: Callable[[int], int],
+                       mode: int, col_a: int, col_b: int, col_c: int
+                       ) -> Iterator[int | None]:
+    """Yield one colour byte per cell of the 64x64 nest map (or None to leave a
+    cell unchanged), in the ASM's write order: column-major (outer=column,
+    inner=row), so cell (col, row) is the (col*64 + row)-th value.
+
+    Each terrain byte is classified to a colour:
+
+      - 0xFE / 0xFF (the border sentinels)      -> `col_a`
+      - high bit set (0x80..0xFD)               -> `col_b`
+      - low, non-zero (0x01..0x7F)              -> `col_c`
+      - 0x00 (empty): when `mode` is non-zero, the cell is LEFT as it is
+        (yield None); otherwise it is filled from a secondary map —
+        `empty_lookup(alt(col, row))`.
+
+    `terrain(col, row)` / `alt(col, row)` read the two source maps; both are the
+    same 64x64 shape addressed row-major (offset col + row*64).  `empty_lookup`
+    is the original's `table[alt_byte >> 2]` (a 2-bit-reduced index into a byte
+    palette).  All injected, so this file never touches the VM.
+
+    Recovered from `_GenNestMap` (SIMANTW.SYM seg4:4754, _TEXT): `pusha`/`popa`
+    frame (every register restored); per cell a `lodsb` from the terrain map, a
+    cmp-ladder (0 / 0xFE / 0xFF / test 0x80), then a `stosb` of the chosen
+    palette byte (DGROUP globals 0x1B7A/7B/7C), with the empty-cell branch doing
+    `al = alt; shr al,2; stosb table[al]` (globals 0x1B78 = table base).
+    """
+    for col in range(NEST_MAP_DIM):
+        for row in range(NEST_MAP_DIM):
+            b = terrain(col, row) & 0xFF
+            if b == 0x00:
+                yield None if mode else empty_lookup(alt(col, row) & 0xFF) & 0xFF
+            elif b in (0xFE, 0xFF):
+                yield col_a & 0xFF
+            elif b & 0x80:
+                yield col_b & 0xFF
+            else:
+                yield col_c & 0xFF
+
 
 def windows_make_table_4x4(tiles, table):
     """Expand a row of terrain tiles into a 4-scanline pixel band.

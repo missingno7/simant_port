@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 20              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 21              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 20
-    assert runtime.install_hooks(runtime.create_machine()) == 20
+    assert hooks.install(m) == 21
+    assert runtime.install_hooks(runtime.create_machine()) == 21
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -378,7 +378,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 20
+        assert hooks.install(m) == 21
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -423,7 +423,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 20
+            assert hooks.install(m) == 21
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -451,7 +451,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 20
+        assert hooks.install(m) == 21
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -510,7 +510,7 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 20
+        assert hooks.install(m) == 21
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
@@ -564,3 +564,70 @@ def test_getobjrect_island_matches_asm(obj_handle, rect, flag):
     isl_out, isl_regs = _run_getobjrect(True, obj_handle, rect, flag)
     assert isl_out == asm_out, f"rect out differs: {isl_out} != {asm_out}"
     assert isl_regs == asm_regs, f"exit regs differ: {isl_regs} != {asm_regs}"
+
+
+# ---- _GenNestMap (seg4:4754) — recovered/render.py --------------------------
+# The 64x64 nest-map generator (hottest routine in the demo).  A pusha/popa
+# frame restores every register, so the observable state is the 4096-byte output
+# buffer plus four DGROUP globals.  We lay out two synthetic source maps + a
+# lookup table in DGROUP and A/B the full output against the ASM.
+def _run_gennestmap(with_island, terrain_bytes, alt_bytes, table_bytes, mode):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 21
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    TERR, ALT, TAB, OUT = 0x6000, 0x7000, 0x7800, 0x8000       # DGROUP scratch
+    for i in range(64 * 64):
+        m.mem.wb(DG, (TERR + i) & 0xFFFF, terrain_bytes.get(i, 0x40))   # default -> col_c
+        m.mem.wb(DG, (ALT + i) & 0xFFFF, alt_bytes.get(i, 0))
+    for i in range(256):
+        m.mem.wb(DG, (TAB + i) & 0xFFFF, table_bytes.get(i, 0))
+    for i in range(64 * 64):
+        m.mem.wb(DG, (OUT + i) & 0xFFFF, 0x11)                 # poison the output
+    COL_A, COL_B, COL_C = 0xAA, 0xBB, 0xCC
+
+    s.ds, s.es = DG, 0x9999
+    s.ax, s.bx, s.cx, s.dx = 0x0A0A, 0x0B0B, 0x0C0C, 0x0D0D    # markers (must survive)
+    s.si, s.di, s.bp = 0x5151, 0x6161, 0x7171
+    s.cs, s.ip = m.seg_bases[hooks.GENNESTMAP_SEG_INDEX], hooks.GENNESTMAP_OFF
+    sp = 0xF000
+    for v in (mode, COL_C, COL_B, COL_A, TAB, ALT, TERR, DG, OUT, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(600_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _GenNestMap did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    out = bytes(m.mem.rb(DG, (OUT + i) & 0xFFFF) for i in range(64 * 64))
+    globs = (m.mem.rw(DG, 0x1B78), m.mem.rb(DG, 0x1B7A),
+             m.mem.rb(DG, 0x1B7B), m.mem.rb(DG, 0x1B7C))
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return out, globs, regs
+
+
+@pytest.mark.parametrize("mode", [0, 1])
+def test_gennestmap_island_matches_asm(mode):
+    # a spread of terrain values exercising every classification branch, plus
+    # empties that route to the table (mode 0) or are left as poison (mode 1)
+    terrain = {i: v for i, v in {
+        0: 0xFE, 65: 0xFF, 130: 0x80, 195: 0x05, 260: 0x00,
+        400: 0xFD, 401: 0x7F, 402: 0x00, 1000: 0x00, 4095: 0x81,
+    }.items()}
+    alt = {260: 0x0C, 402: 0xFC, 1000: 0x40}      # >>2 -> 3, 0x3F, 0x10
+    table = {i: (i * 3 + 1) & 0xFF for i in range(64)}
+    asm = _run_gennestmap(False, terrain, alt, table, mode)
+    isl = _run_gennestmap(True, terrain, alt, table, mode)
+    assert isl[0] == asm[0], "output map differs"
+    assert isl[1] == asm[1], f"globals differ: {isl[1]} != {asm[1]}"
+    assert isl[2] == asm[2], f"registers not preserved: {isl[2]} != {asm[2]}"

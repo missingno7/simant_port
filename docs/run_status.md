@@ -6,6 +6,28 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — recovered _GenNestMap (the demo's #1 hot routine) — and: the lifter pays off
+- Recovered the hottest routine in the demo (~26% of PC samples): `_GenNestMap` (seg4:4754)
+  -> `recovered/render.py: gen_nest_map_cells`.  Builds the 64x64 nest colour map: per
+  cell, classify the terrain byte (border 0xFE/FF -> A; high bit -> B; low nonzero -> C;
+  empty 0x00 -> leave-it (mode!=0) or `table[alt>>2]`).  65 insts, 15 blocks, pure.
+- **Was the automatic lifter worth it?  For this one, clearly yes.**  I reversed the
+  routine FROM the emitted artifact (`simant/lifted/lifted_4_4754.py`), not raw disasm:
+  the emitter had already decoded all 65 instructions, split the control flow into
+  labelled basic blocks with explicit transitions, and named every memory op — so the
+  algorithm read straight off the page.  The honest counter-evidence: I still MUST
+  validate against the ASM.  A probe caught that `c1e802` is `shr ax,2` (÷4), not the
+  `shl` (×4) my first reading assumed — the empty-cell lookup is `table[alt>>2]`.
+  Verdict: for the 22-41 insn window helpers the emitter added little over disasm; at
+  65+ insns (and _DoCalcTile is 184) the block-structured lift genuinely de-risks the
+  hand-translation.  liftverify (the verify half) has been paying off since day one.
+- Island is unusually clean: `pusha`/`popa` restores EVERY register, so the only
+  observable state is the 4096-byte output + four DGROUP globals (0x1B78 table base,
+  0x1B7A/7B/7C palette).  A/B test compares the full output map + globals + all 10 regs
+  in both modes; also VM-free unit-exercised; liftverify ORACLE_PASSING.  21 islands, 192 green.
+- Next hot targets (all liftable, pure): _DoCalcTile (184 insts, the big one),
+  _XferTileColor (66), _XferLifeTileColor (88), _ResetEditScrollRange (74, 6 far calls).
+
 ## 2026-07-10 — recovered _win_GetObjRect (the near-call analogue)
 - Second call-coupled routine through the full loop (seg7:C2D2 -> recovered/window.py:
   `win_get_obj_rect`).  It copies an object's stored RECT into *lpRect via a two-level

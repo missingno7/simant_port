@@ -621,6 +621,75 @@ def _make_getobjrect_island(machine):
     return island
 
 
+# -- _GenNestMap (seg4:4754, _TEXT) -------------------------------------------
+#
+# The hottest routine in the demo (~26% of samples): builds the 64x64 nest
+# colour map.  Recovered logic in recovered/render.py: per cell, classify the
+# terrain byte to a palette colour (border 0xFE/0xFF -> A; high bit -> B; low
+# nonzero -> C; empty 0x00 -> leave it (mode!=0) or a secondary table lookup).
+# A `pusha`/`popa` + push/pop ds/es/bp frame means EVERY register is restored —
+# the only observable effects are the output buffer and four DGROUP globals the
+# routine caches its args into.  ABI (far, caller cleans the 18 arg bytes):
+#   entry SP -> [ret_ip][ret_cs] then, as words:
+#     +4 out.off  +6 out.seg  +8 terrain.off(->cx)  +0xA alt.off(->dx)
+#     +0xC table_base  +0xE colA  +0x10 colB  +0x12 colC  +0x14 mode
+#   writes 64*64 bytes to out (di stosb, wrapping at 0xFFFF) + the four globals;
+#   all registers preserved; retf.  (Sources + table are read via the caller DS.)
+GENNESTMAP_SEG_INDEX = 4
+GENNESTMAP_OFF = 0x4754
+GENNEST_TABLE_GLOBAL = 0x1B78                    # DGROUP word: empty-cell table base
+GENNEST_COLA_GLOBAL = 0x1B7A                     # DGROUP bytes: the three palette
+GENNEST_COLB_GLOBAL = 0x1B7B                     #   colours cached from the args
+GENNEST_COLC_GLOBAL = 0x1B7C
+GENNESTMAP_SIG = bytes.fromhex(                  # prologue: push bp..pusha..les..mov args
+    "558bec601e06c47e068b4e0a8b560c8b460e")
+
+
+def _make_gennestmap_island(machine):
+    from .recovered.render import gen_nest_map_cells, NEST_MAP_DIM
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        out_off, out_seg = arg(4), arg(6)
+        terrain_off, alt_off = arg(8), arg(0x0A)
+        table_base = arg(0x0C)
+        col_a, col_b, col_c = arg(0x0E) & 0xFF, arg(0x10) & 0xFF, arg(0x12) & 0xFF
+        mode = arg(0x14)
+        ds = s.ds
+
+        # The routine caches its args into DGROUP globals first (observable).
+        m.ww(ds, GENNEST_TABLE_GLOBAL, table_base)
+        m.wb(ds, GENNEST_COLA_GLOBAL, col_a)
+        m.wb(ds, GENNEST_COLB_GLOBAL, col_b)
+        m.wb(ds, GENNEST_COLC_GLOBAL, col_c)
+
+        def terrain(col, row):
+            return m.rb(ds, (terrain_off + col + row * NEST_MAP_DIM) & 0xFFFF)
+
+        def alt(col, row):
+            return m.rb(ds, (alt_off + col + row * NEST_MAP_DIM) & 0xFFFF)
+
+        def empty_lookup(alt_byte):
+            return m.rb(ds, (table_base + (alt_byte >> 2)) & 0xFFFF)
+
+        di = out_off
+        for cell in gen_nest_map_cells(terrain, alt, empty_lookup,
+                                       mode, col_a, col_b, col_c):
+            if cell is not None:
+                m.wb(out_seg, di & 0xFFFF, cell)
+            di = (di + 1) & 0xFFFF        # stosb advances di even on the skip branch
+
+        # pusha/popa + push/pop ds/es/bp restore every register — touch none.
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 _ISLANDS = [
     (RT_SEG_INDEX, AFULDIV_OFF, AFULDIV_SIG,
      lambda machine, off: _make_uldiv_island(off), "__aFuldiv"),
@@ -628,6 +697,8 @@ _ISLANDS = [
      lambda machine, off: _make_iswinopen_island(machine), "_win_IsWinOpen"),
     (GETOBJRECT_SEG_INDEX, GETOBJRECT_OFF, GETOBJRECT_SIG,
      lambda machine, off: _make_getobjrect_island(machine), "_win_GetObjRect"),
+    (GENNESTMAP_SEG_INDEX, GENNESTMAP_OFF, GENNESTMAP_SIG,
+     lambda machine, off: _make_gennestmap_island(machine), "_GenNestMap"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,
