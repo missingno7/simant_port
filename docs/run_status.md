@@ -6,6 +6,25 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — static call-graph probe: the bottom-up recovery queue exists
+- New `win16/insn.py` (decode-only 8086/186 length walker; handles the
+  FP-emulator `INT 34h-3Dh` +modrm forms this no-x87 build is full of) and
+  `win16/callgraph.py` (call extraction over the loaded image: near, far via
+  seg_bases, API via thunk `hook_names`, indirect flagged) — game-agnostic,
+  in win16_re `5b384be`.  `simant/probes/callgraph.py` joins them with the
+  SYM table and classifies every routine: **leaf** (no calls — fits the A/B
+  oracle as-is), **api** (OS calls only — island can service them through the
+  Python API layer), **coupled** (recover after its callees), **indirect**.
+- **1313 routines, 377 leaves, 95 api-only.**  Per module (leaf/api/coupled/
+  ind): SIMANT 25/13/127/0, GR 30/48/88/15, ANTEDIT 31/4/108/2, _TEXT
+  128/19/93/8, SIMONE 76/0/93/0, SIMANT1 24/0/99/0, SIMTWO 63/11/204/4.
+  Sanity gates in `test_callgraph.py`: MakeTable4x4/1x1 classify as leaves
+  (proven pure), _GBoxFill shows its API calls, >60% of near-call targets
+  land exactly on named entries (decoder is in sync, not reading noise).
+  Gate 48 green.  `python -m simant.probes.callgraph` prints the queue;
+  `--seg N` a per-module ledger.  Many sub-4-byte "leaves" are ret-stubs —
+  fold them into their module's recovery rather than one-by-one islands.
+
 ## 2026-07-10 — SYM resolver rewritten segment-aware; SimAnt's source-module map recovered
 - `probes/symbols.py` now parses the real MAPSYM structure (MAPDEF → SEGDEF
   chain → per-segment SYMDEF tables) instead of the flat offset-only scan whose
