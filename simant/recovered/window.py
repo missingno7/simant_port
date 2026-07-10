@@ -40,3 +40,30 @@ def win_is_win_open(obj_handle: int,
     if hwnd == 0:
         return 0
     return 1 if is_window_visible(hwnd) else 0
+
+
+def win_get_obj_rect(obj_handle: int,
+                     resolve_rect: Callable[[int, int], tuple],
+                     inclusive_adjust: int) -> tuple:
+    """Fetch object `obj_handle`'s rectangle, inclusive->exclusive if flagged.
+
+    The handle's HIGH byte selects a window-table slot, its LOW byte an object
+    index within that window; `resolve_rect(slot, obj)` returns that object's
+    stored `(left, top, right, bottom)`.  In the original the resolver walks a
+    far-pointer table at DGROUP:0xCE9A (slot -> window record), then the
+    record's object-rect far-pointer array at record+0x2C (obj -> RECT).
+
+    When `inclusive_adjust` (the global at DGROUP:0xBD0A) is set the stored rect
+    is inclusive, so `right` and `bottom` are bumped by one to make it a
+    half-open (exclusive) rect.  Injected resolver => this file never touches
+    the VM.
+
+    Recovered from `_win_GetObjRect` (SIMANTW.SYM seg7:C2D2, SIMTWO_MODULE),
+    which brackets the copy with `_win_LockWin` / `_win_UnlockWin` — no-op stubs
+    under the fixed Win16 memory model, so they carry no behaviour to recover.
+    """
+    left, top, right, bottom = resolve_rect(_sar16(obj_handle, 8), obj_handle & 0xFF)
+    if inclusive_adjust:
+        right = (right + 1) & 0xFFFF
+        bottom = (bottom + 1) & 0xFFFF
+    return left, top, right, bottom

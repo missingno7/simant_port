@@ -556,11 +556,78 @@ def _make_iswinopen_island(machine):
     return island
 
 
+# -- _win_GetObjRect (seg7:C2D2, SIMTWO_MODULE) -------------------------------
+#
+# Recovered logic in recovered/window.py: copy object `objHandle`'s stored RECT
+# into `*lpRect`, bumping right/bottom when the DGROUP:0xBD0A "inclusive rects"
+# flag is set.  The source RECT is reached by a two-level far-pointer walk:
+#   winrec far* = *(farptr*)(DGROUP:0xCE9A + (objHandle>>8)*4)
+#   src   far* = *(farptr*)(winrec + 0x2C + (objHandle&0xFF)*4)
+# The routine brackets the copy with _win_LockWin/_win_UnlockWin (both `retf`
+# no-ops under the fixed Win16 memory model — no state effect, so the island
+# need not re-issue them).  ABI (far, caller cleans the 3 arg words):
+#   entry SP -> [ret_ip][ret_cs][objHandle][lpRect.off][lpRect.seg]
+#   writes the 4-word RECT to lpRect; AX = src RECT offset, DX = src segment
+#   (the es:[bx+si+0x2c/2e] loads), ES = lpRect segment, BX = &lpRect (adjust)
+#   or (objHandle&0xFF)*4 (no adjust); CX/SI/DI/BP/DS preserved; retf.
+# (Flags at retf come from the final `add sp,2` arg-cleanup — a calling-
+#  convention artifact, not logic; the register+memory oracle covers this
+#  island, the machine lift covers full-state incl. flags.)
+GETOBJRECT_SEG_INDEX = 7
+GETOBJRECT_OFF = 0xC2D2
+GETOBJRECT_WINTAB_OFF = 0xCE9A                   # DGROUP far-ptr table: slot -> winrec
+GETOBJRECT_OBJARR_OFF = 0x2C                     # winrec+0x2C: far-ptr array, obj -> RECT
+GETOBJRECT_FLAG_OFF = 0xBD0A                     # DGROUP "inclusive rects" flag
+GETOBJRECT_SIG = bytes.fromhex(                  # prologue + push arg + call _win_LockWin
+    "558bec5756ff7606900ee8c92083c4028a5e06")
+
+
+def _make_getobjrect_island(machine):
+    from .recovered.window import win_get_obj_rect
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        obj_handle = m.rw(ss, (sp + 4) & 0xFFFF)
+        lprect_off = m.rw(ss, (sp + 6) & 0xFFFF)
+        lprect_seg = m.rw(ss, (sp + 8) & 0xFFFF)
+
+        # The far-pointer walk that resolves an object's stored RECT; also
+        # captures the source far pointer, which the ASM leaves in DX:AX.
+        src = {}
+
+        def resolve_rect(slot: int, obj: int):
+            t = (GETOBJRECT_WINTAB_OFF + (slot * 4 & 0xFFFF)) & 0xFFFF
+            rec_off, rec_seg = m.rw(s.ds, t), m.rw(s.ds, (t + 2) & 0xFFFF)
+            p = (rec_off + GETOBJRECT_OBJARR_OFF + obj * 4) & 0xFFFF
+            src["off"], src["seg"] = m.rw(rec_seg, p), m.rw(rec_seg, (p + 2) & 0xFFFF)
+            return tuple(m.rw(src["seg"], (src["off"] + i * 2) & 0xFFFF) for i in range(4))
+
+        flag = m.rw(s.ds, GETOBJRECT_FLAG_OFF)
+        rect = win_get_obj_rect(obj_handle, resolve_rect, flag)
+        for i, word in enumerate(rect):
+            m.ww(lprect_seg, (lprect_off + i * 2) & 0xFFFF, word)
+
+        # Compiled residue the register oracle checks:
+        s.ax, s.dx = src["off"], src["seg"]          # DX:AX = the src RECT far ptr
+        s.es = lprect_seg                            # ES = lpRect segment (les di,[bp+8])
+        s.bx = (lprect_off if flag else (obj_handle & 0xFF) * 4) & 0xFFFF
+
+        s.sp = (sp + 4) & 0xFFFF        # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 _ISLANDS = [
     (RT_SEG_INDEX, AFULDIV_OFF, AFULDIV_SIG,
      lambda machine, off: _make_uldiv_island(off), "__aFuldiv"),
     (ISWINOPEN_SEG_INDEX, ISWINOPEN_OFF, ISWINOPEN_SIG,
      lambda machine, off: _make_iswinopen_island(machine), "_win_IsWinOpen"),
+    (GETOBJRECT_SEG_INDEX, GETOBJRECT_OFF, GETOBJRECT_SIG,
+     lambda machine, off: _make_getobjrect_island(machine), "_win_GetObjRect"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

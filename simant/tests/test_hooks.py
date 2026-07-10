@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 19              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 20              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 19
-    assert runtime.install_hooks(runtime.create_machine()) == 19
+    assert hooks.install(m) == 20
+    assert runtime.install_hooks(runtime.create_machine()) == 20
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -378,7 +378,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 19
+        assert hooks.install(m) == 20
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -423,7 +423,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 19
+            assert hooks.install(m) == 20
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -451,7 +451,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 19
+        assert hooks.install(m) == 20
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -500,3 +500,67 @@ def test_iswinopen_island_matches_asm(obj_handle, slot_kind, expect):
     isl = _run_iswinopen(True, obj_handle, slot_kind)
     assert asm["ax"] == expect, f"ASM oracle itself disagrees: {asm['ax']} != {expect}"
     assert isl == asm, f"island != ASM for {slot_kind} @ {obj_handle:#06x}: {isl} != {asm}"
+
+
+# ---- _win_GetObjRect (seg7:C2D2) — recovered/window.py ----------------------
+# Two-level far-pointer walk to an object's stored RECT, copied to *lpRect, with
+# right/bottom bumped when the DGROUP:0xBD0A inclusive-rects flag is set.  We lay
+# out synthetic winrec + RECT structures in DGROUP and A/B the island vs ASM.
+def _run_getobjrect(with_island, obj_handle, rect, flag):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 20
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
+    slot, obj = (obj_handle >> 8) & 0xFF, obj_handle & 0xFF
+
+    # far-ptr table[slot] -> winrec;  winrec+0x2C+obj*4 -> src RECT
+    tab = (hooks.GETOBJRECT_WINTAB_OFF + slot * 4) & 0xFFFF
+    m.mem.ww(DG, tab, WINREC);            m.mem.ww(DG, (tab + 2) & 0xFFFF, DG)
+    arr = (WINREC + hooks.GETOBJRECT_OBJARR_OFF + obj * 4) & 0xFFFF
+    m.mem.ww(DG, arr, SRC);              m.mem.ww(DG, (arr + 2) & 0xFFFF, DG)
+    for i, v in enumerate(rect):
+        m.mem.ww(DG, (SRC + i * 2) & 0xFFFF, v & 0xFFFF)
+    for i in range(4):
+        m.mem.ww(DG, (LPRECT + i * 2) & 0xFFFF, 0xEEEE)   # poison the output
+    m.mem.ww(DG, hooks.GETOBJRECT_FLAG_OFF, flag)
+
+    s.ds = DG
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.GETOBJRECT_SEG_INDEX], hooks.GETOBJRECT_OFF
+    sp = 0xFC00
+    for v in (DG, LPRECT, obj_handle, SENT_CS, SENT_IP):     # lpRect far, objHandle, ret
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(4000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _win_GetObjRect did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    out = [m.mem.rw(DG, (LPRECT + i * 2) & 0xFFFF) for i in range(4)]
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return out, regs
+
+
+@pytest.mark.parametrize("obj_handle,rect,flag", [
+    (0x0503, [10, 20, 30, 40], 0),      # plain copy
+    (0x0503, [10, 20, 30, 40], 1),      # inclusive -> exclusive (right/bottom +1)
+    (0x1307, [1, 2, 3, 4], 0),          # different slot + object index
+    (0x0A00, [0xFFFF, 5, 0xFFFF, 7], 1),  # +1 wraps 0xFFFF -> 0 (16-bit)
+])
+def test_getobjrect_island_matches_asm(obj_handle, rect, flag):
+    asm_out, asm_regs = _run_getobjrect(False, obj_handle, rect, flag)
+    isl_out, isl_regs = _run_getobjrect(True, obj_handle, rect, flag)
+    assert isl_out == asm_out, f"rect out differs: {isl_out} != {asm_out}"
+    assert isl_regs == asm_regs, f"exit regs differ: {isl_regs} != {asm_regs}"

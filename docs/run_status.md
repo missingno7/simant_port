@@ -6,6 +6,27 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — recovered _win_GetObjRect (the near-call analogue)
+- Second call-coupled routine through the full loop (seg7:C2D2 -> recovered/window.py:
+  `win_get_obj_rect`).  It copies an object's stored RECT into *lpRect via a two-level
+  far-pointer walk (window-table at DGROUP:0xCE9A -> window record; record+0x2C obj-rect
+  array -> RECT) and bumps right/bottom when the DGROUP:0xBD0A inclusive-rects flag is
+  set.  Recovered source stays VM-free (the far-ptr walk is injected as `resolve_rect`).
+- **Key find:** the bracketing `push cs; call` pairs go to `_win_LockWin` (seg7:E3A8) and
+  `_win_UnlockWin` (seg7:E3A4) — both bare `retf` NO-OP stubs (the fixed Win16 memory
+  model needs no locking).  So the "near calls" carry no behaviour; the island need not
+  re-issue them, and the recovered source documents them as no-op brackets.
+- Island reproduces the compiled residue the register oracle checks: DX:AX = the source
+  RECT far pointer (the es:[bx+si+0x2c/2e] loads), ES = lpRect segment, BX = &lpRect
+  (adjust) or (obj&0xFF)*4 (no adjust); CX/SI/DI/BP/DS preserved.  Flags at retf come
+  from the final `add sp,2` arg-cleanup (a calling-convention artifact) — compared by
+  the machine lift's full-state check, not the register island (house style, like
+  MakeTable).
+- Proven two ways: A/B oracle (`test_getobjrect_island_matches_asm`, 4 cases incl. the
+  inclusive bump and a 0xFFFF->0 wrap) + liftverify ORACLE_PASSING.  20 islands, 190
+  green.  Both call-coupled frontier routines (API-call + near-call analogues) are now
+  recovered readable source.
+
 ## 2026-07-10 — first RECOVERED call-coupled routine: _win_IsWinOpen (readable source)
 - The lift pipeline exists to FEED recovery, not replace it.  Took _win_IsWinOpen
   (seg7:C256) the whole way: lift -> verify -> **refactor into readable
