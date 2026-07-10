@@ -795,9 +795,91 @@ def _make_xfertilecolor_island(machine):
     return island
 
 
+# -- _DrawChar (seg7:B033, SIMTWO_MODULE) -------------------------------------
+#
+# A sub-byte-shifted OR-composite 1bpp glyph blit.  Recovered logic in
+# recovered/render.py: per row, `width//8` overlapping shifted words OR'd into
+# the destination, plus a partial edge column masked to `width & 7` top bits
+# (mask table at src-seg:0xB02A, read via xlatb).  Per-row strides come from
+# DGROUP globals 0xB912 (src) / 0xB914 (dst); the routine hardcodes ds = DGROUP.
+# Unlike the tile blits it does NOT pusha — it preserves si/di/ds/es/bp but
+# CLOBBERS ax/bx/cx/dx, whose exit values the island reproduces:
+#   bx = width; cx = (y&7)<<8 | (x&7);
+#   no partial (width&7==0): ax = 0, dx = 0  (from `mov ax,bx; and ax,7`);
+#   partial: dx = mask<<8, ax = the last row's partial shifted word.
+# It also writes three scratch globals (0xB90E src seg, 0xB910 dst seg, 0xB918
+# width>>3).  ABI (far, caller cleans 16 arg bytes): entry SP -> [ret_ip][ret_cs]
+#   +4 src.off +6 src.seg +8 dst.off +0xA dst.seg +0xC width +0xE height
+#   +0x10 x +0x12 y.
+DRAWCHAR_SEG_INDEX = 7
+DRAWCHAR_OFF = 0xB033
+DRAWCHAR_MASK_TABLE_OFF = 0xB02A                 # src-seg top-n-bits mask table
+DRAWCHAR_G_SRCSEG, DRAWCHAR_G_DSTSEG = 0xB90E, 0xB910   # scratch globals it writes
+DRAWCHAR_G_SRCSTRIDE, DRAWCHAR_G_DSTSTRIDE = 0xB912, 0xB914   # strides it reads
+DRAWCHAR_G_WORDS = 0xB918
+DRAWCHAR_SIG = bytes.fromhex(                     # push bp;mov bp,sp;add bp,6;push es/ds/si/di;mov ax,0x6902
+    "558bec83c506061e5657b80269")
+
+
+def _make_drawchar_island(machine):
+    from .recovered.render import draw_char, shift_glyph_word
+    dg = machine.seg_bases[DG_SEG_INDEX]
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        src_off, src_seg = arg(4), arg(6)
+        dst_off, dst_seg = arg(8), arg(0x0A)
+        width, height, x, y = arg(0x0C), arg(0x0E), arg(0x10), arg(0x12)
+
+        x_sub, y_sub = x & 7, y & 7
+        si_base = (src_off + (x >> 3)) & 0xFFFF
+        di_base = (dst_off + (y >> 3)) & 0xFFFF
+        src_stride = m.rw(dg, DRAWCHAR_G_SRCSTRIDE)
+        dst_stride = m.rw(dg, DRAWCHAR_G_DSTSTRIDE)
+        partial_mask = m.rb(src_seg, (DRAWCHAR_MASK_TABLE_OFF + (width & 7)) & 0xFFFF)
+
+        def read_src(row, col):
+            return m.rw(src_seg, (si_base + row * src_stride + col) & 0xFFFF)
+
+        def read_dst(row, col):
+            return m.rw(dst_seg, (di_base + row * dst_stride + col) & 0xFFFF)
+
+        def write_dst(row, col, val):
+            m.ww(dst_seg, (di_base + row * dst_stride + col) & 0xFFFF, val)
+
+        draw_char(read_src, read_dst, write_dst, width, height, x_sub, y_sub,
+                  partial_mask)
+
+        # Scratch globals the routine caches (observable).
+        m.ww(dg, DRAWCHAR_G_SRCSEG, src_seg)
+        m.ww(dg, DRAWCHAR_G_DSTSEG, dst_seg)
+        m.ww(dg, DRAWCHAR_G_WORDS, width >> 3)
+
+        # Clobbered-register residue (not pusha-preserved):
+        s.bx = width & 0xFFFF
+        s.cx = ((y_sub << 8) | x_sub) & 0xFFFF
+        if width & 7:
+            s.dx = (partial_mask << 8) & 0xFFFF
+            last = (si_base + (height - 1) * src_stride + (width >> 3)) & 0xFFFF
+            s.ax = shift_glyph_word(m.rw(src_seg, last), x_sub, y_sub, partial_mask)
+        else:
+            s.ax = s.dx = 0                       # `mov ax,bx; and ax,7` leaves ax = 0
+
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 _ISLANDS = [
     (RT_SEG_INDEX, AFULDIV_OFF, AFULDIV_SIG,
      lambda machine, off: _make_uldiv_island(off), "__aFuldiv"),
+    (DRAWCHAR_SEG_INDEX, DRAWCHAR_OFF, DRAWCHAR_SIG,
+     lambda machine, off: _make_drawchar_island(machine), "_DrawChar"),
     (ISWINOPEN_SEG_INDEX, ISWINOPEN_OFF, ISWINOPEN_SIG,
      lambda machine, off: _make_iswinopen_island(machine), "_win_IsWinOpen"),
     (GETOBJRECT_SEG_INDEX, GETOBJRECT_OFF, GETOBJRECT_SIG,

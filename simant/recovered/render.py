@@ -98,6 +98,55 @@ def xfer_tile_color(read_src: Callable[[int], int],
         src = (src + row_bytes) & M
 
 
+#: Top-`n`-bits masks for a glyph's partial edge column, indexed by `width & 7`
+#: (the ASM's xlatb table at seg7:0xB02A).
+GLYPH_PARTIAL_MASK = (0x00, 0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xFF)
+
+
+def shift_glyph_word(word: int, x_sub: int, y_sub: int, hi_mask: int = 0xFF) -> int:
+    """Position a source glyph word at a sub-byte bit offset for OR-compositing.
+
+    The word is read big-endian (the ASM's `xchg al,ah`), shifted left by
+    `x_sub`, reduced to its high byte (also masked to `hi_mask` for a partial
+    edge column), shifted right by `y_sub`, and byte-swapped back to
+    little-endian — the exact `shl / xor al,al / and / shr` dance of _DrawChar.
+    """
+    w = ((word & 0xFF) << 8) | (word >> 8)
+    w = ((w << x_sub) & 0xFF00) & ((hi_mask << 8) & 0xFF00)
+    w >>= y_sub
+    return ((w & 0xFF) << 8) | (w >> 8)
+
+
+def draw_char(read_src: Callable[[int, int], int],
+              read_dst: Callable[[int, int], int],
+              write_dst: Callable[[int, int, int], None],
+              width: int, height: int, x_sub: int, y_sub: int,
+              partial_mask: int) -> None:
+    """OR-composite a `width`-bit x `height`-row 1bpp glyph, sub-byte aligned.
+
+    Each row draws `width // 8` full words plus, when `width` is not a byte
+    multiple, one partial edge column masked to its top `width & 7` bits.
+    Positions advance one BYTE per step (overlapping words), so a sub-byte
+    x-shift smears each source word across the destination byte boundary;
+    compositing is OR (a 1bpp glyph over whatever is already there).
+
+    `read_src(row, col)` / `read_dst(row, col)` read the source / destination
+    word at row `row`, byte column `col`; `write_dst(row, col, value)` stores it.
+
+    Recovered from `_DrawChar` (SIMANTW.SYM seg7:B033, SIMTWO_MODULE).
+    """
+    full_words = width >> 3
+    partial_bits = width & 7
+    for row in range(height):
+        for col in range(full_words):
+            w = shift_glyph_word(read_src(row, col), x_sub, y_sub)
+            write_dst(row, col, read_dst(row, col) | w)
+        if partial_bits:
+            w = shift_glyph_word(read_src(row, full_words), x_sub, y_sub,
+                                 partial_mask)
+            write_dst(row, full_words, read_dst(row, full_words) | w)
+
+
 def xfer_life_tile_color(read_src: Callable[[int], int],
                          read_dst: Callable[[int], int],
                          write_dst: Callable[[int, int], None],

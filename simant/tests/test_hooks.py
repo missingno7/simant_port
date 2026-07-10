@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 23              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 24              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 23
-    assert runtime.install_hooks(runtime.create_machine()) == 23
+    assert hooks.install(m) == 24
+    assert runtime.install_hooks(runtime.create_machine()) == 24
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -378,7 +378,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 23
+        assert hooks.install(m) == 24
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -423,7 +423,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 23
+            assert hooks.install(m) == 24
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -451,7 +451,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 23
+        assert hooks.install(m) == 24
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -510,7 +510,7 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 23
+        assert hooks.install(m) == 24
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
@@ -575,7 +575,7 @@ def _run_gennestmap(with_island, terrain_bytes, alt_bytes, table_bytes, mode):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 23
+        assert hooks.install(m) == 24
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     TERR, ALT, TAB, OUT = 0x6000, 0x7000, 0x7800, 0x8000       # DGROUP scratch
@@ -641,7 +641,7 @@ def _run_xfertilecolor(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 23
+        assert hooks.install(m) == 24
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -705,7 +705,7 @@ def _run_xferlifetilecolor(with_island, args, src_bytes, dst_fill, dst_span=0x40
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 23
+        assert hooks.install(m) == 24
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -759,3 +759,77 @@ def test_xferlifetilecolor_island_matches_asm(args):
     isl = _run_xferlifetilecolor(True, args, src, dst_fill)
     assert isl[0] == asm[0], "blended destination differs"
     assert isl[1] == asm[1], f"registers not preserved: {isl[1]} != {asm[1]}"
+
+
+# ---- _DrawChar (seg7:B033) — recovered/render.py ----------------------------
+# Sub-byte-shifted OR-composite 1bpp glyph blit.  It does NOT pusha, so it
+# clobbers ax/bx/cx/dx (values the island reproduces) while preserving
+# si/di/ds/es/bp; it writes three scratch globals and reads per-row strides and
+# a partial-mask table from the source segment.  We use DGROUP as the source
+# segment and plant the mask table at DGROUP:0xB02A (as the code segment has it).
+_DRAWCHAR_MASKS = bytes.fromhex("0080c0e0f0f8fcfeff")   # top-n-bits, n = width & 7
+
+
+def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_stride,
+                  dst_fill, span=0x80):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 24
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    SRC, DST = 0x6000, 0x7000
+    for i, b in enumerate(_DRAWCHAR_MASKS):                # mask table in the source seg
+        m.mem.wb(DG, (hooks.DRAWCHAR_MASK_TABLE_OFF + i) & 0xFFFF, b)
+    for i in range(span):
+        m.mem.wb(DG, (DST + i) & 0xFFFF, dst_fill[i % len(dst_fill)])
+    for i, b in enumerate(glyph):
+        m.mem.wb(DG, (SRC + i) & 0xFFFF, b)
+    m.mem.ww(DG, hooks.DRAWCHAR_G_SRCSTRIDE, src_stride)
+    m.mem.ww(DG, hooks.DRAWCHAR_G_DSTSTRIDE, dst_stride)
+
+    s.ax, s.bx, s.cx, s.dx = 0xA0A0, 0xB0B0, 0xC0C0, 0xD0D0
+    s.si, s.di, s.bp, s.es, s.ds = 0x1234, 0x5678, 0x9ABC, 0xDEF0, DG
+    s.cs, s.ip = m.seg_bases[hooks.DRAWCHAR_SEG_INDEX], hooks.DRAWCHAR_OFF
+    words = [SRC, DG, DST, DG, width, height, x, y]
+    sp = 0xF000
+    for v in reversed(words):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    for v in (SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(300_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _DrawChar did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    out = bytes(m.mem.rb(DG, (DST + i) & 0xFFFF) for i in range(span))
+    globs = (m.mem.rw(DG, 0xB90E), m.mem.rw(DG, 0xB910), m.mem.rw(DG, 0xB918))
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return out, globs, regs
+
+
+@pytest.mark.parametrize("width,height,x,y", [
+    (16, 1, 0, 0),        # byte-aligned, two full words
+    (16, 3, 0, 0),        # multi-row (exercises the per-row strides)
+    (12, 1, 4, 0),        # sub-byte x-shift + a partial edge column (12 & 7 = 4)
+    (11, 2, 3, 1),        # odd width + x and y sub-bits
+    (8, 2, 5, 0),         # single byte per row, shifted
+])
+def test_drawchar_island_matches_asm(width, height, x, y):
+    glyph = bytes((i * 37 + 11) & 0xFF for i in range(64))
+    dst_fill = bytes([0x80, 0x01, 0x42, 0x24])
+    asm = _run_drawchar(False, width, height, x, y, glyph, 4, 5, dst_fill)
+    isl = _run_drawchar(True, width, height, x, y, glyph, 4, 5, dst_fill)
+    assert isl[0] == asm[0], "composited destination differs"
+    assert isl[1] == asm[1], f"scratch globals differ: {isl[1]} != {asm[1]}"
+    assert isl[2] == asm[2], f"exit registers differ: {isl[2]} != {asm[2]}"

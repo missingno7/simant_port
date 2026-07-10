@@ -6,6 +6,26 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — recovered _DrawChar (the sub-byte-shifted glyph blit — the intricate one)
+- Recovered `_DrawChar` (seg7:B033) -> `recovered/render.py: draw_char` + `shift_glyph_word`.
+  A 1bpp glyph OR-composited into a bitmap with SUB-BYTE bit alignment: per row it walks
+  `width//8` OVERLAPPING words (position advances one byte/step, so a shifted source
+  word smears across the byte boundary) plus a partial edge column masked to `width & 7`
+  top bits.  Sub-byte shift = byteswap, shl(x&7), keep-high-byte, shr(y&7), byteswap back.
+- **Probe-first paid off (again).**  Two subtleties a rushed read would miss, both nailed
+  by ground-truth probes: (1) the partial-mask table is at src-seg:0xB02A =
+  `0080c0e0f0f8fcfeff` (top-n-bits), read via xlatb with ds=source segment (font data is
+  in seg7); (2) it does NOT pusha, so ax/bx/cx/dx are clobbered with data-dependent exit
+  values — reproduced exactly: bx=width, cx=(y&7)<<8|(x&7), and for a partial column
+  dx=mask<<8, ax=the last row's partial shifted word (else `mov ax,bx;and ax,7` leaves 0).
+- Writes three scratch globals (0xB90E src seg, 0xB910 dst seg, 0xB918 width>>3); reads
+  per-row strides from 0xB912/0xB914; hardcodes ds=DGROUP (0x6902 = seg_bases[10]).
+- Proven three ways: A/B oracle (5 cases: byte-aligned, multi-row, sub-byte x, odd width
+  + x&y sub-bits, single-byte-shifted; composited dest + 3 globals + all 10 regs incl the
+  clobbered ax/bx/cx/dx), VM-free unit exercise, liftverify ORACLE_PASSING.  24 islands, 204 green.
+- Deferred boss: _DoCalcTile (184, 4 modes).  Remaining call-coupled hot: _ResetEditScrollRange
+  (#2 hot, 6 side-effectful scroll-API calls), _CenterEdit (65, 1 near call).
+
 ## 2026-07-10 — recovered _XferLifeTileColor (the transparent blit sibling)
 - Recovered `_XferLifeTileColor` (seg4:48FA) -> `recovered/render.py: xfer_life_tile_color`.
   BYTE-IDENTICAL setup to _XferTileColor (same stride/start/huge-ptr walk — the compiler
