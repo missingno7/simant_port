@@ -98,6 +98,80 @@ def xfer_tile_color(read_src: Callable[[int], int],
         src = (src + row_bytes) & M
 
 
+#: Per-view-mode tile-map layout for `do_calc_tile`, keyed by the mode selector
+#: (DGROUP:0xCC76).  Modes 0 and 1 share layout 0.  Fields: the tile-x mask, the
+#: graphic map's DGROUP offset and additive bias, the attribute map's offset, and
+#: the three attribute base constants (for the 0xFF / 0xFE / other cases).
+_TILE_MODES = {
+    #     x_mask  gfx_map  gfx_bias  attr_map  ff_base  fe_base  else_base
+    0:   (0x7F,   0x28E8,  0x00,     0x68E8,   0x380,   0x388,   0x100),
+    2:   (0x3F,   0x48E8,  0x90,     0x88E8,   0x300,   0x308,   0x200),
+    3:   (0x3F,   0x58E8,  0x90,     0x98E8,   0x300,   0x308,   0x200),
+}
+
+
+def _tile_attr(cell, attr_map, ff_base, fe_base, else_base, read_byte, read_word):
+    """The tile ATTRIBUTE (CE7A) shared by every _DoCalcTile mode.
+
+    Reads the attribute map at `cell`; 0 leaves it clear, 0xFF/0xFE are animated
+    specials assembled from DGROUP globals (a base + a season word CF54 + a phase
+    word CC84, plus CF50 or CE92 depending on whether CC84 has reached 8), and any
+    other value is a plain `attr + else_base`.
+    """
+    attr = read_byte((cell + attr_map) & 0xFFFF)
+    if attr == 0x00:
+        return 0
+    if attr == 0xFF:
+        phase = read_word(0xCC84)
+        v = ff_base + read_word(0xCF54) + phase
+        v += read_word(0xCF50) if phase >= 8 else read_word(0xCE92)
+        return v & 0xFFFF
+    if attr == 0xFE:
+        return (fe_base + read_word(0xCC84) + read_word(0xCF54)
+                + read_word(0xCF50)) & 0xFFFF
+    return (attr + else_base) & 0xFFFF
+
+
+def do_calc_tile(mode, tile_x, tile_y, sub_mode,
+                 read_byte, read_word, read_layer):
+    """Resolve a map cell to its graphic index (CE96) and attribute (CE7A).
+
+    `mode` (DGROUP:0xCC76) selects the view: 0/1 the main map, 2 and 3 two
+    alternate map pairs; mode >= 4 draws nothing (both outputs 0).  Returns
+    `(ce96, ce7a)`.
+
+    The graphic comes from `gfx_map[cell] + gfx_bias`, where `cell = (tile_x &
+    x_mask) << 6 + tile_y`.  In modes 0/1 five half-resolution overlay layers
+    (DGROUP far-pointer table at 0xACAE, selected by `sub_mode` = 0xAC58) are
+    consulted first: a layer texel above 0x10 overrides the graphic with
+    `((texel >> 4) & 0x1F) + 0xF0`.  The attribute is then `_tile_attr(...)`.
+
+    `read_byte`/`read_word` read DGROUP; `read_layer(sub, index)` reads overlay
+    layer `sub` at half-res `index`.  All injected, so this file never touches
+    the VM.
+
+    Recovered from `_DoCalcTile` (SIMANTW.SYM seg4:4A6B, _TEXT).
+    """
+    if mode >= 4:
+        return 0, 0
+    x_mask, gfx_map, gfx_bias, attr_map, ff_base, fe_base, else_base = \
+        _TILE_MODES[0 if mode <= 1 else mode]
+    x = tile_x & x_mask
+    cell = ((x << 6) + tile_y) & 0xFFFF
+
+    ce96 = None
+    if mode <= 1 and sub_mode <= 4:
+        texel = read_layer(sub_mode, (((x >> 1) << 5) + (tile_y >> 1)) & 0xFFFF)
+        if texel > 0x10:
+            ce96 = (((texel >> 4) & 0x1F) + 0xF0) & 0xFF
+    if ce96 is None:
+        ce96 = (read_byte((cell + gfx_map) & 0xFFFF) + gfx_bias) & 0xFF
+
+    ce7a = _tile_attr(cell, attr_map, ff_base, fe_base, else_base,
+                      read_byte, read_word)
+    return ce96, ce7a
+
+
 #: Top-`n`-bits masks for a glyph's partial edge column, indexed by `width & 7`
 #: (the ASM's xlatb table at seg7:0xB02A).
 GLYPH_PARTIAL_MASK = (0x00, 0x80, 0xC0, 0xE0, 0xF0, 0xF8, 0xFC, 0xFE, 0xFF)

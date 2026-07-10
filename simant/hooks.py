@@ -875,11 +875,73 @@ def _make_drawchar_island(machine):
     return island
 
 
+# -- _DoCalcTile (seg4:4A6B, _TEXT) -------------------------------------------
+#
+# The map-cell tile resolver: the demo's #3 hot routine (184 insts, 4 view
+# modes).  Recovered logic in recovered/render.py: given a tile (x, y) and the
+# view mode (DGROUP:0xCC76), produce the cell's graphic index (CE96 byte) and
+# attribute (CE7A word) by indexing per-mode graphic/attribute maps, with modes
+# 0/1 first consulting five overlay layers (far-ptr table at 0xACAE, selector
+# 0xAC58).  A pusha/popa frame restores every register, so the only observable
+# state is the two DGROUP output globals.  ABI (far, caller cleans 4 arg bytes):
+#   entry SP -> [ret_ip][ret_cs][tile_x][tile_y]
+GENDOCALCTILE_SEG_INDEX = 4
+DOCALCTILE_OFF = 0x4A6B
+DOCALCTILE_MODE_G = 0xCC76                        # DGROUP: view mode selector
+DOCALCTILE_SUB_G = 0xAC58                         # DGROUP: overlay-layer selector
+DOCALCTILE_LAYER_TABLE = 0xACAE                   # DGROUP: 5 overlay far-pointers
+DOCALCTILE_CE96, DOCALCTILE_CE7A = 0xCE96, 0xCE7A  # DGROUP: graphic + attribute out
+DOCALCTILE_SIG = bytes.fromhex(                  # prologue + xor bx,bx + the two output inits
+    "558bec601e0633db881e96ce891e7ace")
+
+
+def _make_docalctile_island(machine):
+    from .recovered.render import do_calc_tile
+    dg = machine.seg_bases[DG_SEG_INDEX]
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        tile_x = m.rw(ss, (sp + 4) & 0xFFFF)
+        tile_y = m.rw(ss, (sp + 6) & 0xFFFF)
+        ds = s.ds
+
+        mode = m.rw(ds, DOCALCTILE_MODE_G)
+        sub_mode = m.rw(ds, DOCALCTILE_SUB_G)
+
+        def read_byte(off):
+            return m.rb(ds, off & 0xFFFF)
+
+        def read_word(off):
+            return m.rw(ds, off & 0xFFFF)
+
+        def read_layer(sub, index):
+            base = (DOCALCTILE_LAYER_TABLE + sub * 4) & 0xFFFF
+            off = m.rw(ds, base)
+            seg = m.rw(ds, (base + 2) & 0xFFFF)
+            return m.rb(seg, (off + index) & 0xFFFF)
+
+        ce96, ce7a = do_calc_tile(mode, tile_x, tile_y, sub_mode,
+                                  read_byte, read_word, read_layer)
+        m.wb(ds, DOCALCTILE_CE96, ce96)
+        m.ww(ds, DOCALCTILE_CE7A, ce7a)
+
+        # pusha/popa + push/pop ds/es restore every register — touch none.
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 _ISLANDS = [
     (RT_SEG_INDEX, AFULDIV_OFF, AFULDIV_SIG,
      lambda machine, off: _make_uldiv_island(off), "__aFuldiv"),
     (DRAWCHAR_SEG_INDEX, DRAWCHAR_OFF, DRAWCHAR_SIG,
      lambda machine, off: _make_drawchar_island(machine), "_DrawChar"),
+    (GENDOCALCTILE_SEG_INDEX, DOCALCTILE_OFF, DOCALCTILE_SIG,
+     lambda machine, off: _make_docalctile_island(machine), "_DoCalcTile"),
     (ISWINOPEN_SEG_INDEX, ISWINOPEN_OFF, ISWINOPEN_SIG,
      lambda machine, off: _make_iswinopen_island(machine), "_win_IsWinOpen"),
     (GETOBJRECT_SEG_INDEX, GETOBJRECT_OFF, GETOBJRECT_SIG,

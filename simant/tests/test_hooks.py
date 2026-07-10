@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 24              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 25              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 24
-    assert runtime.install_hooks(runtime.create_machine()) == 24
+    assert hooks.install(m) == 25
+    assert runtime.install_hooks(runtime.create_machine()) == 25
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -378,7 +378,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 24
+        assert hooks.install(m) == 25
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -423,7 +423,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 24
+            assert hooks.install(m) == 25
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -451,7 +451,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 24
+        assert hooks.install(m) == 25
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -510,7 +510,7 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 24
+        assert hooks.install(m) == 25
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
@@ -575,7 +575,7 @@ def _run_gennestmap(with_island, terrain_bytes, alt_bytes, table_bytes, mode):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 24
+        assert hooks.install(m) == 25
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     TERR, ALT, TAB, OUT = 0x6000, 0x7000, 0x7800, 0x8000       # DGROUP scratch
@@ -641,7 +641,7 @@ def _run_xfertilecolor(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 24
+        assert hooks.install(m) == 25
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -705,7 +705,7 @@ def _run_xferlifetilecolor(with_island, args, src_bytes, dst_fill, dst_span=0x40
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 24
+        assert hooks.install(m) == 25
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -775,7 +775,7 @@ def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_strid
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 24
+        assert hooks.install(m) == 25
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x7000
@@ -833,3 +833,81 @@ def test_drawchar_island_matches_asm(width, height, x, y):
     assert isl[0] == asm[0], "composited destination differs"
     assert isl[1] == asm[1], f"scratch globals differ: {isl[1]} != {asm[1]}"
     assert isl[2] == asm[2], f"exit registers differ: {isl[2]} != {asm[2]}"
+
+
+# ---- _DoCalcTile (seg4:4A6B) — recovered/render.py --------------------------
+# The map-cell tile resolver (demo #3 hot, 4 view modes).  pusha/popa preserves
+# every register; the observable state is two DGROUP globals (CE96 byte graphic,
+# CE7A word attribute).  We lay out the per-mode graphic/attribute maps, overlay
+# layers, and season/phase globals, then A/B the outputs against the ASM.
+def _run_docalctile(with_island, mode, tile_x, tile_y, *, sub=5, attr=0x00,
+                    layer_texel=0x00, cc84=4, cf54=0x10, cf50=0x20, ce92=0x30):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 25
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    LAYER = 0x2000
+    W = lambda off, v: m.mem.ww(DG, off & 0xFFFF, v & 0xFFFF)
+    B = lambda off, v: m.mem.wb(DG, off & 0xFFFF, v & 0xFF)
+    W(hooks.DOCALCTILE_MODE_G, mode)
+    W(hooks.DOCALCTILE_SUB_G, sub)
+    W(0xCF54, cf54); W(0xCF50, cf50); W(0xCC84, cc84); W(0xCE92, ce92)
+    for i in range(5):
+        W(hooks.DOCALCTILE_LAYER_TABLE + i * 4, LAYER)
+        W(hooks.DOCALCTILE_LAYER_TABLE + i * 4 + 2, DG)
+    # place the graphic + attribute + layer bytes for this cell
+    layout = {0: (0x7F, 0x28E8, 0x68E8), 1: (0x7F, 0x28E8, 0x68E8),
+              2: (0x3F, 0x48E8, 0x88E8), 3: (0x3F, 0x58E8, 0x98E8)}.get(mode)
+    if layout:
+        xmask, gfx, att = layout
+        cell = ((tile_x & xmask) << 6) + tile_y
+        B(gfx + cell, 0x42)
+        B(att + cell, attr)
+        lidx = (((tile_x & xmask) >> 1) << 5) + (tile_y >> 1)
+        B(LAYER + lidx, layer_texel)
+    B(hooks.DOCALCTILE_CE96, 0xEE); W(hooks.DOCALCTILE_CE7A, 0xEEEE)   # poison
+
+    s.ax, s.bx, s.cx, s.dx = 0x0A0A, 0x0B0B, 0x0C0C, 0x0D0D
+    s.si, s.di, s.bp, s.es, s.ds = 0x1111, 0x2222, 0x3333, 0x4444, DG
+    s.cs, s.ip = m.seg_bases[hooks.GENDOCALCTILE_SEG_INDEX], hooks.DOCALCTILE_OFF
+    sp = 0xF000
+    for v in (tile_y, tile_x, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(500_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _DoCalcTile did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    outs = (m.mem.rb(DG, hooks.DOCALCTILE_CE96), m.mem.rw(DG, hooks.DOCALCTILE_CE7A))
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return outs, regs
+
+
+@pytest.mark.parametrize("kw", [
+    dict(mode=4, tile_x=3, tile_y=5),                          # mode>=4 -> (0,0)
+    dict(mode=0, tile_x=2, tile_y=3, attr=0x00),               # base, clear attr
+    dict(mode=1, tile_x=2, tile_y=3, attr=0x55),               # mode 1 == mode 0
+    dict(mode=0, tile_x=6, tile_y=9, attr=0xFF, cc84=4),       # animated FF, phase < 8
+    dict(mode=0, tile_x=6, tile_y=9, attr=0xFF, cc84=8),       # animated FF, phase >= 8
+    dict(mode=0, tile_x=6, tile_y=9, attr=0xFE),               # animated FE
+    dict(mode=0, tile_x=4, tile_y=8, sub=0, layer_texel=0x35), # overlay layer hit
+    dict(mode=0, tile_x=4, tile_y=8, sub=0, layer_texel=0x08), # overlay miss (<=0x10)
+    dict(mode=2, tile_x=5, tile_y=7, attr=0x22),               # alternate map pair B
+    dict(mode=3, tile_x=5, tile_y=7, attr=0xFF, cc84=2),       # alternate map pair C
+])
+def test_docalctile_island_matches_asm(kw):
+    asm = _run_docalctile(False, **kw)
+    isl = _run_docalctile(True, **kw)
+    assert isl[0] == asm[0], f"(CE96, CE7A) differ: {isl[0]} != {asm[0]}"
+    assert isl[1] == asm[1], f"registers not preserved: {isl[1]} != {asm[1]}"

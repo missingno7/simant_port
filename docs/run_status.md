@@ -6,6 +6,27 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — recovered _DoCalcTile (the deferred 184-insn boss) — the emitter really paid off
+- Recovered `_DoCalcTile` (seg4:4A6B, the demo's #3 hot routine) -> `recovered/render.py:
+  do_calc_tile`.  Resolves a map cell (tile_x, tile_y) to its graphic index (CE96 byte)
+  and attribute (CE7A word) for the current VIEW MODE (DGROUP:0xCC76): 0/1 the main map,
+  2 and 3 two alternate map pairs, >=4 draws nothing.  Modes 0/1 first consult 5 half-res
+  overlay layers (far-ptr table 0xACAE, selector 0xAC58) — a texel >0x10 overrides the
+  graphic.  The attribute is shared logic (0/0xFF/0xFE/other) assembled from season/phase
+  globals (CF54/CC84/CF50/CE92).  184 insts + 4 modes collapsed to a 7-field table
+  (`_TILE_MODES`) + a shared `_tile_attr` — the 3 paths differ only in map offsets + 3 bases.
+- **This is where the automatic lifter earned its keep, exactly as predicted.**  Working
+  from the emitted artifact's labelled 48-block CFG made the mode dispatch + the repeated
+  attr ladder legible; hand-tracing 184 instructions of jumps would have been error-prone.
+  Still probe-validated every branch first (mode dispatch, layer hit/miss, all attr cases,
+  the CC84>=8 split) — 10 ground-truth cases before writing a line.
+- Island is clean: pusha/popa preserves every register, output is just the 2 globals.
+- Proven three ways: A/B oracle (10 cases across all 4 modes + every attr branch; CE96/CE7A
+  + all 10 regs), VM-free unit exercise, liftverify ORACLE_PASSING.  25 islands, 214 green.
+- The whole hot list is now recovered readable source: _GenNestMap, _DoCalcTile,
+  _XferLifeTileColor, _XferTileColor, _DrawChar, _win_IsWinOpen, _win_GetObjRect.
+  Remaining hot: _ResetEditScrollRange (#2, 6 side-effectful scroll-API calls), _CenterEdit.
+
 ## 2026-07-10 — recovered _DrawChar (the sub-byte-shifted glyph blit — the intricate one)
 - Recovered `_DrawChar` (seg7:B033) -> `recovered/render.py: draw_char` + `shift_glyph_word`.
   A 1bpp glyph OR-composited into a bitmap with SUB-BYTE bit alignment: per row it walks
