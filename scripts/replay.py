@@ -31,14 +31,35 @@ def main() -> None:
                     help="dump every window surface to DIR when done")
     ap.add_argument("--snapshot", metavar="DIR", default=None,
                     help="save a machine snapshot of the end state")
+    ap.add_argument("--from-snapshot", metavar="DIR", default=None,
+                    help="resume this snapshot before replaying (required when "
+                         "the demo was recorded from one; the header names it)")
     args = ap.parse_args()
     if not assets_present():
         raise SystemExit("assets/ANTWIN/SIMANTW.EXE not found")
 
     player = DemoPlayer(args.demo)
-    print(f"[replay] {args.demo}: {len(player.records)} records (exe {player.exe})")
+    anchor = f", anchored to snapshot {player.snapshot}" if player.snapshot else ""
+    print(f"[replay] {args.demo}: {len(player.records)} records "
+          f"(exe {player.exe}{anchor})")
 
-    machine = create_machine()
+    if player.snapshot and not args.from_snapshot:
+        raise SystemExit(
+            f"this demo was recorded from snapshot {player.snapshot!r} — "
+            f"pass --from-snapshot <dir> pointing at it "
+            f"(e.g. artifacts/snapshots/{player.snapshot})")
+    if args.from_snapshot:
+        from win16.vmsnap import load_snapshot
+        machine = load_snapshot(args.from_snapshot, create_machine)
+        got = machine.cpu.instruction_count
+        if player.instruction and got != player.instruction:
+            raise SystemExit(
+                f"snapshot mismatch: demo was recorded from instruction "
+                f"{player.instruction:,} but {args.from_snapshot} restores to "
+                f"{got:,} — wrong snapshot?")
+        print(f"[replay] resumed {args.from_snapshot} (instruction {got:,})")
+    else:
+        machine = create_machine()
     machine.cpu.trace_enabled = False
     sysobj = machine.api.services["system"]
     sysobj.message_source = player.next_message

@@ -6,6 +6,37 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — in-game demo record/replay works; the scrollbar tile-ghost has a repro demo
+- **Demo v2** (win16_re `f1261f0`): a demo now records the PeekMessage timeline too
+  ("p" records with the consuming filter) — in-game SimAnt never calls GetMessage, so
+  v1 demos were blind to everything in-game.  Headers carry a snapshot anchor;
+  `play.py --resume X --record d.jsonl` anchors, `replay.py d.jsonl --from-snapshot X`
+  demands it (and checks the instruction count).
+- **Snapshot resume inside a callback** (win16_re `ae050cb`): F9 parks inside the
+  sim-tick TimerProc; the dispatching call_far frame wasn't in the snapshot, so resume
+  fell off the sentinel when the tick returned (this had made every in-game resume
+  time-bomb).  call_far frames are now serializable (api+argbytes+sp), snapshots carry
+  the pending chain, the sentinel hook completes orphaned returns (DispatchMessage /
+  SendMessage only — post-work APIs fail loudly by name).  Legacy snapshots: re-anchor
+  by injecting the reconstructed frame + re-saving (see snap_ghost_base).  Also
+  anchored the headless GetTickCount instruction floor to the saved clock — un-anchored
+  it froze the clock ~28M instructions after resume, stalling every busy-wait.
+- **End of stream for peek-driven games** (win16_re `eb09c6d`): first peek past the
+  last record raises DemoEnded — the deterministic stop; GetMessage path already had it.
+- **The ghost repro** (`artifacts/demos/ghost_scroll.jsonl`, anchored to
+  `artifacts/snapshots/snap_ghost_base` = snap_114308 + reconstructed frame): one
+  WM_VSCROLL SB_LINEDOWN to the Quick Game window, 359 records.  Replays are
+  digest-identical across runs (`7d2e0a6c…`) and end with the tile ghost on the
+  Quick Game surface (the 64×16 object rect at (192,128) repainted with one-tile-lower
+  content).  **Root cause already diagnosed**: `Window.update_rect` is a single
+  bounding rect, so ScrollWindow's exposed strip (0,330,423,346) unioned with the
+  ant's rect (192,128,256,144) becomes a 218px slab whose repaint overwrites the
+  just-scrolled pixels.  Fix = true multi-rect update region + paint clip; this demo
+  is its before/after evidence.
+- Recording harness note: one `cpu.run(4096)` swallows a whole sim tick (~14M instr,
+  nested call_far), so wall-clock-timed input scripting is misleading — post input
+  up front or pace by consumed records.
+
 ## 2026-07-10 — USER.421 wvsprintf: SimAnt's panic handler can finally speak
 - Frontier hit in play (`USER.421 from 0E99:18E3`, 209M instructions in).
   Identified from the CALL SITE, not the ordinal table: the caller is

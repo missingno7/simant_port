@@ -866,9 +866,15 @@ class PlayApp:
         self.recorder = None
         if record:
             from win16.demo import DemoRecorder
-            self.recorder = DemoRecorder(record, self.machine.exe.path.name)
+            # Anchor the demo to the resumed snapshot (if any) so replay.py
+            # can demand the same starting state — the bug-repro workflow.
+            anchor = Path(resume).name if resume else None
+            self.recorder = DemoRecorder(
+                record, self.machine.exe.path.name, snapshot=anchor,
+                instruction=self.machine.cpu.instruction_count)
             self.machine.api.services["demo_recorder"] = self.recorder
-            print(f"[play] recording demo to {record}", flush=True)
+            print(f"[play] recording demo to {record}"
+                  + (f" (anchored to {anchor})" if anchor else ""), flush=True)
 
         # Host audio: square-wave synthesis of the SOUND.DRV voice stream.
         self.audio = None
