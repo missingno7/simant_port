@@ -21,6 +21,36 @@
   flags across calls; rendering is byte-exact regardless.  Follow-up: make islands
   flag-exact so they pass the verifier clean.
 
+## 2026-07-10 — colddemo root cause NAILED: demo replay model is fragile for poll-loops (needs instruction-count keying)
+- Traced the exact stuck iteration (260 steps from the (0,0,0) peek-miss at pos 5391):
+  the WndProc spins in `_win_IsWinInFront(0x013A)` — window handle 314 = the modal
+  registration "click to continue" window.  The loop is pure WINDOW-STATE polling
+  (GetTopWindow → GetWindow(GW_HWNDNEXT/GW_OWNER) → IsWindowVisible/GetProp); it
+  exits only when window 314 is DISMISSED.  It is NOT clock-driven (re-anchoring the
+  GetTickCount floor did nothing) — confirmed by trace.
+- The dismiss input (the click, async 'a' records at pos 5392+) is recorded BEHIND a
+  WM_TIMER that pos 5391 recorded under GetMessage ('m').  The poll-loop fetches via
+  PeekMessage(0,0,0) + GetAsyncKeyState and never calls GetMessage, so it can't reach
+  the 'a' records → deadlock.  Root cause: **the demo replay model matches records to
+  the specific fetch API + strict stream position.**  A message recorded under
+  GetMessage is invisible to a PeekMessage that wants it; async recorded behind a
+  message can't reach a poll-loop.
+- Prototypes tried (all in scratchpad, none landed): GetTickCount clamp-to-next-ts
+  (froze the clock), floor re-anchor per record (no effect on this decision),
+  unify m/p fetch (diverged EARLIER at 4515), deliver-async-on-peek-miss (too eager,
+  broke at 4179).  Lesson: heuristics each break elsewhere — the strict model is
+  load-bearing for the rest of the timeline.  The fix must be a principled MODEL
+  change, not a patch.
+- **Design conclusion:** key the demo to a DETERMINISTIC anchor — the instruction
+  count — like dos_re does, instead of fetch-API+position matching.  Record each input
+  event (queue message / async note) with the instruction_count at which it occurred;
+  on replay inject it at that instruction, letting the game's real PeekMessage/
+  GetMessage/GetAsyncKeyState pull it naturally.  To keep record==replay control flow,
+  the demo must also carry enough of the GetTickCount timeline (tick + instr per event)
+  to reproduce the clock the game saw.  Owner OK'd breaking the demo format (few demos,
+  re-recordable) — so v4 can redesign freely.  Needs a fresh re-recorded demo to verify
+  (can't record interactively headless).
+
 ## 2026-07-10 — colddemo: cold-start replay gap = GetTickCount drift on a wall-clock modal loop (NOT a VM bug)
 - `colddemo` (5845 records, cold `--no-hooks --record`, snapshot:null) — owner
   clicked around from boot; replay stalls at record 5391 (of 5845) in a
