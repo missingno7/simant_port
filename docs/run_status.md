@@ -6,6 +6,25 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — tile-ghosting FIXED: the update region is real (win16_re `b55a6f7`)
+- The owner's F11 repro demo (`ghost.jsonl`, 635 records, anchored to snap_125747)
+  replayed deterministically and became the microscope.  Probe chain: our ValidateRgn
+  couldn't subtract (single-bbox "clear only if fully covered") → fixed with a true
+  rect-list region — **necessary but not sufficient** (digest unchanged).  The decisive
+  probe: one WM_PAINT with a 59-rect region painted 4764 px of PRE-scroll content at
+  bbox (158,0,258,162) — almost entirely OUTSIDE its own region.  SimAnt's painter
+  redraws its whole changed-objects list (ants at old positions included) and RELIES
+  on real USER clipping the writes to the update region it carefully built.
+- Fix (win16_re): `Window.update_rects` rect list + ValidateRgn rect-splitting
+  subtraction + **BeginPaint clips the paint session to the region** (surface snapshot
+  at BeginPaint, restore-outside-region at EndPaint — byte-equivalent to per-op GDI
+  clipping for the post-paint surface).  Evidence: first scroll = pixel-perfect 16px
+  shift (0 violations, was 4764 stale); full demo replays to a clean nest
+  (digest `30b93a02…`, was `81fdcae7…` ghosted).  Gates green (win16_re 89, here 182).
+- Method note: three armchair root-cause theories were wrong in a row (tile-periodic
+  dirt makes a one-tile scroll look like a no-op — deceptive evidence); the repro
+  demo + instrumented replay settled it in three probes.  Demos earn their keep.
+
 ## 2026-07-10 — play.py adopts the dos_re hotkeys: F10 screenshot, F11 demo toggle, F12 snapshot
 - Same muscle memory as every dos_re port (template_dos_port/docs/cookbook.md).  F12
   replaces F9 for snapshots (F9 stays as a legacy alias); F10 screenshots every game
