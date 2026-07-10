@@ -10,3 +10,9 @@ artifacts/*
 !artifacts/test_oracles/
 # Snapshots are scratch evidence unless promoted.
 artifacts/snapshots/
+# Machine-lifted hooks are regenerated scratch (status LIFTED, not recovered
+# source): scripts/liftverify.py re-emits them.  A lift only enters the repo
+# once REFACTORED into simant/recovered/ with its oracle test.
+simant/lifted/
+# Locally recorded demos (promote a repro into artifacts/test_oracles/ to keep).
+*.jsonl

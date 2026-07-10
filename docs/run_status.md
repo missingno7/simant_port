@@ -6,6 +6,36 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — scripts/liftverify.py: the lift→prove loop, in situ over a demo
+- New win16 lift-verify driver (`scripts/liftverify.py`): snapshot + demo + entries
+  (`--entry 7:C256` or `--symbol _win_IsWinOpen`) → emit a literal hook each, install,
+  replay the demo, and on every call re-interpret the ORIGINAL ASM to the hook's
+  continuation, diffing full CPU state + memory.  Reports ORACLE_PASSING/DIVERGED/
+  NOT_REACHED + block coverage; regenerated lifts are gitignored scratch (`simant/lifted/`).
+- **Proven:** `_win_IsWinOpen` (far API call, 4/4 blocks) and `_win_GetObjRect`
+  (near-calls, 2/3 — this demo doesn't hit the 3rd) both ORACLE_PASSING, 5 calls each
+  byte-exact, in 29s.  The exact call-coupled frontier that blocked recovery last round.
+- **This needed THREE upstream dos_re fixes + one win16_re layer**, all found by SimAnt
+  being the first non-DOS consumer of the verifier (each pushed with a failing-on-old
+  regression test):
+  * dos_re `3c403a6`: `HookVerifierConfig.clone_runtime` — the verifier's cloner was
+    DOS-only; a win16 machine's OS is a Python object graph that must be re-bound to
+    the clone.
+  * dos_re `baff7f5`: `asm_keeps_passthrough_hooks` — strict mode cleared ALL hooks
+    from the ASM oracle, but the win16 API hooks ARE the environment (INT3 tripwires,
+    no ASM behind them) → oracle died on the tripwire.
+  * dos_re `58a1a51`: the divergence REPORTER assumed `rt.dos`, so a genuine win16
+    divergence surfaced as AttributeError instead of the actual diff.
+  * win16_re `c6f995c`: `win16/verify.py` — the Win16 runtime shim + cloner (pickle
+    the OS graph, copy memory, re-bind API services to the clone; game-code hooks port
+    over, thunk hooks stay the clone's own), wiring all three seams together.
+- **Interpreter note:** run liftverify under **CPython, not PyPy** — verification is
+  thousands of short clone+diff bursts, not one long loop, so the JIT never amortises
+  and pickle/alloc get slower (measured: clone 10.2ms vs 49.8ms, verify 42.5ms vs
+  70.5ms).  PyPy stays right for replay.py / play.py.
+- Next: refactor a passing lift (start with `_win_IsWinOpen`, 22 insts) into readable
+  `simant/recovered/`, keeping this same oracle green — the actual recovery goal.
+
 ## 2026-07-10 — dos_re's automatic lifting pipeline works on Win16 (and SimAnt found 2 upstream bugs)
 - dos_re landed automatic literal lifting (M0 decode/CFG census, M1 emitter, M2
   liftverify, M3 refactor-loop proof; `dos_re/docs/lifting_design.md`).  Applied it
