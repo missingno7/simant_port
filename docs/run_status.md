@@ -1,5 +1,48 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-10 — FIXED _DrawChar island rendering bug (garbled "registered to" screen)
+- Repro: demo_195527 — the "This copy of SimAnt is registered to: eXo" screen
+  rendered GARBLED with islands on.  Bisected via island-A/B over the real demo
+  (replay with hooks vs pure ASM, per-window surface sha): 4 UI panels diverged;
+  the glyph-rendering island `_DrawChar` was the culprit.
+- Root cause: the partial-mask lookup is `xlatb` with a **CS: override (2E D7)**,
+  so the top-n-bits mask table is read from the CODE segment (seg7:B02A), NOT the
+  glyph source segment.  The island read it from `src_seg`; the A/B test masked
+  the bug by planting the table in DGROUP where `src_seg` happened to point.
+  In-game `src_seg != code seg` → garbage mask → garbled text.
+- Fix (hooks.py): read the mask from `seg_bases[DRAWCHAR_SEG_INDEX]`.  Test
+  (test_hooks.py): drop the DGROUP planting so the source seg's 0xB02A is
+  unrelated data — the old bug now diverges.  Proof: demo_195527 replay with
+  islands is now byte-identical to pure ASM across ALL window surfaces (was 4
+  diverging).  Also made hooks.py's module-level `dos_re.cpu` import robust
+  (bootstrap win16 first) so the suite collects.  214 passed.
+- Method note: the strict HookVerifier also flags a benign `_win_IsWinOpen` AF-flag
+  divergence (my A/B masked AF as "undefined for logic ops") — cosmetic, C ignores
+  flags across calls; rendering is byte-exact regardless.  Follow-up: make islands
+  flag-exact so they pass the verifier clean.
+
+## 2026-07-10 — colddemo: cold-start replay gap = GetTickCount drift on a wall-clock modal loop (NOT a VM bug)
+- `colddemo` (5845 records, cold `--no-hooks --record`, snapshot:null) — owner
+  clicked around from boot; replay stalls at record 5391 (of 5845) in a
+  CallbackOverrun: WndProc 0100:2440 spins forever (>400M steps).
+- Diagnosis (definitive): the spin is a wall-clock-paced MODAL loop on the
+  cold-start/registration "click to continue" screen.  It polls PeekMessage(0,0,0)
+  (522,746 misses), GetAsyncKeyState(SPACE/ESC), GetTopWindow, GetTickCount.  The
+  next demo record (5391) is a `GetMessage` for WM_TIMER, but the loop never falls
+  through to GetMessage.  No timer is armed (KillTimer'd earlier) so none is
+  synthesized.  **tick_count=102813 vs recorded clock_ms=28875** — the headless
+  GetTickCount instruction-floor (INSTR_PER_MS=1000) has run 3.5x past the recorded
+  wall clock, so the modal loop's timing decisions diverge from record time.
+- This is NOT a CPU/VM accuracy issue (interpreter byte-exact); it's replay-clock
+  fidelity for wall-clock-timed modal code — the classic determinism trap.
+  Prototype "clamp the replay clock to the next record's timestamp" did NOT cleanly
+  fix it (froze the clock without making the loop call GetMessage) → the divergence
+  is subtler than pure overshoot; needs owner steer before touching win16's clock
+  model.  Pragmatic workflow answer: the demo format already supports snapshot
+  ANCHORING to skip such non-deterministic splash regions — anchored demos are the
+  deterministic regression baseline; cold demos are a gap-finder, not a baseline.
+- colddemo kept as a useful gap-finding artifact.
+
 > Scope: **SimAnt is the sole target** (owner, 2026-07-09).  Other games are
 > leaving the repo; wherever a doc names Paulie Python "the RE target," it's
 > stale — SimAnt is the focus.  Primary goal: clean, readable, byte-exact source
