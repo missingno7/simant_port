@@ -6,6 +6,25 @@
 > reconstruction (recovered routines in `simant/recovered/`, hot-loop islands in
 > `simant/hooks.py`, each gated byte-exact by the A/B oracle).
 
+## 2026-07-10 — SYM resolver rewritten segment-aware; SimAnt's source-module map recovered
+- `probes/symbols.py` now parses the real MAPSYM structure (MAPDEF → SEGDEF
+  chain → per-segment SYMDEF tables) instead of the flat offset-only scan whose
+  cross-segment mis-namings the 07-09 frontier note warned about.  SYM segment
+  order == NE segment order, proven by byte-anchors (`test_symbols.py`): the
+  signature-verified MakeTable4x4/1x1 addresses resolve exactly, seg2:19E6 is
+  `_GBoxFill`, and the NE entry seg4:0061 is `__astart`.  Lookups are symdeb
+  style (`MODULE!_name+0xNN`); `symbols_in_segment/range` are segment-scoped.
+- **The SYM names SimAnt's original source files** — the ten SEGDEFs are the
+  compile modules: seg1 SIMANT (main, 165 syms), seg2 GR (graphics, 181),
+  seg3 ANTEDIT (editor, 145), seg4 _TEXT (C runtime + Windows glue, 254),
+  seg5 SIMONE (169), seg6 SIMANT1 (`_DoAntSim` at 0 — the ant sim, 123),
+  seg7 SIMTWO (282, incl. the 103-routine `_win_*` toolkit + `_GetStrategy`/
+  castes), seg8-10 data (SIMANT_DATA_GROUP, PACK, DGROUP).  `simant/recovered/`
+  should eventually mirror this module layout.  Gate 43 green (7 new).
+- Next per the bottom-up plan: static call-graph extractor over the
+  disassembly → leaf queue → batch-recover pure leaves, then compose upward
+  (`_win_IsWinOpen` first of the call-coupled three).
+
 ## 2026-07-10 — dos_re/win16_re bumped; PyPy measured at 8x for headless SimAnt runs
 - Chain bump: dos_re `3be9439` (modrm/displacement inlining round — byte-exact,
   proven here by the island A/B oracles staying green) → win16_re `037bd69` → this repo.

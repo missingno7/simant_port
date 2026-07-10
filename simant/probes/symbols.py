@@ -1,62 +1,97 @@
-"""Read SImAnt's shipped SIMANTW.SYM to name code addresses.
+"""Read SimAnt's shipped SIMANTW.SYM to name code addresses — segment-aware.
 
-The linker symbol file is a MAPSYM table: runs of `[offset:2][len:1][name]`
-records, grouped per segment and sorted by offset within a segment.  We don't
-need the full MAPSYM structure for triage — a flat "nearest preceding symbol"
-lookup over every record is enough to turn a hot `seg:offset` from the profiler
-into a named routine to recover (it named `_StillDown`, `_DialogWaitInit`, ...
-during the USER.186 bring-up).
+The file is a Microsoft MAPSYM table (the symdeb .SYM format):
 
-Approximate by design: offsets repeat across SimAnt's six code segments, so the
-resolver returns the globally nearest preceding symbol.  Because the tables are
-dense (~tens of bytes apart) an exact or near-exact hit is almost always the
-right routine; always cross-check against the raw `seg:offset`.
+    MAPDEF (at 0):  ppNextMap:2  bFlags:1  bReserved:1  pSegEntry:2
+                    cConsts:2  pConstDef:2  cSegs:2  ppSegDef:2
+                    cbMaxSym:1  cbModName:1  achModName[cbModName]
+    SEGDEF chain (each at ppNextSeg*16, first at ppSegDef*16):
+                    ppNextSeg:2  cSymbols:2  pSymDef:2  ...pad...
+                    cbSegName:1 @ +20  achSegName[cbSegName] @ +21
+    pSymDef is SEGDEF-relative and points at cSymbols WORDs, each the
+    SEGDEF-relative offset of a SYMDEF:  wSymVal:2  cbSymName:1  achSymName.
+
+SIMANTW.SYM's ten SEGDEFs are in NE-segment order (validated by the recovered
+anchors in tests/test_symbols.py), and their names are the game's original
+source modules — SIMANT_MODULE, GR_MODULE, ANTEDIT_MODULE, _TEXT,
+SIMONE_MODULE, SIMANT1_MODULE, SIMTWO_MODULE + three data groups — i.e. the
+.C file layout the recovered source should eventually mirror.
+
+Lookups are per-segment (an offset never resolves into another segment's
+table); `nearest_symbol` answers in symdeb style, `MODULE!_name+0xNN`.
+The MAPDEF's absolute-constant table (cConsts) is not parsed — nothing has
+needed it yet.
 """
 from __future__ import annotations
 
-import re
+import struct
 from bisect import bisect_right
 from functools import lru_cache
 from pathlib import Path
 
 _SYM_PATH = Path(__file__).resolve().parent.parent.parent / "assets" / "ANTWIN" \
     / "SIMANTW.SYM"
-_NAME_RE = re.compile(rb"[A-Za-z_][A-Za-z0-9_@.$]*")
 
 
 @lru_cache(maxsize=1)
-def _symbols() -> list[tuple[int, str]]:
-    """All (offset, name) records, sorted and de-duplicated by offset."""
+def _segments() -> list[tuple[str, list[tuple[int, str]]]]:
+    """Per NE segment (1-based order): (module name, sorted (offset, name))."""
     if not _SYM_PATH.exists():
         return []
     data = _SYM_PATH.read_bytes()
-    seen: dict[int, str] = {}
-    for j in range(len(data) - 3):
-        ln = data[j + 2]
-        if not (3 <= ln <= 40):
-            continue
-        name = data[j + 3:j + 3 + ln]
-        if _NAME_RE.fullmatch(name):
-            off = data[j] | (data[j + 1] << 8)
-            seen.setdefault(off, name.decode("latin-1"))
-    return sorted(seen.items())
+    cSegs, ppSegDef = struct.unpack_from("<HH", data, 10)
+    segs: list[tuple[str, list[tuple[int, str]]]] = []
+    pos = ppSegDef * 16
+    for _ in range(cSegs):
+        ppNextSeg, cSymbols, pSymDef = struct.unpack_from("<HHH", data, pos)
+        cbName = data[pos + 20]
+        segname = data[pos + 21:pos + 21 + cbName].decode("latin-1")
+        syms: list[tuple[int, str]] = []
+        for p in struct.unpack_from(f"<{cSymbols}H", data, pos + pSymDef):
+            val = struct.unpack_from("<H", data, pos + p)[0]
+            ln = data[pos + p + 2]
+            syms.append((val, data[pos + p + 3:pos + p + 3 + ln].decode("latin-1")))
+        syms.sort()
+        segs.append((segname, syms))
+        pos = ppNextSeg * 16
+    return segs
+
+
+def module_name(seg: int) -> str:
+    """The source-module name of NE segment `seg` (1-based), '' if unknown."""
+    segs = _segments()
+    return segs[seg - 1][0] if 1 <= seg <= len(segs) else ""
+
+
+def _short_module(name: str) -> str:
+    return name[:-7] if name.endswith("_MODULE") else name
 
 
 def nearest_symbol(seg: int, off: int) -> str:
-    """The nearest preceding symbol to `off`, as 'name+0xNN' (seg is shown for
-    context only — the lookup is offset-based, see the module docstring)."""
-    syms = _symbols()
-    if not syms:
+    """The nearest preceding symbol to seg:off, as 'MODULE!_name+0xNN'.
+    `seg` is the 1-based NE segment index (the profiler's bucket key)."""
+    segs = _segments()
+    if not segs:
         return "(no SIMANTW.SYM)"
+    if not (1 <= seg <= len(segs)):
+        return f"(seg {seg} not in SYM)"
+    segname, syms = segs[seg - 1]
+    mod = _short_module(segname)
     offs = [o for o, _ in syms]
     i = bisect_right(offs, off) - 1
     if i < 0:
-        return "(before first symbol)"
+        return f"{mod}!(before first symbol)"
     sym_off, name = syms[i]
     delta = off - sym_off
-    return name if delta == 0 else f"{name}+0x{delta:X}"
+    return f"{mod}!{name}" + (f"+0x{delta:X}" if delta else "")
 
 
-def symbols_in_range(lo: int, hi: int) -> list[tuple[int, str]]:
-    """Every (offset, name) with lo <= offset < hi (for disassembly context)."""
-    return [(o, n) for o, n in _symbols() if lo <= o < hi]
+def symbols_in_segment(seg: int) -> list[tuple[int, str]]:
+    """Every (offset, name) of NE segment `seg` (1-based), sorted by offset."""
+    segs = _segments()
+    return list(segs[seg - 1][1]) if 1 <= seg <= len(segs) else []
+
+
+def symbols_in_range(seg: int, lo: int, hi: int) -> list[tuple[int, str]]:
+    """Every (offset, name) in segment `seg` with lo <= offset < hi."""
+    return [(o, n) for o, n in symbols_in_segment(seg) if lo <= o < hi]
