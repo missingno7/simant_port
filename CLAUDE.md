@@ -37,9 +37,14 @@ simant/           the adapter + recovered logic:
   _env.py           locates the win16_re submodule (WIN16_RE_PATH escape hatch)
   runtime.py        EXE_PATH, GAME_NAME, assets_present, create_machine, install_hooks
   recovered/        pure recovered SimAnt logic — never imports the VM or win16_re
+  bridge/           the state-view seam (dgroup_view.py) — named DGROUP fields +
+                    swappable backends (SelectorBackend/ByteBackend/OverlayBackend);
+                    pure, VM-free.  Toward the VM-less port (docs/vmless_port.md)
+  native/           NativeGameState — the owned address-space image the recovered
+                    logic runs on with no VM (the native-mode target)
   hooks.py          lifted islands (hot ASM routines reimplemented, byte-exact)
   probes/           profile.py (PC-sampler) + symbols.py (SIMANTW.SYM name lookup)
-  tests/            island A/B oracles + boot/splash gate
+  tests/            island A/B oracles + state-view seam + boot/splash gate
 scripts/          play.py (interactive; --record, --resume; dos_re hotkeys:
                   F10 screenshot, F11 demo-record toggle, F12 snapshot),
                   boot.py (frontier probe), replay.py (headless demo replay,
