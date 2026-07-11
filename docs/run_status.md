@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.3) — the songid→.mid mapping is NOT recoverable from the running game
+- Chased the "intercept _myBeginSong → play .mid" plan and hit an information wall:
+  * The .mid base names (ANTTHME1/GAMETHME/ATTACK/...) appear NOWHERE as strings —
+    not in SIMANTW.EXE (raw file), not in any loaded segment, not in the .DAT/.NDX
+    resources.  They exist only as on-disk FILENAMES.
+  * `SOUND.NDX`/`SOUND.DAT` are a NUMBERED archive (181 entries, id→offset, no names);
+    SOUND.DAT holds digitized PCM (sound FX), not named song records.
+  * So the game plays music as NUMBERED songs (SOUND.DRV note sequences); the
+    songid→.mid-name table lived only in the dead MIDI code and its name strings
+    aren't in the binary at all (built at runtime / from a resource the dead path
+    would have read).  There is no clean, verifiable songid→.mid mapping to recover.
+- **Net:** playing the real .mid soundtrack faithfully is blocked — not by
+  implementation effort but by missing information in this build.  Only a
+  best-effort EMPIRICAL mapping is possible (hook _myBeginSong, log songids at
+  known game moments, hand-match to the descriptively-named .mid files — imprecise,
+  unverifiable).  The faithful alternative is to render the ACTUAL game music (the
+  SOUND.DRV note sequences we already emulate) with a nicer synth than a bare
+  square wave.  Back to owner for the call.
+
 ## 2026-07-11 (cont.2) — DECISIVE: SimAnt's MMSYSTEM/MIDI path is DEAD CODE in this build
 - The ONLY writer of the mmsystem handle `es:[0x8d08]` is `_CheckMMWave+0x6C`
   (seg2:77D3).  `_CheckMMWave`(0x7766) has **no direct caller and no pointer
