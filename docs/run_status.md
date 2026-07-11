@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.35) — _Unpack "DIVERGED" is benign scratch, decode is exact
+- Investigated the one REAL (non-flag) divergence verifyislands flagged on
+  cold_nohooks: `_Unpack`.  Captured the first real _Unpack call (fresh boot +
+  cold_nohooks drive), snapshotted the pre-state, ran the ASM to its return vs the
+  island, and diffed the whole 4 MB image.
+- Result: exactly 4 bytes differ, ALL don't-care scratch — 2 = `match_rem`
+  (DGROUP:0xB7D2, the documented don't-care the native test already excludes) and
+  2 = the [sp-6] FREED-FRAME local (the island writes win_seg=0x02D6 there to
+  reproduce the ASM's residue, but the ASM leaves 0x0000 on this exit path — the
+  island's frame-residue guess is approximate for some resume codes).  Crucially,
+  ZERO output-buffer bytes differ (classified: none fall in out_seg:out_off) —
+  the LZSS decode is byte-identical.
+- Conclusion: no functional _Unpack bug; the true exit-state fields (resume/flags/
+  r/src_off/dx/cx/in_rem) are exact, only don't-care scratch differs.  So across
+  all 46 islands the ONLY verifyislands divergences are don't-care flag/scratch
+  residue — the recovered logic is functionally sound.  Left the island as-is
+  (the freed-frame value is path-dependent and dead after retf; the game replays
+  to 199.6M fine); no code change.
+
 ## 2026-07-11 (cont.34) — scripts/checkpoints.py: deterministic checkpoint traces
 - Owner ask: "a way of deterministically checking/verification, like checkpoints."
   Built `scripts/checkpoints.py`: replays a demo and fingerprints the game-
