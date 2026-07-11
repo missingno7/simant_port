@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.27) — "ghosting worse with hooks" -> a demo/hook desync, NOT an island bug
+- Owner report: quickgame scroll ghosting, "worse with our hooks"; demo
+  `demo_185520.jsonl` (anchored snap_185520 @ 30.8M).
+- Replay WITH 43 hooks HANGS/crashes at ~41.7M via a runaway: chain is
+  `_DrawMapData`->`_win_DrawHBar`->`_win_SetColorFromObjNum`->`_win_ObjAddr(objnum)`
+  with a garbage objnum (0xE147) -> `_Punt` (panic) -> `_exit` -> the C runtime
+  `__ctermsub` atexit walk hits a garbage far ptr and runs away in a data
+  selector (B0FA) until CallbackOverrun.  Replay WITHOUT hooks reaches ~97M
+  (near the demo's 103.8M end).
+- Bisect fingered `_XferTileColor`, BUT a definitive A/B (logged every mem write
+  on the 64K-crossing calls) proves the island is BYTE-EXACT vs the ASM — same
+  128 writes (seg:off:val) AND same exit registers.  The earlier 21-byte "diff"
+  was just the ASM's pushaw/popaw stack residue below SP.
+- ROOT CAUSE: **this demo was recorded --no-hooks** (no-hooks replay ~97M vs
+  hooks ~41.7M).  v4 demos inject input keyed by INSTRUCTION COUNT; islands
+  execute a routine in 1 VM step instead of hundreds, so replaying a no-hooks
+  demo WITH hooks desyncs the injection timeline -> input lands at the wrong game
+  state -> garbage objnum -> _Punt.  Removing an island merely shifts the
+  timeline enough to dodge the divergence (why the bisect misled).  So the crash
+  is a replay/methodology artifact, and hooks do NOT change rendered pixels (the
+  tile islands are byte-exact) -> the ghosting is a win16_re update-region/clip
+  issue, independent of hooks; "worse with hooks" is a scroll-cadence/timing
+  perception, not pixel corruption.
+- TAKEAWAYS: (1) a v4 demo can only be replayed under the SAME hook config it was
+  recorded with; cross-config replay silently desyncs (worth a guard/warning).
+  (2) Don't chase `_XferTileColor` — verified correct.  (3) To fix the ghosting I
+  need a hooks-recorded scroll demo or F10 screenshots (this no-hooks demo can't
+  be run with hooks).  No code changed.
+
 ## 2026-07-11 (cont.26) — audio: music re-enable doesn't resume (investigation)
 - Owner report: in-game, the music button disables music (stops it) but
   re-enabling doesn't resume.  Provided a no-hooks demo `demo_184143.jsonl`
