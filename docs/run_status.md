@@ -1,5 +1,30 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.36) — captured-state A/B harness (unblocks sim-core recovery)
+- Direction (owner): recover the simulation core toward the native backend.  The
+  blocker was verification — ant-AI routines read live ant-array/map state through
+  runtime selectors AND call PRNG subroutines, so they can't be exercised with
+  synthetic inputs, and installing islands to run verifyislands over a no-hooks
+  demo desyncs (~22M).
+- Built `simant/tests/capture_ab.py: capture_call_ab(seg,off,island,demo|None)`:
+  replays a demo with NO hooks (a faithful drive; None = free-run from boot),
+  catches the nth real call of the target, snapshots the pre-state, runs the
+  ORIGINAL ASM to the routine's own return (subroutine calls and all), then runs
+  the island from the same pre-state and diffs the full 4 MB image + registers.
+  Returns (mem_diffs, reg_diffs, stack_low).  This is test_native.py's _Unpack
+  capture generalised to ANY routine — the pattern every stateful-sim recovery
+  will verify with.
+- Validated on `_Unpack` (reached during boot, no demo, 0.26s): the harness
+  reproduces the manual finding exactly — only don't-care scratch differs
+  (match_rem 0xB7D2 + the routine's own stack frame: freed locals below entry sp
+  + the budget ARG the ASM decrements in place above sp, which the caller pops) +
+  flags; ZERO decode-output bytes differ.  test_capture_ab.py classifies via a
+  stack-window + known-scratch allowlist.  Suite 356 green.
+- NEXT: recover a first stateful sim routine (its PRNG subcalls resolve to the
+  already-recovered SRand/RRand family) and verify with this harness.  Late
+  gameplay calls need a demo drive under pypy (the per-step catch is slow over
+  tens of M instrs on CPython) — boot-reachable routines run in-suite.
+
 ## 2026-07-11 (cont.35) — _Unpack "DIVERGED" is benign scratch, decode is exact
 - Investigated the one REAL (non-flag) divergence verifyislands flagged on
   cold_nohooks: `_Unpack`.  Captured the first real _Unpack call (fresh boot +
