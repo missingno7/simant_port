@@ -1,5 +1,28 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-12 (cont.37) — live hooks crash: reachable render islands ruled out
+- Owner report: LIVE play WITH hooks (46) crashes at 76.8M — _Punt (panic
+  MessageBox, garbage caption + MB_ICONHAND) then runaway into the C-runtime
+  _exit/B0FA garbage.  A REAL bug (live = native config, no demo/desync), unlike
+  the cont.27 demo-replay _Punt (which was a no-hooks-demo-with-hooks desync).
+- Made `capture_call_ab` FAST (replacement-hook detection instead of a per-step
+  wrapper — ~7-12s to a ~39M render call).  A/B'd every render island reachable in
+  cold_nohooks against the ASM over its first REAL call: _DoCalcTile,
+  _XferTileColor, _XferLifeTileColor, _GenNestMap, _DrawChar all BYTE-EXACT (only
+  don't-care stack/flag scratch, zero real memory/register diffs).  Ruled out.
+- But `_os_ClipLine`, `_XferTileMono`, `_XferLifeTileMono`, `_GenOverMap` are
+  NOT_REACHED in cold_nohooks (that session uses only colour tiles, no lines /
+  mono / overlay-map) — the crashing session took different paths, so its culprit
+  island isn't exercised by cold_nohooks and can't be A/B'd from it.
+- Also confirmed: _win_GetObjRect's _win_LockWin/_win_UnlockWin (7:E3A8/E3A4) are
+  genuine `retf` no-ops, so that island's skip is correct.
+- BLOCKER: cold_nohooks runs clean to 199.6M (no crash), so I can't reproduce the
+  live crash from it.  NEED: a HOOKS-recorded demo of a crashing session
+  (`play.py --record <name>` — default installs hooks; play until it crashes).
+  Replayed WITH hooks it reproduces deterministically (same config = no desync),
+  and then bisecting islands / capture_call_ab at the real crash-path calls
+  pinpoints the culprit.
+
 ## 2026-07-11 (cont.36) — captured-state A/B harness (unblocks sim-core recovery)
 - Direction (owner): recover the simulation core toward the native backend.  The
   blocker was verification — ant-AI routines read live ant-array/map state through
