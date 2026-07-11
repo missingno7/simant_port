@@ -1,5 +1,20 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.22) — recovered _os_ClipLine (midpoint line clipper)
+- `_os_ClipLine` (seg4:6E24): the line-drawing family's clipper — a NEAR-call,
+  register-in/out routine (endpoints si/di + dx/bx; clip bounds in DGROUP words
+  0x1D7A/0x1D78; persistent swap-parity in 0x1D82; returns CF=reject/accept).
+  Cohen-Sutherland outcodes for trivial accept/reject, then integer *midpoint
+  subdivision* (`add`/`sar 1` bisection with an `inc` nudge) to walk whichever
+  endpoint is out onto the violated edge, looping until both codes clear.  New
+  `recovered/geometry.py: clip_line` (+ `_outcode`, `_sar1_sum`, `_bisect`),
+  signed-16-bit exact, fail-loud convergence guards.  Island preserves ax
+  (push/pop), reproduces the clobbered `cx` residue (last b-midpoint) and the CF
+  output.  A/B oracle: 12 hand cases (every trivial/crossing case) + a 150-line
+  deterministic fuzz over random endpoints & bounds — si/di/dx/bx/cx + CF +
+  0x1D82 all byte-exact.  42 islands, suite 298 green.  (_PlotLine 6FBE /
+  _PlotMonoLine 71A7 — the consumers — are the next of the family.)
+
 ## 2026-07-11 (cont.21) — recovered _MoveTextToBalloon (inverting bitmap blit)
 - `_MoveTextToBalloon` (seg4:6CF8): copies a `{u16 width, u16 height, far* pixels}`
   source bitmap into a destination DIB, XOR-ing every byte (invert) and landing

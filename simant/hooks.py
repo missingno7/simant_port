@@ -623,6 +623,47 @@ def _make_movetexttoballoon_island(machine):
     return island
 
 
+# -- _os_ClipLine (seg4:6E24) — midpoint line clipper (near call) --------------
+# Register ABI: endpoints in si/di (P0) and dx/bx (P1); clip bounds in DGROUP
+# words 0x1D7A (a-axis) / 0x1D78 (b-axis); persistent swap-parity in 0x1D82.
+# Returns CF=1 (trivial reject) or CF=0 (accept, endpoints clipped in place).
+# ax is preserved (push/pop); cx is clobbered.
+CLIPLINE_SEG_INDEX = 4
+CLIPLINE_OFF = 0x6E24
+CLIPLINE_BOUND_A_G = 0x1D7A
+CLIPLINE_BOUND_B_G = 0x1D78
+CLIPLINE_SWAP_G = 0x1D82
+CLIPLINE_SIG = bytes.fromhex(
+    "50c706821d000032c083fe007c133b367a1d7f1c83ff007c263b3e781d7f24")
+
+
+def _make_clipline_island(machine):
+    from .recovered.geometry import clip_line
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)                          # near call: one return word
+        ds = s.ds
+        bound_a = _sx(m.rw(ds, CLIPLINE_BOUND_A_G))
+        bound_b = _sx(m.rw(ds, CLIPLINE_BOUND_B_G))
+        accepted, a0, b0, a1, b1, swap, cx = clip_line(
+            _sx(s.si), _sx(s.di), _sx(s.dx), _sx(s.bx), bound_a, bound_b, s.cx)
+        m.ww(ds, CLIPLINE_SWAP_G, swap)
+        s.si, s.di = a0 & 0xFFFF, b0 & 0xFFFF
+        s.dx, s.bx = a1 & 0xFFFF, b1 & 0xFFFF
+        s.cx = cx & 0xFFFF                             # clobbered residue (last b-midpoint)
+        s.flags = (s.flags & ~CF) | (0 if accepted else CF)
+        # ax / bp / ds preserved; near ret pops the single return word.
+        s.sp = (sp + 2) & 0xFFFF
+        s.ip = ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1453,6 +1494,8 @@ _ISLANDS = [
      lambda machine, off: _make_copychar_island(machine, 0x10), "_CopyCharRep"),
     (COPYCHAR_SEG_INDEX, MOVETEXTTOBALLOON_OFF, MOVETEXTTOBALLOON_SIG,
      lambda machine, off: _make_movetexttoballoon_island(machine), "_MoveTextToBalloon"),
+    (CLIPLINE_SEG_INDEX, CLIPLINE_OFF, CLIPLINE_SIG,
+     lambda machine, off: _make_clipline_island(machine), "_os_ClipLine"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
