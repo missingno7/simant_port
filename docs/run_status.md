@@ -1,12 +1,17 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-11 (cont.31) — recovered _IsYellowAnt (gameplay predicate)
+## 2026-07-11 (cont.31) — recovered _IsYellowAnt + _InNestBounds (gameplay predicates)
 - `_IsYellowAnt` (seg5:5720): returns 1 when the caste/marker value is 0xFE or
   0xFF (the yellow-ant sentinels marking the player-controlled ant), 0 otherwise
   — a full-16-bit equality compare (0x1FE/0x1FF are NOT yellow).
-  `recovered/gameplay.py: is_yellow_ant`; island returns AX=1/0, clobbers dx(=arg),
-  preserves the rest.  A/B oracle over 8 values incl. high-byte cases; byte-exact.
-  44 islands, suite 332 green.  Second gameplay-core island (after _IsItFood).
+- `_InNestBounds` (seg5:115C): valid nest cell = x in 0..0x3F and y in 1..0x3F
+  (the 64x64 grid, row 0 excluded), signed compares.  Island reproduces the dx
+  clobber residue (= x if the x-check failed, else y — the ASM reloads dx before
+  the y-check).  These map the nest coordinate space + player-ant markers the
+  bigger AI routines share.
+- Both in `recovered/gameplay.py` (is_yellow_ant / in_nest_bounds); AX=1/0
+  islands, clobbered residue reproduced, rest preserved.  A/B oracles over
+  in/out/edge/negative-as-16bit values; byte-exact.  45 islands, suite 342 green.
 
 ## 2026-07-11 (cont.30) — GDI.36 Polygon (frontier from a cold no-hooks demo)
 - Owner recorded a COLD-START no-hooks demo (`cold_nohooks`, 11845 records) and

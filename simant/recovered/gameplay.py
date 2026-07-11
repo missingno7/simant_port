@@ -30,3 +30,13 @@ def is_yellow_ant(caste: int) -> int:
     player-controlled ant with), 0 otherwise.
     """
     return 1 if caste in (0xFE, 0xFF) else 0
+
+
+def in_nest_bounds(x: int, y: int) -> int:
+    """Whether (x, y) is a valid nest cell.
+
+    Recovered from `_InNestBounds` (SIMANTW.SYM seg5:115C): the nest is a 64x64
+    grid; a cell is in bounds when x is 0..0x3F and y is 1..0x3F (row 0 is
+    excluded).  Signed compares (`jl`/`jg`).  Returns 1 in bounds, 0 otherwise.
+    """
+    return 1 if (0 <= x <= 0x3F and 1 <= y <= 0x3F) else 0

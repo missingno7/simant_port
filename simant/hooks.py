@@ -723,6 +723,38 @@ def _make_isyellowant_island(machine):
     return island
 
 
+# -- _InNestBounds (seg5:115C) — simulation: is (x, y) a valid nest cell? -------
+# 64x64 grid: x in 0..0x3F, y in 1..0x3F (row 0 excluded).  AX=1/0.  Clobbers dx
+# (= x if the x-check failed, else y — the ASM reloads dx before the y-check);
+# bp/bx/cx/si/di/es/ds preserved.
+INNESTBOUNDS_SEG_INDEX = 5
+INNESTBOUNDS_OFF = 0x115C
+INNESTBOUNDS_SIG = bytes.fromhex("558bec8b56060bd27c1883fa3f7f138b560883fa01")
+
+
+def _make_innestbounds_island(machine):
+    from .recovered.gameplay import in_nest_bounds
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        x_word = m.rw(ss, (sp + 4) & 0xFFFF)
+        y_word = m.rw(ss, (sp + 6) & 0xFFFF)
+        x = _sx(x_word)
+        in_x = 0 <= x <= 0x3F
+        s.ax = in_nest_bounds(x, _sx(y_word))
+        s.dx = x_word if not in_x else y_word         # ASM reloads dx before y-check
+        # bp/bx/cx/si/di/es/ds preserved; retf pops ip+cs, caller cleans the args.
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1559,6 +1591,8 @@ _ISLANDS = [
      lambda machine, off: _make_isitfood_island(machine), "_IsItFood"),
     (ISYELLOWANT_SEG_INDEX, ISYELLOWANT_OFF, ISYELLOWANT_SIG,
      lambda machine, off: _make_isyellowant_island(machine), "_IsYellowAnt"),
+    (INNESTBOUNDS_SEG_INDEX, INNESTBOUNDS_OFF, INNESTBOUNDS_SIG,
+     lambda machine, off: _make_innestbounds_island(machine), "_InNestBounds"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
