@@ -1,5 +1,15 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.7) — recovered _XferLifeTileMono (the masked 1bpp overlay)
+- Lifted `_XferLifeTileMono` (seg4:49B7) — the transparent sibling of _XferTileMono
+  and mono counterpart of _XferLifeTileColor.  Same bottom-up mono geometry, but a
+  SECOND source plane (the mask) at a fixed `+mask_delta = 0x3000 - (src_tile &
+  0xFF80)*32` from the data byte selects per bit: mask 1 keeps the dest, 0 draws
+  the source (`new = (dst & mask) | (data & ~mask)`, via the ASM's
+  `dst ^= (data ^ dst) & ~mask`).  `recovered/render.py: xfer_life_tile_mono`;
+  island reads+writes the dest; A/B oracle with a varied mask plane (4 cases,
+  byte-exact + full register preservation).  27 islands; suite 228 green.
+
 ## 2026-07-11 (cont.6) — recovered _XferTileMono (the 1bpp sibling of _XferTileColor)
 - Back to source recovery.  Lifted `_XferTileMono` (seg4:486C, _TEXT) — the
   monochrome sibling of the already-recovered `_XferTileColor`.  Same 22-byte far

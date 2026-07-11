@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 26              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 27              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 26
-    assert runtime.install_hooks(runtime.create_machine()) == 26
+    assert hooks.install(m) == 27
+    assert runtime.install_hooks(runtime.create_machine()) == 27
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -378,7 +378,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -423,7 +423,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 26
+            assert hooks.install(m) == 27
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -451,7 +451,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -510,7 +510,7 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
@@ -575,7 +575,7 @@ def _run_gennestmap(with_island, terrain_bytes, alt_bytes, table_bytes, mode):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     TERR, ALT, TAB, OUT = 0x6000, 0x7000, 0x7800, 0x8000       # DGROUP scratch
@@ -641,7 +641,7 @@ def _run_xfertilecolor(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -704,7 +704,7 @@ def _run_xfertilemono(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -759,6 +759,74 @@ def test_xfertilemono_island_matches_asm(args):
     assert isl[1] == asm[1], f"registers not preserved: {isl[1]} != {asm[1]}"
 
 
+# ---- _XferLifeTileMono (seg4:49B7) — recovered/render.py -------------------
+# The transparent 1bpp blit: a second source plane (the mask, at +0x3000 for
+# tiles 0..127) selects, per bit, whether to keep the destination or draw the
+# source.  It reads the destination, so the DST fill and the mask both matter.
+def _run_xferlifetilemono(with_island, args, src_bytes, dst_fill, dst_span=0x400):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 27
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    SRC, DST = 0x0000, 0xC000                    # SRC low so the +0x3000 mask fits
+    for i in range(dst_span):
+        m.mem.wb(DG, (DST + i) & 0xFFFF, dst_fill[i % len(dst_fill)])
+    for i, b in enumerate(src_bytes):
+        m.mem.wb(DG, (SRC + i) & 0xFFFF, b)
+
+    s.ds, s.es = DG, 0x9999
+    s.ax, s.bx, s.cx, s.dx = 0x0A0A, 0x0B0B, 0x0C0C, 0x0D0D
+    s.si, s.di, s.bp = 0x5151, 0x6161, 0x7171
+    s.cs, s.ip = m.seg_bases[hooks.XFERLIFETILEMONO_SEG_INDEX], hooks.XFERLIFETILEMONO_OFF
+    dst_x, top, height, tile_w, y_extent, map_w, src_tile = args
+    words = [DST, DG, dst_x, top, height, tile_w, y_extent, map_w, src_tile, SRC, DG]
+    sp = 0xF000
+    for v in reversed(words):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    for v in (SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(400_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _XferLifeTileMono did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    out = bytes(m.mem.rb(DG, (DST + i) & 0xFFFF) for i in range(dst_span))
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return out, regs
+
+
+@pytest.mark.parametrize("args", [
+    (0, 0, 2, 8, 1, 4, 0),
+    (0, 0, 4, 16, 1, 2, 0),
+    (8, 0, 2, 8, 1, 4, 1),
+    (0, 1, 3, 8, 4, 4, 0),
+])
+def test_xferlifetilemono_island_matches_asm(args):
+    # data plane + a varied mask plane at +0x3000 (mixed keep/draw bits)
+    src = bytearray(0x3200)
+    for i in range(len(src)):
+        src[i] = (i * 7 + 3) & 0xFF
+    for i in range(0x3000, len(src)):
+        src[i] = (i * 13 + 5) & 0xFF            # mask plane: exercises transparency
+    dst_fill = bytes([0xA5, 0x5A, 0xF0, 0x0F])
+    asm = _run_xferlifetilemono(False, args, bytes(src), dst_fill)
+    isl = _run_xferlifetilemono(True, args, bytes(src), dst_fill)
+    assert isl[0] == asm[0], "destination bytes differ"
+    assert isl[1] == asm[1], f"registers not preserved: {isl[1]} != {asm[1]}"
+
+
 # ---- _XferLifeTileColor (seg4:48FA) — recovered/render.py -------------------
 # Same geometry as _XferTileColor but a transparent blend: sentinel 0xDD skips
 # the byte, a 0xD 4bpp pixel index shows the destination through.  It reads the
@@ -767,7 +835,7 @@ def _run_xferlifetilecolor(with_island, args, src_bytes, dst_fill, dst_span=0x40
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -838,7 +906,7 @@ def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_strid
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x7000
@@ -906,7 +974,7 @@ def _run_docalctile(with_island, mode, tile_x, tile_y, *, sub=5, attr=0x00,
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 26
+        assert hooks.install(m) == 27
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     LAYER = 0x2000

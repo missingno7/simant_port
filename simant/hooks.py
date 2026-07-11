@@ -780,6 +780,58 @@ XFERTILEMONO_SIG = bytes.fromhex(
     "558bec601e068b4614f7661083c01f")
 
 
+# -- _XferLifeTileMono (seg4:49B7, _TEXT) ------------------------------------
+#
+# The transparent (masked) sibling of _XferTileMono: identical mono geometry +
+# huge-pointer walk, but each byte is blended against a second source plane (the
+# transparency mask, at a fixed +mask_delta from the data plane) instead of
+# copied.  Reads AND writes the destination; pusha/popa preserves every register.
+# Same mono prologue as _XferTileMono (hence the same 15-byte signature bytes).
+XFERLIFETILEMONO_SEG_INDEX = 4
+XFERLIFETILEMONO_OFF = 0x49B7
+XFERLIFETILEMONO_HUGE_INCR = 8
+XFERLIFETILEMONO_SIG = bytes.fromhex(
+    "558bec601e068b4614f7661083c01f")
+
+
+def _make_xferlifetilemono_island(machine):
+    from .recovered.render import xfer_life_tile_mono
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        dst_off, dst_seg = arg(4), arg(6)
+        dst_x, top, height, tile_w = arg(8), arg(0x0A), arg(0x0C), arg(0x0E)
+        y_extent, map_w, src_tile = arg(0x10), arg(0x12), arg(0x14)
+        src_off, src_seg = arg(0x16), arg(0x18)
+
+        def _dst_addr(off):
+            full = dst_off + off
+            return (dst_seg + XFERLIFETILEMONO_HUGE_INCR * (full >> 16)) & 0xFFFF, full & 0xFFFF
+
+        def read_src(off):
+            return m.rb(src_seg, (src_off + off) & 0xFFFF)
+
+        def read_dst(off):
+            seg, o = _dst_addr(off)
+            return m.rb(seg, o)
+
+        def write_dst(off, byte):
+            seg, o = _dst_addr(off)
+            m.wb(seg, o, byte)
+
+        xfer_life_tile_mono(read_src, read_dst, write_dst, dst_x, top, height,
+                            tile_w, y_extent, map_w, src_tile)
+
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 def _make_xfertilemono_island(machine):
     from .recovered.render import xfer_tile_mono
 
@@ -1007,6 +1059,8 @@ _ISLANDS = [
      lambda machine, off: _make_xferlifetilecolor_island(machine), "_XferLifeTileColor"),
     (XFERTILEMONO_SEG_INDEX, XFERTILEMONO_OFF, XFERTILEMONO_SIG,
      lambda machine, off: _make_xfertilemono_island(machine), "_XferTileMono"),
+    (XFERLIFETILEMONO_SEG_INDEX, XFERLIFETILEMONO_OFF, XFERLIFETILEMONO_SIG,
+     lambda machine, off: _make_xferlifetilemono_island(machine), "_XferLifeTileMono"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

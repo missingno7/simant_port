@@ -143,6 +143,41 @@ def xfer_tile_mono(read_src: Callable[[int], int],
         src = (src + row_bytes) & M
 
 
+def xfer_life_tile_mono(read_src: Callable[[int], int],
+                        read_dst: Callable[[int], int],
+                        write_dst: Callable[[int, int], None],
+                        dst_x: int, top: int, height: int, tile_w: int,
+                        y_extent: int, map_w: int, src_tile: int) -> None:
+    """Blit a 1bpp tile with per-pixel transparency (the monochrome "life"
+    overlay) — the mono sibling of :func:`xfer_life_tile_color`.
+
+    Same bottom-up mono geometry as :func:`xfer_tile_mono`, but the source has
+    TWO planes: the data byte at offset `off`, and a transparency-mask byte at
+    `off + mask_delta`, where `mask_delta = 0x3000 - (src_tile & 0xFF80) * 32`
+    keeps the mask plane at a fixed source offset while the data tile roams.  A
+    mask bit of 1 keeps the destination (transparent); 0 draws the source::
+
+        new = (dst & mask) | (data & ~mask)
+
+    `read_dst(off)` reads the destination byte to blend against.
+
+    Recovered from `_XferLifeTileMono` (SIMANTW.SYM seg4:49B7, _TEXT).
+    """
+    M = 0xFFFF
+    stride, row_bytes, start, src = _tile_blit_geometry_mono(
+        dst_x, top, height, tile_w, y_extent, map_w, src_tile)
+    mask_delta = (0x3000 - (((src_tile & 0xFF80) << 5) & M)) & M
+    for _row in range(height):
+        for i in range(row_bytes):
+            off = (src + i) & M
+            data = read_src(off)
+            mask = read_src((off + mask_delta) & M)   # 1 = transparent (keep dest)
+            write_dst(start + i,
+                      (read_dst(start + i) & mask) | (data & (mask ^ 0xFF)))
+        start -= stride                       # bottom-up (the huge ptr decrements)
+        src = (src + row_bytes) & M
+
+
 #: Per-view-mode tile-map layout for `do_calc_tile`, keyed by the mode selector
 #: (DGROUP:0xCC76).  Modes 0 and 1 share layout 0.  Fields: the tile-x mask, the
 #: graphic map's DGROUP offset and additive bias, the attribute map's offset, and
