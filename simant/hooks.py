@@ -504,6 +504,34 @@ def _make_xfliplong_island(machine):
     return island
 
 
+# -- _exchange (seg4:6E05) — swap `count` bytes between two buffers ------------
+# In-order byte swap (buffer 1 <-> buffer 2); pushaw/popaw preserve every reg.
+EXCHANGE_OFF = 0x6E05
+EXCHANGE_SIG = bytes.fromhex("558bec601e068b4e0ec47e06c5760aac268a25aa8864ffe2f6")
+
+
+def _make_exchange_island(machine):
+    from .recovered.byteops import exchange
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        b1_off, b1_seg = m.rw(s.ss, (sp + 4) & 0xFFFF), m.rw(s.ss, (sp + 6) & 0xFFFF)
+        b2_off, b2_seg = m.rw(s.ss, (sp + 8) & 0xFFFF), m.rw(s.ss, (sp + 0x0A) & 0xFFFF)
+        count = m.rw(s.ss, (sp + 0x0C) & 0xFFFF)
+        exchange(count,
+                 lambda i: m.rb(b1_seg, (b1_off + i) & 0xFFFF),
+                 lambda i: m.rb(b2_seg, (b2_off + i) & 0xFFFF),
+                 lambda i, v: m.wb(b1_seg, (b1_off + i) & 0xFFFF, v),
+                 lambda i, v: m.wb(b2_seg, (b2_off + i) & 0xFFFF, v))
+        # every register preserved (pushaw/popaw + push/pop ds,es)
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1373,6 +1401,8 @@ _ISLANDS = [
      lambda machine, off: _make_fliplong_island(machine), "_FlipLong"),
     (FLIP_SEG_INDEX, XFLIPLONG_OFF, XFLIPLONG_SIG,
      lambda machine, off: _make_xfliplong_island(machine), "_XFlipLong"),
+    (FLIP_SEG_INDEX, EXCHANGE_OFF, EXCHANGE_SIG,
+     lambda machine, off: _make_exchange_island(machine), "_exchange"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,

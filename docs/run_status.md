@@ -1,5 +1,15 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.19) — recovered _exchange (two-buffer byte swap)
+- `_exchange` (seg4:6E05): swaps `count` bytes between two far buffers, byte by
+  byte in order — reads both current bytes before writing both, so overlapping
+  buffers behave exactly as the ASM's in-order `lodsb`/`stosb` loop.
+  `recovered/byteops.py: exchange` takes injected read/write closures (stays
+  VM-free, addresses with the routine's 16-bit offset wrap); island wires them to
+  VM memory.  Every register preserved (pushaw/popaw + push/pop ds,es), so the
+  oracle only needs the two buffers + regs.  A/B byte-exact over counts 1/4/8/16.
+  38 islands, suite 273 green.
+
 ## 2026-07-11 (cont.18) — recovered _GenNestMap (nest-map terrain classifier)
 - `_GenNestMap` (seg4:4754): classifies a 64x64 terrain layer into fill bytes —
   0xFE/0xFF -> val_feff, bit7-set -> val_high, else -> val_else; empty (0) cells
