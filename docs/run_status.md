@@ -1,5 +1,14 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.15) — recovered _WindowsMono_MakeTable2x2a/b: the mono MakeTable family is COMPLETE
+- The half-resolution mono packer: 2 scanlines, FOUR tiles per byte at 2 bits each
+  (slots 0xC0/0x30/0x0C/0x03), count 0x20 (a) / 0x10 (b), stride == count; same
+  SS pattern table as the 4x4 packer (rows 0..1).  `recovered/render.py:
+  windows_mono_make_table_2x2`; one island factory drives both.  A/B oracle over
+  both halves x 3 phases; byte-exact.  34 islands, suite 262 green.
+- Mono MakeTable family now fully recovered: 4x4a/b (2 tiles/byte x4 rows) +
+  2x2a/b (4 tiles/byte x2 rows), alongside the colour _Windows_MakeTable4x4/1x1.
+
 ## 2026-07-11 (cont.14) — recovered _WindowsMono_MakeTable4x4b (completes the 4x4 mono pair)
 - The "b" half (44B9) is identical to "a" (442C) except `cx=0x20` pairs and the
   output scanline stride == the pair count.  Generalized the recovered

@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 32              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 34              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 32
-    assert runtime.install_hooks(runtime.create_machine()) == 32
+    assert hooks.install(m) == 34
+    assert runtime.install_hooks(runtime.create_machine()) == 34
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -296,7 +296,7 @@ def _run_monomake4x4(with_island, off, pairs, mode, tiles, table_bytes):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     s.sp = 0xFF00                                # high, clear of the 0x26A0 table
     src_seg, src_off = 0x7000, 0x0000
@@ -342,6 +342,60 @@ def test_monomake4x4_island_matches_asm(half, mode):
     table_bytes = bytes((i * 5 + 9) & 0xFF for i in range(0x820))  # covers 256*8 + phase
     asm = _run_monomake4x4(False, off, pairs, mode, tiles, table_bytes)
     isl = _run_monomake4x4(True, off, pairs, mode, tiles, table_bytes)
+    assert isl[0] == asm[0], f"{half} mode={mode}: output bytes differ"
+    assert isl[1] == asm[1], f"{half} mode={mode}: exit state differs {isl[1]} != {asm[1]}"
+
+
+# ---- _WindowsMono_MakeTable2x2a/b (seg4:4542/45DB) — recovered/render.py -----
+# Two scanlines, FOUR tiles per byte (2-bit slots 0xC0/0x30/0x0C/0x03); count
+# 0x20 (a) / 0x10 (b); scanline stride == count.
+def _run_monomake2x2(with_island, off, count, mode, tiles, table_bytes):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 34
+    s = m.cpu.s
+    s.sp = 0xFF00
+    src_seg, src_off = 0x7000, 0x0000
+    dst_seg, dst_off = 0x7100, 0x0000
+    for i, t in enumerate(tiles):
+        m.mem.wb(src_seg, (src_off + i) & 0xFFFF, t)
+    for i, b in enumerate(table_bytes):
+        m.mem.wb(s.ss, (hooks.MONOMAKE4X4_TABLE_BASE + i) & 0xFFFF, b)
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0x1111, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp = 0x2222, 0x3333, 0x4444
+    s.cs, s.ip = m.seg_bases[hooks.MONOMAKE4X4_SEG_INDEX], off
+    sp = s.sp
+    for v in (mode, 0x0000, dst_seg, dst_off, src_seg, src_off, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(400_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _WindowsMono_MakeTable2x2 did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    dst_lin = m.mem._xlat(dst_seg, dst_off)
+    out = bytes(m.mem.data[dst_lin:dst_lin + 2 * count])
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return out, regs
+
+
+@pytest.mark.parametrize("half", ["a", "b"])
+@pytest.mark.parametrize("mode", [0, 3, 7])
+def test_monomake2x2_island_matches_asm(half, mode):
+    off = hooks.MONOMAKE2X2A_OFF if half == "a" else hooks.MONOMAKE2X2B_OFF
+    count = hooks.MONOMAKE2X2A_COUNT if half == "a" else hooks.MONOMAKE2X2B_COUNT
+    tiles = [(i * 7 + 3) & 0xFF for i in range(4 * count)]
+    table_bytes = bytes((i * 5 + 9) & 0xFF for i in range(0x820))
+    asm = _run_monomake2x2(False, off, count, mode, tiles, table_bytes)
+    isl = _run_monomake2x2(True, off, count, mode, tiles, table_bytes)
     assert isl[0] == asm[0], f"{half} mode={mode}: output bytes differ"
     assert isl[1] == asm[1], f"{half} mode={mode}: exit state differs {isl[1]} != {asm[1]}"
 
@@ -436,7 +490,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -481,7 +535,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 32
+            assert hooks.install(m) == 34
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -509,7 +563,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -568,7 +622,7 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
@@ -635,7 +689,7 @@ def _run_gennestmap(with_island, terrain_bytes, alt_bytes, table_bytes, mode):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     TERR, ALT, TAB, OUT = 0x6000, 0x7000, 0x7800, 0x8000       # DGROUP scratch
@@ -701,7 +755,7 @@ def _run_xfertilecolor(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -764,7 +818,7 @@ def _run_xfertilemono(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -827,7 +881,7 @@ def _run_xferlifetilemono(with_island, args, src_bytes, dst_fill, dst_span=0x400
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x0000, 0xC000                    # SRC low so the +0x3000 mask fits
@@ -895,7 +949,7 @@ def _run_xferlifetilecolor(with_island, args, src_bytes, dst_fill, dst_span=0x40
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -966,7 +1020,7 @@ def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_strid
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x7000
@@ -1038,7 +1092,7 @@ def _run_docalctile(with_island, mode, tile_x, tile_y, *, sub=5, attr=0x00,
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 32
+        assert hooks.install(m) == 34
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     LAYER = 0x2000
@@ -1114,7 +1168,7 @@ def _run_flip(off, args, farptr=None):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 32
+            assert hooks.install(m) == 34
         s = m.cpu.s
         s.sp = 0xFF00
         FP_SEG, FP_OFF = 0x7000, 0x0040

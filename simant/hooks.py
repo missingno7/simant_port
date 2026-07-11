@@ -399,6 +399,50 @@ def _make_monomake4x4_island(machine, pairs):
     return island
 
 
+# -- _WindowsMono_MakeTable2x2a/b (seg4:4542/45DB) — half-res mono packer ------
+# Two scanlines, FOUR tiles per byte (2-bit slots); same SS pattern table as the
+# 4x4 packer (rows 0..1 here).  count 0x20 (a) / 0x10 (b); stride == count.
+MONOMAKE2X2A_OFF = 0x4542
+MONOMAKE2X2B_OFF = 0x45DB
+MONOMAKE2X2A_COUNT = 0x20
+MONOMAKE2X2B_COUNT = 0x10
+MONOMAKE2X2A_SIG = bytes.fromhex(
+    "558bec601e068b5e1083e30781c3a026")           # identical prologue to 4x4
+MONOMAKE2X2B_SIG = bytes.fromhex(
+    "558bec601e068b5e1083e30781c3a026")
+
+
+def _make_monomake2x2_island(machine, count):
+    from .recovered.render import windows_mono_make_table_2x2
+
+    def island(cpu) -> None:
+        m = cpu.mem
+        s = cpu.s
+        ss, sp = s.ss, s.sp
+        rw, rb = m.rw, m.rb
+        ret_ip, ret_cs = rw(ss, sp), rw(ss, (sp + 2) & 0xFFFF)
+        src_off, src_seg = rw(ss, (sp + 4) & 0xFFFF), rw(ss, (sp + 6) & 0xFFFF)
+        dst_off, dst_seg = rw(ss, (sp + 8) & 0xFFFF), rw(ss, (sp + 0x0A) & 0xFFFF)
+        mode = rw(ss, (sp + 0x0E) & 0xFFFF)
+
+        base = (MONOMAKE4X4_TABLE_BASE + (mode & 7)) & 0xFFFF
+        tiles = [rb(src_seg, (src_off + i) & 0xFFFF) for i in range(4 * count)]
+        table = [[rb(ss, (base + t * 8 + r) & 0xFFFF) for r in range(2)]
+                 for t in range(256)]
+        rows = windows_mono_make_table_2x2(tiles, table, count)
+        for r in range(2):
+            band = (dst_off + r * count) & 0xFFFF    # scanline stride == count
+            row = rows[r]
+            for j in range(count):
+                m.wb(dst_seg, (band + j) & 0xFFFF, row[j])
+
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs = ret_cs
+        s.ip = ret_ip
+
+    return island
+
+
 # -- _FlipWord / _FlipLong / _XFlipLong (seg4) — endian/word-order helpers -----
 # Tiny leaf helpers: FlipWord byte-swaps a word (xchg ah,al); FlipLong byte-swaps
 # each half of a long (AX=flip(hi), DX=flip(lo)); XFlipLong swaps the two WORDS of
@@ -1194,6 +1238,12 @@ _ISLANDS = [
     (MONOMAKE4X4_SEG_INDEX, MONOMAKE4X4B_OFF, MONOMAKE4X4B_SIG,
      lambda machine, off: _make_monomake4x4_island(machine, MONOMAKE4X4B_PAIRS),
      "_WindowsMono_MakeTable4x4b"),
+    (MONOMAKE4X4_SEG_INDEX, MONOMAKE2X2A_OFF, MONOMAKE2X2A_SIG,
+     lambda machine, off: _make_monomake2x2_island(machine, MONOMAKE2X2A_COUNT),
+     "_WindowsMono_MakeTable2x2a"),
+    (MONOMAKE4X4_SEG_INDEX, MONOMAKE2X2B_OFF, MONOMAKE2X2B_SIG,
+     lambda machine, off: _make_monomake2x2_island(machine, MONOMAKE2X2B_COUNT),
+     "_WindowsMono_MakeTable2x2b"),
     (FLIP_SEG_INDEX, FLIPWORD_OFF, FLIPWORD_SIG,
      lambda machine, off: _make_flipword_island(machine), "_FlipWord"),
     (FLIP_SEG_INDEX, FLIPLONG_OFF, FLIPLONG_SIG,

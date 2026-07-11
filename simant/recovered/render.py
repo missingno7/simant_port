@@ -408,3 +408,36 @@ def windows_mono_make_table_4x4(tiles, table, pairs=MONO_MAKETABLE_PAIRS):
         for r in range(4):
             rows[r][j] = (table[t0][r] & 0xF0) | (table[t1][r] & 0x0F)
     return [bytes(r) for r in rows]
+
+
+#: The four 2-bit destination slots of the half-resolution mono packer, one per
+#: tile of the group of four (`and 0xC0 / 0x30 / 0x0C / 0x03`).
+_MONO_2X2_MASKS = (0xC0, 0x30, 0x0C, 0x03)
+
+
+def windows_mono_make_table_2x2(tiles, table, count):
+    """Build the two scanlines of a half-resolution monochrome tile band.
+
+    Each output byte packs FOUR tiles at 2 bits each — tile k of the group lands
+    in slot `_MONO_2X2_MASKS[k]` — so for each of `count` groups `(t0..t3)` and
+    each scanline `r` in 0..1::
+
+        out[r][j] = sum(table[t_k][r] & _MONO_2X2_MASKS[k] for k in 0..3)
+
+    `table[tile]` is the tile's per-scanline pattern row (this variant uses
+    scanlines 0..1).  Returns two rows of `count` bytes.
+
+    Recovered from `_WindowsMono_MakeTable2x2a`/`b` (SIMANTW.SYM, seg4:4542/45DB):
+    identical four-`lodsb` loops (0x20 / 0x10 iterations), two `ss:[bx+r]` reads
+    per tile each masked to a 2-bit slot and stored/OR'd at the destination's
+    `count`-strided scanlines.
+    """
+    rows = [bytearray(count) for _ in range(2)]
+    for j in range(count):
+        ts = tiles[4 * j:4 * j + 4]
+        for r in range(2):
+            b = 0
+            for k in range(4):
+                b |= table[ts[k]][r] & _MONO_2X2_MASKS[k]
+            rows[r][j] = b
+    return [bytes(r) for r in rows]
