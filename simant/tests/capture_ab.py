@@ -61,55 +61,68 @@ def capture_call_ab(seg_index: int, off: int, island_factory, demo: Path | None,
         DemoDriver(str(demo)).install(m.api.services["system"])
     island = island_factory(m, off)
 
+    # Detect the call with a replacement HOOK (fires only at the target address,
+    # so the run-up to a late gameplay call has zero per-instruction overhead),
+    # not a per-step wrapper.  For calls before the nth, the hook transparently
+    # runs the real ASM (remove itself, step to the routine's return, reinstall).
+    key = (target_cs & 0xFFFF, off & 0xFFFF)
     seen = {"n": 0}
-    result = {"r": CaptureResult(False, 0, [], {}, 0)}
-    _orig = CPU8086.step
+    cap = {}
 
-    def watch(self):
-        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (target_cs & 0xFFFF, off & 0xFFFF):
-            seen["n"] += 1
-            if seen["n"] == nth:
-                _do_ab()
-                raise _Done
-        return _orig(self)
-
-    def _do_ab():
-        data0 = bytearray(mem.data)
-        regs0 = {k: getattr(s, k) for k in _REGS}
+    def _run_asm_to_return():
         ret_ip = mem.rw(s.ss, s.sp)
         ret_cs = mem.rw(s.ss, (s.sp + 2) & 0xFFFF)
-        stack_low = mem._xlat(s.ss, s.sp)
-        # --- ASM to the routine's own return (subcalls return elsewhere) ---
-        CPU8086.step = _orig
         for _ in range(max_asm_steps):
             cpu.step()
             if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (ret_cs & 0xFFFF, ret_ip & 0xFFFF):
-                break
-        asm_mem = bytes(mem.data)
-        asm_regs = {k: getattr(s, k) for k in _REGS}
-        # --- restore, run the island from the same pre-state ---
-        mem.data[:] = data0
-        for k, v in regs0.items():
-            setattr(s, k, v)
-        island(cpu)
-        isl_mem = bytes(mem.data)
-        isl_regs = {k: getattr(s, k) for k in _REGS}
-        diffs = [(i, asm_mem[i], isl_mem[i])
-                 for i in range(len(asm_mem)) if asm_mem[i] != isl_mem[i]]
-        rdiffs = {k: (asm_regs[k], isl_regs[k])
-                  for k in _REGS if asm_regs[k] != isl_regs[k]}
-        result["r"] = CaptureResult(True, cpu.instruction_count, diffs, rdiffs,
-                                    stack_low)
+                return
+        raise RuntimeError("ASM did not return within max_asm_steps")
 
     class _Done(Exception):
         pass
 
-    CPU8086.step = watch
+    def detector(c):
+        seen["n"] += 1
+        cpu.replacement_hooks.pop(key, None)
+        if seen["n"] < nth:                     # not our call: run the real ASM
+            _run_asm_to_return()
+            cpu.replacement_hooks[key] = detector
+            return
+        cap["data0"] = bytearray(mem.data)
+        cap["regs0"] = {k: getattr(s, k) for k in _REGS}
+        cap["stack_low"] = mem._xlat(s.ss, s.sp)
+        raise _Done
+
+    cpu.replacement_hooks[key] = detector
     try:
         while cpu.instruction_count < budget:
             cpu.run(200_000)
-    except (_Done, DemoEnded):
+    except _Done:
         pass
+    except DemoEnded:
+        cpu.replacement_hooks.pop(key, None)
+        return CaptureResult(False, cpu.instruction_count, [], {}, 0)
     finally:
-        CPU8086.step = _orig
-    return result["r"]
+        cpu.replacement_hooks.pop(key, None)
+    if "data0" not in cap:
+        return CaptureResult(False, cpu.instruction_count, [], {}, 0)
+
+    # We're parked at the routine entry with the pre-state captured.  Run the ASM
+    # to its return, snapshot; then restore and run the island; then diff.
+    at_call_instr = cpu.instruction_count
+    for k, v in cap["regs0"].items():
+        setattr(s, k, v)
+    _run_asm_to_return()
+    asm_mem = bytes(mem.data)
+    asm_regs = {k: getattr(s, k) for k in _REGS}
+    mem.data[:] = cap["data0"]
+    for k, v in cap["regs0"].items():
+        setattr(s, k, v)
+    island(cpu)
+    isl_mem = bytes(mem.data)
+    isl_regs = {k: getattr(s, k) for k in _REGS}
+    diffs = [(i, asm_mem[i], isl_mem[i])
+             for i in range(len(asm_mem)) if asm_mem[i] != isl_mem[i]]
+    rdiffs = {k: (asm_regs[k], isl_regs[k])
+              for k in _REGS if asm_regs[k] != isl_regs[k]}
+    return CaptureResult(True, at_call_instr, diffs, rdiffs, cap["stack_low"])
