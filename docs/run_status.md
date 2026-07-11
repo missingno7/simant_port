@@ -1,5 +1,23 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.12) — NATIVE EXECUTION MODE proven: _Unpack runs with no VM
+- Built the first real native (product) routine: `simant/native/unpack.py:
+  native_unpack(state, out_seg, out_off, budget)` runs the recovered
+  `lzss.decode_chunk` over a `NativeGameState` — args passed as a plain Python
+  call, resumable state in the owned image, selectors resolved by the state's own
+  `_xlat` — with NO cpu, NO stack, NO emulator.
+- `NativeGameState` is now a drop-in `mem`: it mirrors the VM's selector table
+  (`sel_base`, RPL-masked) and exposes `rb/rw/wb/ww`/`_xlat` exactly like dos_re
+  `Memory`, so recovered adapters run over it unchanged.  `.from_machine` copies
+  the image + selector table (the bootstrap seam).
+- Proof (`tests/test_native.py`): capture a real _Unpack call from a pure-ASM VM,
+  snapshot to a NativeGameState, let the ASM finish, then run native_unpack over
+  the snapshot — the decompressed output AND the exit decoder state are
+  byte-identical to the ASM (same fields the island's own oracle checks;
+  match_rem excluded as documented don't-care scratch).  The VM is the oracle,
+  the recovered source is the engine — the endgame direction working end-to-end
+  for one routine.  Suite 239 green.
+
 ## 2026-07-11 (cont.11) — window islands migrated; every descriptor kind exercised
 - Migrated `_win_IsWinOpen` and `_win_GetObjRect` onto the seam: the slot->HWND
   word table (0xBCA6) is `SimAntState.window_hwnd` (`_U16Array`), the slot->winrec
