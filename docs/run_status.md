@@ -14,8 +14,9 @@
   split.  Both preserve every register (pushaw/popaw + ds,es).  A/B oracle over
   x/y/width (and rep) grids incl. 640-wide: pixels + stride global + regs
   byte-exact.  40 islands, suite 281 green.
-- NOTE: `_make_gennestmap_island` is defined twice in hooks.py (an early shadowed
-  copy ~L611 + the live one ~L971); harmless (last def wins) but worth a cleanup.
+- FOLLOW-UP (done, commit 2a3bd41): `_GenNestMap` had been recovered twice — a
+  dead sparse-dict `gen_nest_map` island shadowed by the live `gen_nest_map_cells`
+  generator one.  Dropped the dead island + orphaned render fn; one clean impl.
 
 ## 2026-07-11 (cont.19) — recovered _exchange (two-buffer byte swap)
 - `_exchange` (seg4:6E05): swaps `count` bytes between two far buffers, byte by
