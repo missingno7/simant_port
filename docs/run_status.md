@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.30) — GDI.36 Polygon (frontier from a cold no-hooks demo)
+- Owner recorded a COLD-START no-hooks demo (`cold_nohooks`, 11845 records) and
+  confirmed the ghosting is GONE (validates cont.29 — the ghosting was the play.py
+  display race, not the VM).  New frontier: `GDI.36` not implemented, called from
+  `GR!_TrapFill+0xB3` (seg2:533F) during a WM_PAINT @199.4M instructions.
+- GDI.36 = **Polygon(hdc, lpPoints, nCount)** (the call site pushes hdc, a far
+  POINT* and count=4 — a filled trapezoid; _TrapFill draws nest cross-sections /
+  terrain shading).  Implemented in win16_re (d44c2c7): even-odd pixel-centre
+  scanline fill with the DC brush + 1px Bresenham pen outline, surface-clipped;
+  `_read_points`/`_fill_polygon`/`_draw_line`/`_pen_rgb` helpers + GDI.36 handler +
+  ordinal name.  Unit tests (tests/test_polygon.py).
+- END-TO-END: `replay.py cold_nohooks` (cold start, pure ASM) now runs to demo
+  exhaustion — 199,612,542 instructions, clock 62365ms, digest 74bf3228... — past
+  the old gap.  win16_re 112 green, simant 324 green.
+- NOTE: `cold_nohooks` is a clean cold-start no-hooks demo (no snapshot anchor),
+  so it replays faithfully via replay.py — a much better regression baseline than
+  the snapshot-anchored ones (which desynced).  Owner keeps the file; demos are
+  recreatable so it isn't committed.
+
 ## 2026-07-11 (cont.29) — ghosting ROOT CAUSE: a play.py display race, NOT the VM
 - Owner: ghosting appears with NO hooks too -> suspected a serious VM bug.
 - Method: replayed the no-hooks demo_185520 FAITHFULLY (pure ASM via replay.py's
