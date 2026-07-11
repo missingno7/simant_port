@@ -396,6 +396,67 @@ def _make_monomake4x4a_island(machine):
     return island
 
 
+# -- _FlipWord / _FlipLong / _XFlipLong (seg4) — endian/word-order helpers -----
+# Tiny leaf helpers: FlipWord byte-swaps a word (xchg ah,al); FlipLong byte-swaps
+# each half of a long (AX=flip(hi), DX=flip(lo)); XFlipLong swaps the two WORDS of
+# a dword in place through a far pointer.  All `retf` (caller cleans args).
+FLIP_SEG_INDEX = 4
+FLIPWORD_OFF = 0x7356
+FLIPWORD_SIG = bytes.fromhex("558bec8b460686c45dcb")
+FLIPLONG_OFF = 0x7360
+FLIPLONG_SIG = bytes.fromhex("558bec8b460886c48b560686d65dcb")
+XFLIPLONG_OFF = 0x52D8
+XFLIPLONG_SIG = bytes.fromhex("558becc45e06268b0f268b470226890726894f02c9cb")
+
+
+def _make_flipword_island(machine):
+    from .recovered.byteops import flip_word
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        s.ax = flip_word(m.rw(s.ss, (sp + 4) & 0xFFFF))
+        s.sp = (sp + 4) & 0xFFFF                  # retf: caller cleans the 1 arg
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _make_fliplong_island(machine):
+    from .recovered.byteops import flip_long
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        lo = m.rw(s.ss, (sp + 4) & 0xFFFF)
+        hi = m.rw(s.ss, (sp + 6) & 0xFFFF)
+        s.ax, s.dx = flip_long(lo, hi)
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _make_xfliplong_island(machine):
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        off = m.rw(s.ss, (sp + 4) & 0xFFFF)
+        seg = m.rw(s.ss, (sp + 6) & 0xFFFF)
+        w0 = m.rw(seg, off)                       # cx = es:[bx]
+        w1 = m.rw(seg, (off + 2) & 0xFFFF)        # ax = es:[bx+2]
+        m.ww(seg, off, w1)                        # es:[bx]   = ax
+        m.ww(seg, (off + 2) & 0xFFFF, w0)         # es:[bx+2] = cx
+        s.es, s.bx, s.cx, s.ax = seg, off, w0, w1  # register residue
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- the SIMONE PRNG family (seg5) -------------------------------------------
 #
 # The simulation's one LFSR (recovered in simant/recovered/simone.py): every
@@ -1127,6 +1188,12 @@ _ISLANDS = [
     (MONOMAKE4X4A_SEG_INDEX, MONOMAKE4X4A_OFF, MONOMAKE4X4A_SIG,
      lambda machine, off: _make_monomake4x4a_island(machine),
      "_WindowsMono_MakeTable4x4a"),
+    (FLIP_SEG_INDEX, FLIPWORD_OFF, FLIPWORD_SIG,
+     lambda machine, off: _make_flipword_island(machine), "_FlipWord"),
+    (FLIP_SEG_INDEX, FLIPLONG_OFF, FLIPLONG_SIG,
+     lambda machine, off: _make_fliplong_island(machine), "_FlipLong"),
+    (FLIP_SEG_INDEX, XFLIPLONG_OFF, XFLIPLONG_SIG,
+     lambda machine, off: _make_xfliplong_island(machine), "_XFlipLong"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

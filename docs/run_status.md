@@ -1,5 +1,15 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.13) — recovered the endian/word-order helper family (seg4)
+- Lifted three clean leaf helpers toward exhausting the islands for the native
+  port: `_FlipWord` (7356, byte-swap a word), `_FlipLong` (7360, byte-swap each
+  half of a long -> AX=flip(hi) DX=flip(lo)), `_XFlipLong` (52D8, in-place swap
+  of a dword's two words through a far pointer).  Pure logic in
+  `recovered/byteops.py: flip_word/flip_long`; A/B oracles over many values incl.
+  register residue (XFlipLong leaves es/bx/cx/ax) and the in-place memory swap.
+  31 islands; suite 253 green.  (`_FlipWords`/`_XFlipLong`'s buffer-reversal
+  sibling _FlipWords(52EE) is a loop — left for a later pass.)
+
 ## 2026-07-11 (cont.12) — NATIVE EXECUTION MODE proven: _Unpack runs with no VM
 - Built the first real native (product) routine: `simant/native/unpack.py:
   native_unpack(state, out_seg, out_off, budget)` runs the recovered
