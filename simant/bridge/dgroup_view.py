@@ -270,6 +270,22 @@ class DgroupView(StructView):
         super().__init__(_coerce_backend(source, dgroup_base), 0)
 
 
+#: base of the _DrawChar blit's cached scratch block in DGROUP.
+DRAWCHAR_GLOBALS_BASE = 0xB90E
+
+
+class DrawCharGlobals(StructView):
+    """The _DrawChar glyph-blit's cached DGROUP scratch (base 0xB90E): the
+    source/dest selectors it stores and the per-scanline strides it reads back,
+    plus the cached word count.  Bound relative to the base so the offsets read
+    as a struct, not scattered absolutes."""
+    src_seg = _U16(0x00)        # 0xB90E — glyph source selector (written)
+    dst_seg = _U16(0x02)        # 0xB910 — dest selector (written)
+    src_stride = _U16(0x04)     # 0xB912 — source scanline stride (read)
+    dst_stride = _U16(0x06)     # 0xB914 — dest scanline stride (read)
+    words = _U16(0x0A)          # 0xB918 — cached full-word span (written)
+
+
 class SimAntState(DgroupView):
     """SimAnt's DGROUP as named source-level fields — the human-readable state
     the recovered logic reads/writes.  Grows one verified field at a time as

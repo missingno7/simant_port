@@ -971,20 +971,22 @@ def _make_xfertilecolor_island(machine):
 DRAWCHAR_SEG_INDEX = 7
 DRAWCHAR_OFF = 0xB033
 DRAWCHAR_MASK_TABLE_OFF = 0xB02A                 # CODE-seg top-n-bits mask table (CS: xlat)
-DRAWCHAR_G_SRCSEG, DRAWCHAR_G_DSTSEG = 0xB90E, 0xB910   # scratch globals it writes
-DRAWCHAR_G_SRCSTRIDE, DRAWCHAR_G_DSTSTRIDE = 0xB912, 0xB914   # strides it reads
-DRAWCHAR_G_WORDS = 0xB918
+# The blit's cached DGROUP scratch (0xB90E..0xB918) is named in
+# simant/bridge/dgroup_view.py:DrawCharGlobals — the island reads/writes it there.
 DRAWCHAR_SIG = bytes.fromhex(                     # push bp;mov bp,sp;add bp,6;push es/ds/si/di;mov ax,0x6902
     "558bec83c506061e5657b80269")
 
 
 def _make_drawchar_island(machine):
     from .recovered.render import draw_char, shift_glyph_word
+    from .bridge.dgroup_view import (SelectorBackend, DrawCharGlobals,
+                                     DRAWCHAR_GLOBALS_BASE)
     dg = machine.seg_bases[DG_SEG_INDEX]
     code_seg = machine.seg_bases[DRAWCHAR_SEG_INDEX]     # CS: the mask table lives here
 
     def island(cpu) -> None:
         s, m = cpu.s, cpu.mem
+        g = DrawCharGlobals(SelectorBackend(m, dg), DRAWCHAR_GLOBALS_BASE)
         ss, sp = s.ss, s.sp
         ret_ip = m.rw(ss, sp)
         ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
@@ -996,8 +998,8 @@ def _make_drawchar_island(machine):
         x_sub, y_sub = x & 7, y & 7
         si_base = (src_off + (x >> 3)) & 0xFFFF
         di_base = (dst_off + (y >> 3)) & 0xFFFF
-        src_stride = m.rw(dg, DRAWCHAR_G_SRCSTRIDE)
-        dst_stride = m.rw(dg, DRAWCHAR_G_DSTSTRIDE)
+        src_stride = g.src_stride
+        dst_stride = g.dst_stride
         # The partial mask is read via `xlatb` with a CS: override (2E) — so it
         # comes from the CODE segment, NOT the glyph source segment.
         partial_mask = m.rb(code_seg, (DRAWCHAR_MASK_TABLE_OFF + (width & 7)) & 0xFFFF)
@@ -1015,9 +1017,9 @@ def _make_drawchar_island(machine):
                   partial_mask)
 
         # Scratch globals the routine caches (observable).
-        m.ww(dg, DRAWCHAR_G_SRCSEG, src_seg)
-        m.ww(dg, DRAWCHAR_G_DSTSEG, dst_seg)
-        m.ww(dg, DRAWCHAR_G_WORDS, width >> 3)
+        g.src_seg = src_seg
+        g.dst_seg = dst_seg
+        g.words = width >> 3
 
         # Clobbered-register residue (not pusha-preserved):
         s.bx = width & 0xFFFF

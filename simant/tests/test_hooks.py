@@ -969,8 +969,12 @@ def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_strid
         m.mem.wb(DG, (DST + i) & 0xFFFF, dst_fill[i % len(dst_fill)])
     for i, b in enumerate(glyph):
         m.mem.wb(DG, (SRC + i) & 0xFFFF, b)
-    m.mem.ww(DG, hooks.DRAWCHAR_G_SRCSTRIDE, src_stride)
-    m.mem.ww(DG, hooks.DRAWCHAR_G_DSTSTRIDE, dst_stride)
+    # Seed the blit's cached strides through the same bridge view the island reads.
+    from simant.bridge.dgroup_view import (SelectorBackend, DrawCharGlobals,
+                                           DRAWCHAR_GLOBALS_BASE)
+    _g = DrawCharGlobals(SelectorBackend(m.mem, DG), DRAWCHAR_GLOBALS_BASE)
+    _g.src_stride = src_stride
+    _g.dst_stride = dst_stride
 
     s.ax, s.bx, s.cx, s.dx = 0xA0A0, 0xB0B0, 0xC0C0, 0xD0D0
     s.si, s.di, s.bp, s.es, s.ds = 0x1234, 0x5678, 0x9ABC, 0xDEF0, DG
