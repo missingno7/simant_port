@@ -1,5 +1,27 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.25) — audio: MCI song restart-storm (sound looping)
+- Owner report: at startup a sound plays over music "over and over"; same with
+  --no-hooks (so it's the win16 audio layer, not islands).
+- Investigation (headless can't reproduce — the game issues exactly ONE MCI
+  open+play per song in every deterministic run: free-run to 60M instrs, the
+  `newcold` gameplay demo replay, both show one GAMETHME.MID play).  Mapped the
+  game's sound path: `_myBeginSong`/`_MciMessage` (seg2) drive MCI via
+  GetProcAddress'd mciSendCommand; `_TryAntTheme` (5:1414) rotates ANTTHME1-3
+  every ~7200 `_TickCount` units (GetTickCount-based); `_myServiceSong` just
+  pumps PeekMessage to flush MCI notifications.  SOUND dir: GAMETHME is a full
+  ~30s song; ATTACK/HAPPY/JOLLY/etc. are short stinger .mids.
+- Root cause (host side): `MidiBackend.play()` reloaded+restarted the song on
+  EVERY MCI_PLAY.  A game re-issuing MCI_PLAY while polling status restarts it
+  each poll -> the same clip stutters "over and over".  Fix (win16_re eca4b4c):
+  guard play() on `music.get_busy()` — real MCI continues an already-playing
+  device; only (re)start a song that isn't currently sounding (fresh play or a
+  loop after it ended).  Plus a per-(re)start console log ("[audio] MIDI play
+  #N: NAME") so the exact looping .mid is visible live.  Unit tests added.
+- Could not reproduce headless, so this is the correct-semantics fix + a live
+  diagnostic; asked owner to re-run and report which NAME repeats if it persists.
+- win16_re 107 green, simant 322 green.
+
 ## 2026-07-11 (cont.24) — fix in-game EndPaint crash + crash snapshots
 - In-game VM STOP (owner report, ~55.8M instrs): `EndPaint` reshape ValueError
   "cannot reshape array of size 439074 into shape (288,423,3)".  Root cause: a
