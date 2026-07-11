@@ -1,5 +1,20 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.24) — fix in-game EndPaint crash + crash snapshots
+- In-game VM STOP (owner report, ~55.8M instrs): `EndPaint` reshape ValueError
+  "cannot reshape array of size 439074 into shape (288,423,3)".  Root cause: a
+  wndproc RESIZED the client surface (346->288 tall) between BeginPaint and
+  EndPaint, so the pre-paint pixel snapshot (346*423*3=439074) no longer matched
+  the surface (288*423*3).  Fix (win16_re 7718175): extracted the clip-restore to
+  `user.py: _apply_paint_clip`, which no-ops when the snapshot size no longer
+  matches the surface (the wndproc already repainted the resized surface — never
+  crash on a mid-paint resize).  Regression test `tests/test_paint_clip.py`.
+- Owner ask "crashes should produce snapshots": play.py now saves a best-effort
+  post-mortem snapshot to artifacts/snapshots/crash_<time> on any VM stop — no
+  quiescence pause (the CPU already halted at the fault); save_snapshot works at
+  any instruction boundary.  (simant 5d3becc; bumps the win16_re submodule.)
+- win16_re suite 104 green, simant suite 322 green.
+
 ## 2026-07-11 (cont.23) — PIVOT to the simulation core: recovered _IsItFood
 - DIRECTION (owner): steer recovery toward the "pure gameplay part" so a modern
   native backend can be built on it later.  Rendering primitives (blitters, the
