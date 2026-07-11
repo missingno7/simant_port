@@ -582,6 +582,47 @@ def _make_copychar_island(machine, rep_arg):
     return island
 
 
+# -- _MoveTextToBalloon (seg4:6CF8) — inverting bitmap blit into a balloon DIB --
+# Copies a {u16 width, u16 height, far* pixels} source bitmap into a destination
+# DIB, XOR-ing every byte (invert) and landing source rows on every other dst
+# scanline (dst step = dst_stride*2 - src_stride).  Same DGROUP stride scratch
+# (0x1D70) and all-registers-preserved profile as _CopyChar.
+MOVETEXTTOBALLOON_OFF = 0x6CF8
+MOVETEXTTOBALLOON_SIG = bytes.fromhex(
+    "558bec601e06b802698ed8c47e0a268b0583c702c1e803a3701d83c7028b460e"
+    "03f88b46108b16701dd1e0f6e203f88b")
+
+
+def _make_movetexttoballoon_island(machine):
+    from .recovered.render import move_text_to_balloon
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        rw = m.rw
+        ret_ip, ret_cs = rw(ss, sp), rw(ss, (sp + 2) & 0xFFFF)
+        src_off, src_seg = rw(ss, (sp + 4) & 0xFFFF), rw(ss, (sp + 6) & 0xFFFF)
+        dst_off, dst_seg = rw(ss, (sp + 8) & 0xFFFF), rw(ss, (sp + 0x0A) & 0xFFFF)
+        x = rw(ss, (sp + 0x0C) & 0xFFFF)
+        y = rw(ss, (sp + 0x0E) & 0xFFFF)
+
+        stride = m.rw(dst_seg, dst_off) >> 3          # dst DIB header width >> 3
+        m.ww(machine.seg_bases[DG_SEG_INDEX], COPYCHAR_STRIDE_G, stride)
+        src_width = m.rw(src_seg, src_off)
+        src_height = m.rw(src_seg, (src_off + 2) & 0xFFFF)
+        pix_off, pix_seg = m.rw(src_seg, (src_off + 4) & 0xFFFF), m.rw(src_seg, (src_off + 6) & 0xFFFF)
+        n = ((src_width + 7) >> 3) * src_height
+        pixels = [m.rb(pix_seg, (pix_off + i) & 0xFFFF) for i in range(n)]
+        for off, b in move_text_to_balloon(pixels, src_width, src_height, stride, x, y).items():
+            m.wb(dst_seg, (dst_off + off) & 0xFFFF, b)
+
+        # Every register preserved (pushaw/popaw + push/pop ds,es).
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1410,6 +1451,8 @@ _ISLANDS = [
      lambda machine, off: _make_copychar_island(machine, None), "_CopyChar"),
     (COPYCHAR_SEG_INDEX, COPYCHARREP_OFF, COPYCHARREP_SIG,
      lambda machine, off: _make_copychar_island(machine, 0x10), "_CopyCharRep"),
+    (COPYCHAR_SEG_INDEX, MOVETEXTTOBALLOON_OFF, MOVETEXTTOBALLOON_SIG,
+     lambda machine, off: _make_movetexttoballoon_island(machine), "_MoveTextToBalloon"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,

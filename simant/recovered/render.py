@@ -509,3 +509,30 @@ def copy_char(src, x, y, stride):
     row).  Recovered from `_CopyChar` (seg4:6C62) — the `rep`==1 specialisation
     of `copy_char_rep` (`movsb` per row instead of `rep stosb`)."""
     return copy_char_rep(src, x, y, stride, 1)
+
+
+def move_text_to_balloon(pixels, src_width, src_height, dst_stride, x, y):
+    """Blit a source text bitmap into a destination (speech-balloon) DIB,
+    inverting every byte, on interlaced rows.  Returns {dst_off: byte} relative
+    to the DIB far-pointer offset (16-bit offset wrap).
+
+    Recovered from `_MoveTextToBalloon` (seg4:6CF8).  The source is a
+    `{u16 width, u16 height, far* pixels}` struct; its packed row stride is
+    `(width+7)>>3`.  In the destination DIB (byte stride = header width >> 3) row
+    0 lands at `4 + x + ((y*2)&0xFF)*(dst_stride&0xFF)`; after each source row of
+    `src_stride` bytes the cursor steps by `dst_stride*2 - src_stride`, so source
+    rows land on every other destination scanline.  Each byte is written `^ 0xFF`
+    (`lodsb`/`xor al,0xFF`/`stosb`).  Every register is preserved (pushaw/popaw).
+    """
+    src_stride = (src_width + 7) >> 3
+    row_step = ((dst_stride << 1) - src_stride) & 0xFFFF
+    di = (4 + x + (((y * 2) & 0xFF) * (dst_stride & 0xFF))) & 0xFFFF
+    out = {}
+    p = 0
+    for _row in range(src_height):
+        for _ in range(src_stride):
+            out[di] = (pixels[p] ^ 0xFF) & 0xFF
+            p += 1
+            di = (di + 1) & 0xFFFF
+        di = (di + row_step) & 0xFFFF
+    return out

@@ -1,5 +1,17 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.21) — recovered _MoveTextToBalloon (inverting bitmap blit)
+- `_MoveTextToBalloon` (seg4:6CF8): copies a `{u16 width, u16 height, far* pixels}`
+  source bitmap into a destination DIB, XOR-ing every byte (invert) and landing
+  source rows on every other dst scanline (dst step = dst_stride*2 - src_stride).
+  Shares the _CopyChar family's DGROUP stride scratch (0x1D70) + row-0 offset
+  `4+x+((y*2)&0xFF)*(dst_stride&0xFF)` + all-registers-preserved profile.
+  `recovered/render.py: move_text_to_balloon` returns {dst_off: byte^0xFF}; island
+  reads the struct's nested pixel far ptr.  A/B oracle over x/y/dst-width/src-size
+  grids incl. 640-wide: DIB bytes + stride global + regs byte-exact.  41 islands,
+  suite 285 green.  (_CopyChar / _CopyCharRep / _MoveTextToBalloon = the seg4:6C62
+  DIB-glyph blit family, now complete.)
+
 ## 2026-07-11 (cont.20) — recovered _CopyChar / _CopyCharRep (DIB glyph blits)
 - `_CopyChar` (seg4:6C62) + `_CopyCharRep` (seg4:6CAA): blit a 16-row glyph into
   a DIB.  Byte stride = header width word >> 3 (cached to DGROUP scratch 0x1D70,
