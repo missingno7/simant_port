@@ -79,7 +79,7 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
     hk = runtime.create_machine()
     hk.cpu.trace_enabled = False
-    assert hooks.install(hk) == 36              # all islands, incl. the PRNG family
+    assert hooks.install(hk) == 37              # all islands, incl. the PRNG family
     isl = _run_island(hk, dividend, divisor)
 
     assert asm["ax"] | (asm["dx"] << 16) == (dividend // divisor) & 0xFFFFFFFF
@@ -89,8 +89,8 @@ def test_uldiv_island_matches_asm(dividend, divisor):
 
 def test_install_counts_and_verifies():
     m = runtime.create_machine()
-    assert hooks.install(m) == 36
-    assert runtime.install_hooks(runtime.create_machine()) == 36
+    assert hooks.install(m) == 37
+    assert runtime.install_hooks(runtime.create_machine()) == 37
 
 
 def _capture_unpack_output(with_island, max_calls, step_budget):
@@ -296,7 +296,7 @@ def _run_monomake4x4(with_island, off, pairs, mode, tiles, table_bytes):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     s.sp = 0xFF00                                # high, clear of the 0x26A0 table
     src_seg, src_off = 0x7000, 0x0000
@@ -353,7 +353,7 @@ def _run_monomake2x2(with_island, off, count, mode, tiles, table_bytes):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     s.sp = 0xFF00
     src_seg, src_off = 0x7000, 0x0000
@@ -490,7 +490,7 @@ def _run_srand(with_island, off, seed, args=()):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     _setup_srand(m, off, seed, args)
     for _ in range(100):
         m.cpu.step()
@@ -535,7 +535,7 @@ def test_getrrandseed_island_matches_asm(ticks):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 36
+            assert hooks.install(m) == 37
         m.mem.ww(hooks.BIOS_TICK_SEG, 0, ticks & 0xFFFF)
         m.mem.ww(hooks.BIOS_TICK_SEG, 2, ticks >> 16)
         _setup_srand(m, hooks.GETRRANDSEED_OFF, 0x4321)
@@ -563,7 +563,7 @@ def _run_iswinopen(with_island, obj_handle, slot_kind):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     sysobj = m.api.services["system"]
     DS = m.seg_bases[hooks.DG_SEG_INDEX]
@@ -622,7 +622,7 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
@@ -689,7 +689,7 @@ def _run_gennestmap(with_island, terrain_bytes, alt_bytes, table_bytes, mode):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     TERR, ALT, TAB, OUT = 0x6000, 0x7000, 0x7800, 0x8000       # DGROUP scratch
@@ -755,7 +755,7 @@ def _run_xfertilecolor(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -818,7 +818,7 @@ def _run_xfertilemono(with_island, args, src_bytes, dst_span=0x400):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -881,7 +881,7 @@ def _run_xferlifetilemono(with_island, args, src_bytes, dst_fill, dst_span=0x400
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x0000, 0xC000                    # SRC low so the +0x3000 mask fits
@@ -949,7 +949,7 @@ def _run_xferlifetilecolor(with_island, args, src_bytes, dst_fill, dst_span=0x40
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x8000
@@ -1020,7 +1020,7 @@ def _run_drawchar(with_island, width, height, x, y, glyph, src_stride, dst_strid
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     SRC, DST = 0x6000, 0x7000
@@ -1092,7 +1092,7 @@ def _run_docalctile(with_island, mode, tile_x, tile_y, *, sub=5, attr=0x00,
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     LAYER = 0x2000
@@ -1168,7 +1168,7 @@ def _run_flip(off, args, farptr=None):
         m = runtime.create_machine()
         m.cpu.trace_enabled = False
         if with_island:
-            assert hooks.install(m) == 36
+            assert hooks.install(m) == 37
         s = m.cpu.s
         s.sp = 0xFF00
         FP_SEG, FP_OFF = 0x7000, 0x0040
@@ -1231,7 +1231,7 @@ def _run_copyname(with_island, src_bytes):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     s.sp = 0xFF00
     DST_SEG, DST_OFF = 0x7100, 0x0020
@@ -1282,7 +1282,7 @@ def _run_genovermap(with_island, mode):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
     if with_island:
-        assert hooks.install(m) == 36
+        assert hooks.install(m) == 37
     s = m.cpu.s
     DG = m.seg_bases[hooks.DG_SEG_INDEX]
     CX0, DX0, TBL1, TBL2 = 0x2000, 0x4000, 0x6000, 0x6100
@@ -1334,5 +1334,70 @@ def test_genovermap_island_matches_asm(mode):
     asm = _run_genovermap(False, mode)
     isl = _run_genovermap(True, mode)
     assert isl[0] == asm[0], f"mode={mode}: overlay map bytes differ"
+    assert isl[1] == asm[1], f"mode={mode}: scratch globals differ {isl[1]} != {asm[1]}"
+    assert isl[2] == asm[2], f"mode={mode}: exit state differs {isl[2]} != {asm[2]}"
+
+
+# ---- _GenNestMap (seg4:4754) — recovered/render.py ------------------------
+def _run_gennestmap(with_island, mode):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == 37
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    CX0, DX0, TBL = 0x2000, 0x3000, 0x6000
+    VAL_FEFF, VAL_HIGH, VAL_ELSE = 0x11, 0x22, 0x33
+    DST_SEG, DST_OFF = 0x7100, 0x0000
+    # 4 KB primary grid cycling through 0 / 0xFE / 0xFF / bit7-set / bit7-clear
+    cases = [0, 0xFE, 0xFF, 0x80, 0x81, 0x7F, 0x01, 0, 0x40, 0xC0]
+    for i in range(0x1000):
+        m.mem.wb(DG, (CX0 + i) & 0xFFFF, cases[i % len(cases)])
+        m.mem.wb(DG, (DX0 + i) & 0xFFFF, (i * 11 + 3) & 0xFF)   # secondary layer
+    for j in range(0x100):
+        m.mem.wb(DG, (TBL + j) & 0xFFFF, (j * 13 + 5) & 0xFF)
+    for i in range(0x1000):
+        m.mem.wb(DST_SEG, (DST_OFF + i) & 0xFFFF, 0xEE)         # poison dst
+    for a in (hooks.GENNESTMAP_TBL_G, hooks.GENNESTMAP_FEFF_G,
+              hooks.GENNESTMAP_HIGH_G, hooks.GENNESTMAP_ELSE_G):
+        m.mem.ww(DG, a, 0xABCD)                                 # poison scratch
+
+    s.ds = DG
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.GENNESTMAP_SEG_INDEX], hooks.GENNESTMAP_OFF
+    s.sp = 0xFF00
+    sp = s.sp
+    # stack (high->low): mode, val_else, val_high, val_feff, tbl, dx0, cx0, dst_seg, dst_off, ret
+    for v in (mode, VAL_ELSE, VAL_HIGH, VAL_FEFF, TBL, DX0, CX0,
+              DST_SEG, DST_OFF, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(2_000_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _GenNestMap did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    dst_lin = m.mem._xlat(DST_SEG, DST_OFF)
+    dst = bytes(m.mem.data[dst_lin:dst_lin + 0x1000])
+    glob = (m.mem.rw(DG, hooks.GENNESTMAP_TBL_G), m.mem.rb(DG, hooks.GENNESTMAP_FEFF_G),
+            m.mem.rb(DG, hooks.GENNESTMAP_HIGH_G), m.mem.rb(DG, hooks.GENNESTMAP_ELSE_G))
+    regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
+                bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
+    return dst, glob, regs
+
+
+@pytest.mark.parametrize("mode", [0, 1])
+def test_gennestmap_island_matches_asm(mode):
+    asm = _run_gennestmap(False, mode)
+    isl = _run_gennestmap(True, mode)
+    assert isl[0] == asm[0], f"mode={mode}: nest map bytes differ"
     assert isl[1] == asm[1], f"mode={mode}: scratch globals differ {isl[1]} != {asm[1]}"
     assert isl[2] == asm[2], f"mode={mode}: exit state differs {isl[2]} != {asm[2]}"

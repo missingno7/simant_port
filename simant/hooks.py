@@ -580,6 +580,53 @@ def _make_genovermap_island(machine):
     return island
 
 
+# -- _GenNestMap (seg4:4754) — the nest-map terrain classifier -----------------
+# Classifies a 64x64 terrain layer into fill bytes (0xFE/0xFF, bit7-set, else),
+# with empty cells taking a table lookup or being skipped.  Same all-registers-
+# preserved profile as _GenOverMap; echoes the table base + three fill bytes to
+# DGROUP scratch (0x1B78 word / 0x1B7A / 0x1B7B / 0x1B7C bytes).
+GENNESTMAP_SEG_INDEX = 4
+GENNESTMAP_OFF = 0x4754
+GENNESTMAP_TBL_G = 0x1B78
+GENNESTMAP_FEFF_G = 0x1B7A
+GENNESTMAP_HIGH_G = 0x1B7B
+GENNESTMAP_ELSE_G = 0x1B7C
+GENNESTMAP_SIG = bytes.fromhex("558bec601e06c47e068b4e0a8b560c8b460ea3781b")
+
+
+def _make_gennestmap_island(machine):
+    from .recovered.render import gen_nest_map
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        rw = m.rw
+        ret_ip, ret_cs = rw(ss, sp), rw(ss, (sp + 2) & 0xFFFF)
+        dst_off, dst_seg = rw(ss, (sp + 4) & 0xFFFF), rw(ss, (sp + 6) & 0xFFFF)
+        cx0 = rw(ss, (sp + 8) & 0xFFFF)
+        dx0 = rw(ss, (sp + 0x0A) & 0xFFFF)
+        tbl = rw(ss, (sp + 0x0C) & 0xFFFF)
+        val_feff = rw(ss, (sp + 0x0E) & 0xFFFF) & 0xFF   # byte args (al = low byte)
+        val_high = rw(ss, (sp + 0x10) & 0xFFFF) & 0xFF
+        val_else = rw(ss, (sp + 0x12) & 0xFFFF) & 0xFF
+        mode = rw(ss, (sp + 0x14) & 0xFFFF)
+
+        ds = s.ds
+        m.ww(ds, GENNESTMAP_TBL_G, tbl)
+        m.wb(ds, GENNESTMAP_FEFF_G, val_feff)
+        m.wb(ds, GENNESTMAP_HIGH_G, val_high)
+        m.wb(ds, GENNESTMAP_ELSE_G, val_else)
+        writes = gen_nest_map(cx0, dx0, tbl, val_feff, val_high, val_else, mode,
+                              lambda off: m.rb(ds, off))
+        for di, val in writes.items():
+            m.wb(dst_seg, (dst_off + di) & 0xFFFF, val)
+
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- the SIMONE PRNG family (seg5) -------------------------------------------
 #
 # The simulation's one LFSR (recovered in simant/recovered/simone.py): every
@@ -1330,6 +1377,8 @@ _ISLANDS = [
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
      lambda machine, off: _make_genovermap_island(machine), "_GenOverMap"),
+    (GENNESTMAP_SEG_INDEX, GENNESTMAP_OFF, GENNESTMAP_SIG,
+     lambda machine, off: _make_gennestmap_island(machine), "_GenNestMap"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

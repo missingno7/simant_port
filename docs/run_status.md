@@ -1,5 +1,16 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.18) — recovered _GenNestMap (nest-map terrain classifier)
+- `_GenNestMap` (seg4:4754): classifies a 64x64 terrain layer into fill bytes —
+  0xFE/0xFF -> val_feff, bit7-set -> val_high, else -> val_else; empty (0) cells
+  take `table[src2[dx]>>2]` (mode==0) or are skipped.  Sibling of _GenOverMap
+  (same column-major cursor, all-registers-preserved via pushaw/popaw).
+  `recovered/render.py: gen_nest_map` returns the sparse write set; island echoes
+  the table base + 3 fill bytes to DGROUP scratch (0x1B78/0x1B7A/0x1B7B/0x1B7C).
+  A/B oracle over both modes with a src grid hitting every branch: 4 KB grid +
+  globals + registers byte-exact.  37 islands, suite green.  The GenOver/GenNest
+  terrain-map generator pair is now recovered.
+
 ## 2026-07-11 (cont.17) — recovered _GenOverMap (terrain overlay compositor)
 - `_GenOverMap` (seg4:46E9): composites two column-major source layers through
   LUTs into a 64x128 row-major overlay.  Per cell: primary `src[cx]` (cursor
