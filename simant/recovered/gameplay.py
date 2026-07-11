@@ -20,3 +20,13 @@ def is_it_food(tile: int, inside_nest: bool) -> int:
     if inside_nest:
         return 1 if 0x18 <= tile <= 0x27 else 0
     return 1 if 0x48 <= tile <= 0x4B else 0
+
+
+def is_yellow_ant(caste: int) -> int:
+    """Whether a caste/marker value denotes the player's "yellow ant".
+
+    Recovered from `_IsYellowAnt` (SIMANTW.SYM seg5:5720): returns 1 when the
+    value is 0xFE or 0xFF (the two yellow-ant sentinels the sim marks the
+    player-controlled ant with), 0 otherwise.
+    """
+    return 1 if caste in (0xFE, 0xFF) else 0

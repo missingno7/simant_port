@@ -1,5 +1,13 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.31) — recovered _IsYellowAnt (gameplay predicate)
+- `_IsYellowAnt` (seg5:5720): returns 1 when the caste/marker value is 0xFE or
+  0xFF (the yellow-ant sentinels marking the player-controlled ant), 0 otherwise
+  — a full-16-bit equality compare (0x1FE/0x1FF are NOT yellow).
+  `recovered/gameplay.py: is_yellow_ant`; island returns AX=1/0, clobbers dx(=arg),
+  preserves the rest.  A/B oracle over 8 values incl. high-byte cases; byte-exact.
+  44 islands, suite 332 green.  Second gameplay-core island (after _IsItFood).
+
 ## 2026-07-11 (cont.30) — GDI.36 Polygon (frontier from a cold no-hooks demo)
 - Owner recorded a COLD-START no-hooks demo (`cold_nohooks`, 11845 records) and
   confirmed the ghosting is GONE (validates cont.29 — the ghosting was the play.py

@@ -698,6 +698,31 @@ def _make_isitfood_island(machine):
     return island
 
 
+# -- _IsYellowAnt (seg5:5720) — simulation: is this the player's yellow ant? ----
+# Returns AX=1 when the caste/marker value is 0xFE or 0xFF (the yellow-ant
+# sentinels), else 0.  Clobbers dx (=arg); bp/bx/cx/si/di/es/ds preserved.
+ISYELLOWANT_SEG_INDEX = 5
+ISYELLOWANT_OFF = 0x5720
+ISYELLOWANT_SIG = bytes.fromhex("558bec8b560681faff00740a81fafe00740433c0")
+
+
+def _make_isyellowant_island(machine):
+    from .recovered.gameplay import is_yellow_ant
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        s.ax = is_yellow_ant(arg)                     # AX = 1/0
+        s.dx = arg                                    # clobbered = the loaded arg
+        # bp/bx/cx/si/di/es/ds preserved; retf pops ip+cs, caller cleans the arg.
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1532,6 +1557,8 @@ _ISLANDS = [
      lambda machine, off: _make_clipline_island(machine), "_os_ClipLine"),
     (ISITFOOD_SEG_INDEX, ISITFOOD_OFF, ISITFOOD_SIG,
      lambda machine, off: _make_isitfood_island(machine), "_IsItFood"),
+    (ISYELLOWANT_SEG_INDEX, ISYELLOWANT_OFF, ISYELLOWANT_SIG,
+     lambda machine, off: _make_isyellowant_island(machine), "_IsYellowAnt"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
