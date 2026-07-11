@@ -1,5 +1,13 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.16) — recovered _CopyName (NetBIOS 16-byte name-field copy)
+- `_CopyName` (seg4:7438): space-fill 16 bytes, copy min(strlen(src),16), force
+  byte 15 to NUL — the fixed-width NUL-anchored name records NetBIOS uses.
+  `recovered/netbios.py: copy_name` + `cstrlen`; island reproduces the clobbered-
+  register residue (ax=0, bx=dst_off, cx=0, dx=src_seg, es=dst_seg; si/di/bp/ds
+  preserved).  A/B oracle over empty/short/exactly-16/over-16/embedded-space
+  names; byte-exact.  35 islands, suite 267 green.
+
 ## 2026-07-11 (cont.15) — recovered _WindowsMono_MakeTable2x2a/b: the mono MakeTable family is COMPLETE
 - The half-resolution mono packer: 2 scanlines, FOUR tiles per byte at 2 bits each
   (slots 0xC0/0x30/0x0C/0x03), count 0x20 (a) / 0x10 (b), stride == count; same

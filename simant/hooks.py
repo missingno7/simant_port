@@ -504,6 +504,42 @@ def _make_xfliplong_island(machine):
     return island
 
 
+# -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
+# Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
+# preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
+COPYNAME_SEG_INDEX = 4
+COPYNAME_OFF = 0x7438
+COPYNAME_SIG = bytes.fromhex("c80200005756b82000b91000c47e06f3aac47e0a")
+
+
+def _make_copyname_island(machine):
+    from .recovered.netbios import copy_name
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        sp = s.sp
+        ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
+        dst_off, dst_seg = m.rw(s.ss, (sp + 4) & 0xFFFF), m.rw(s.ss, (sp + 6) & 0xFFFF)
+        src_off, src_seg = m.rw(s.ss, (sp + 8) & 0xFFFF), m.rw(s.ss, (sp + 0x0A) & 0xFFFF)
+
+        src = bytearray()
+        for i in range(0x110):                    # bounded scan for the NUL
+            b = m.rb(src_seg, (src_off + i) & 0xFFFF)
+            src.append(b)
+            if b == 0:
+                break
+        field = copy_name(src)
+        for i in range(0x10):
+            m.wb(dst_seg, (dst_off + i) & 0xFFFF, field[i])
+
+        s.ax, s.bx, s.cx, s.dx = 0, dst_off, 0, src_seg   # clobbered-reg residue
+        s.es = dst_seg
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- the SIMONE PRNG family (seg5) -------------------------------------------
 #
 # The simulation's one LFSR (recovered in simant/recovered/simone.py): every
@@ -1250,6 +1286,8 @@ _ISLANDS = [
      lambda machine, off: _make_fliplong_island(machine), "_FlipLong"),
     (FLIP_SEG_INDEX, XFLIPLONG_OFF, XFLIPLONG_SIG,
      lambda machine, off: _make_xfliplong_island(machine), "_XFlipLong"),
+    (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
+     lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,
