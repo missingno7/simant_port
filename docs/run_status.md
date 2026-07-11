@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.2) — DECISIVE: SimAnt's MMSYSTEM/MIDI path is DEAD CODE in this build
+- The ONLY writer of the mmsystem handle `es:[0x8d08]` is `_CheckMMWave+0x6C`
+  (seg2:77D3).  `_CheckMMWave`(0x7766) has **no direct caller and no pointer
+  reference anywhere** (call-operand + data-word scans across all segments = 0
+  hits) — it is unreferenced dead code.  Empirical confirmation: over a full
+  newcold gameplay run (51.7M instr) `_CheckMMWave` runs **0 times** and the
+  handle is **never** nonzero.  So `_MusicInit`/`_myBeginSong`/`_myBeginSound`
+  always see handle==0 and bail out of the MMSYSTEM branch → music ALWAYS plays
+  via SOUND.DRV (the PC-speaker note sequencer we already emulate).
+- **Conclusion:** implementing MMSYSTEM/MCI is MOOT — SIMANTW.EXE never attempts
+  it.  Phase-1 dynamic-loading (LoadLibrary/GetProcAddress/thunk minting) is still
+  a valid general win16 capability (kept), but it won't make SimAnt play MIDI.
+- **The soundtrack is still reachable another way:** the game DOES call
+  `_myBeginSong(songid)` naturally (newcold hits it at 17M).  Debug strings show
+  it resolves `songid -> "sound\NAME.mid"` ("myBeginSong(shift=%d)(id=%d)(file=%s)",
+  "%ssound\%s.mid").  So the real soundtrack can be played by intercepting
+  `_myBeginSong`/`_StopSong` (recover songid->name, log deterministically, play
+  the real .mid via a pygame backend) — a music-presentation backend, NOT MMSYSTEM
+  emulation and NOT byte-exact recovery.  Awaiting owner decision on direction.
+
 ## 2026-07-11 (cont.) — MIDI detection chain FULLY traced (the trigger + the loader)
 - **The device is config-driven:** `assets/ANTWIN/SIMANT.CFG` is text — "Display Mode: ?\n
   Sound Mode: 6\n".  `_ReadConfig`(seg2:0x8F4, called by `_IBMInitStuff`) does
