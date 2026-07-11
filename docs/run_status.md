@@ -1,5 +1,31 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.26) — audio: music re-enable doesn't resume (investigation)
+- Owner report: in-game, the music button disables music (stops it) but
+  re-enabling doesn't resume.  Provided a no-hooks demo `demo_184143.jsonl`
+  (anchored to snapshot snap_184142 @ instr 41.7M) toggling music off/on.
+- Replayed it headless with logging backends: during the entire re-enable the
+  game makes only 2 GetProcAddress(0x100,...) calls and ZERO mciSendCommand /
+  BeginSong / backend play — i.e. NO music playback command is issued on
+  re-enable.  So the failure is UPSTREAM of the host audio backend (our backend
+  isn't being asked to play), not a MidiBackend bug.
+- Also found: the snapshot does NOT preserve audio state (`mci_state` is None
+  post-restore; api.services aren't pickled, only sysobj+memory), and the game's
+  MMSYSTEM module handle (`[0x8d08]=0x100`) + song-active flags (`[0xaf0]`/`[0xaf2]`
+  = 0) leave `_MciMessage` bailing at its `cmp [0xaf2],0; je` gate.  So this
+  snapshot-anchored demo cannot faithfully replay the live MCI path — repro needs
+  a COLD-BOOT (non-snapshot) toggle recording.
+- Game music map: toggle writes songs_on (0xAF6) via MAINWNDPROC (seg1:2EB6);
+  the seg2 GR music engine (`_myBeginSong`/`_MciMessage`/`_StopSong`/
+  `_myServiceSong`/`_MultiMediaSong`) drives MCI through GetProcAddress'd
+  mciSendCommand, gated by 0xAF0/0xAF2 (song active) + songs_on.
+- Action (win16_re 414a2d6): added `[mci]` console logging of every
+  state-changing MCI command (open/play/stop/pause/resume/close) with dev+song,
+  pairing with the existing `[audio] MIDI play #N` log.  A live toggle will now
+  show whether re-enable issues a play at all — the observation that localizes
+  the bug (game-logic/state vs backend).  Asked owner for a cold-boot repro +
+  the console lines.  win16_re 107 green, simant 322 green.
+
 ## 2026-07-11 (cont.25) — audio: MCI song restart-storm (sound looping)
 - Owner report: at startup a sound plays over music "over and over"; same with
   --no-hooks (so it's the win16 audio layer, not islands).
