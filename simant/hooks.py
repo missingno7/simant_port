@@ -540,6 +540,46 @@ def _make_copyname_island(machine):
     return island
 
 
+# -- _GenOverMap (seg4:46E9) — the overlay-map compositor ----------------------
+# Composites two column-major source layers (via LUTs) into a 64x128 row-major
+# overlay.  pushaw/popaw preserve every register; the only effects are the dst
+# write set and echoing the two table bases to DGROUP scratch (0x1B76/0x1B78).
+GENOVERMAP_SEG_INDEX = 4
+GENOVERMAP_OFF = 0x46E9
+GENOVERMAP_TBL1_G = 0x1B76
+GENOVERMAP_TBL2_G = 0x1B78
+GENOVERMAP_SIG = bytes.fromhex("558bec601e06c47e068b4e0a8b560c")
+
+
+def _make_genovermap_island(machine):
+    from .recovered.render import gen_over_map
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        rw = m.rw
+        ret_ip, ret_cs = rw(ss, sp), rw(ss, (sp + 2) & 0xFFFF)
+        dst_off, dst_seg = rw(ss, (sp + 4) & 0xFFFF), rw(ss, (sp + 6) & 0xFFFF)
+        cx0 = rw(ss, (sp + 8) & 0xFFFF)
+        dx0 = rw(ss, (sp + 0x0A) & 0xFFFF)
+        tbl1 = rw(ss, (sp + 0x0C) & 0xFFFF)
+        tbl2 = rw(ss, (sp + 0x0E) & 0xFFFF)
+        mode = rw(ss, (sp + 0x10) & 0xFFFF)
+
+        ds = s.ds                                 # sources + tables + scratch are DS-relative
+        m.ww(ds, GENOVERMAP_TBL1_G, tbl1)
+        m.ww(ds, GENOVERMAP_TBL2_G, tbl2)
+        writes = gen_over_map(cx0, dx0, tbl1, tbl2, mode, lambda off: m.rb(ds, off))
+        for di, val in writes.items():
+            m.wb(dst_seg, (dst_off + di) & 0xFFFF, val)
+
+        # Every register is preserved (pushaw/popaw + push/pop ds,es).
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- the SIMONE PRNG family (seg5) -------------------------------------------
 #
 # The simulation's one LFSR (recovered in simant/recovered/simone.py): every
@@ -1288,6 +1328,8 @@ _ISLANDS = [
      lambda machine, off: _make_xfliplong_island(machine), "_XFlipLong"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
+    (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
+     lambda machine, off: _make_genovermap_island(machine), "_GenOverMap"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

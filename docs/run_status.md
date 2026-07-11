@@ -1,5 +1,15 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.17) — recovered _GenOverMap (terrain overlay compositor)
+- `_GenOverMap` (seg4:46E9): composites two column-major source layers through
+  LUTs into a 64x128 row-major overlay.  Per cell: primary `src[cx]` (cursor
+  steps 0x40/col, +1/row); nonzero -> `table1[a>>3]`; else if mode==0 ->
+  `table2[src2[dx]]`; else SKIP (dst byte unchanged).  `recovered/render.py:
+  gen_over_map` returns the sparse write set; island applies it, echoes the two
+  table bases to DGROUP scratch (0x1B76/0x1B78), all registers preserved
+  (pushaw/popaw).  A/B oracle over both modes: full 8 KB grid + globals + regs
+  byte-exact.  36 islands, suite 269 green.  (Sibling _GenNestMap 4754 next.)
+
 ## 2026-07-11 (cont.16) — recovered _CopyName (NetBIOS 16-byte name-field copy)
 - `_CopyName` (seg4:7438): space-fill 16 bytes, copy min(strlen(src),16), force
   byte 15 to NUL — the fixed-width NUL-anchored name records NetBIOS uses.

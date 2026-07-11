@@ -410,6 +410,45 @@ def windows_mono_make_table_4x4(tiles, table, pairs=MONO_MAKETABLE_PAIRS):
     return [bytes(r) for r in rows]
 
 
+def gen_over_map(cx0, dx0, tbl1, tbl2, mode, read_byte):
+    """Composite two source layers into an overlay map (64 rows x 128 columns).
+
+    For each of the 64x128 cells (destination index advancing 0..8191):
+
+    * read the primary layer byte `a = src[cx]` (the source cursor `cx` steps by
+      0x40 per column and by +1 per row — a column-major read into a row-major
+      write);
+    * if `a != 0` the cell is `table1[a >> 3]`;
+    * else if `mode == 0` it is `table2[src2[dx]]` (the secondary layer, same
+      cursor pattern via `dx`);
+    * else the cell is SKIPPED (its destination byte is left unchanged).
+
+    `read_byte(off)` reads DS:[off] (all sources + both tables live in DGROUP).
+    Returns `{dst_index: value}` — only the cells actually written (skips absent),
+    so a caller applies them over the existing destination.
+
+    Recovered from `_GenOverMap` (SIMANTW.SYM, seg4:46E9): a 0x40 x 0x80 nested
+    `lodsb`/`stosb` loop; `pushaw`/`popaw` preserve every register, so the only
+    effect is this write set (plus echoing tbl1/tbl2 to scratch globals).
+    """
+    writes = {}
+    di = 0
+    cx, dx = cx0, dx0
+    for _row in range(0x40):
+        for _col in range(0x80):
+            a = read_byte(cx & 0xFFFF)
+            if a != 0:
+                writes[di] = read_byte((tbl1 + (a >> 3)) & 0xFFFF)
+            elif mode == 0:
+                writes[di] = read_byte((tbl2 + read_byte(dx & 0xFFFF)) & 0xFFFF)
+            di += 1
+            cx = (cx + 0x40) & 0xFFFF
+            dx = (dx + 0x40) & 0xFFFF
+        cx = (cx - 0x1FFF) & 0xFFFF
+        dx = (dx - 0x1FFF) & 0xFFFF
+    return writes
+
+
 #: The four 2-bit destination slots of the half-resolution mono packer, one per
 #: tile of the group of four (`and 0xC0 / 0x30 / 0x0C / 0x03`).
 _MONO_2X2_MASKS = (0xC0, 0x30, 0x0C, 0x03)
