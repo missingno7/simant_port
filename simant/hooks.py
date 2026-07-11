@@ -532,6 +532,56 @@ def _make_exchange_island(machine):
     return island
 
 
+# -- _CopyChar / _CopyCharRep (seg4:6C62 / 6CAA) — DIB glyph-column blits -------
+# Blit a 16-row glyph into a DIB whose byte stride is the header width word >> 3
+# (cached to DGROUP scratch 0x1D70).  Row 0 lands at 4+x+((y*2)&0xFF)*(stride&0xFF)
+# past the DIB offset; each row steps by the full stride.  _CopyChar copies one
+# source byte per row; _CopyCharRep replicates each source byte `rep` times
+# horizontally (a run-fill).  Both preserve every register (pushaw/popaw + ds,es).
+COPYCHAR_SEG_INDEX = 4
+COPYCHAR_OFF = 0x6C62
+COPYCHARREP_OFF = 0x6CAA
+COPYCHAR_STRIDE_G = 0x1D70                       # DGROUP word: cached byte stride
+COPYCHAR_SIG = bytes.fromhex(
+    "558bec601e06b802698ed8c47e0e268b0583c702c1e803a3701d83c7028b460a"
+    "03f88b460c8b16701dd1e0f6e203f88b16701d83ea01")
+COPYCHARREP_SIG = bytes.fromhex(
+    "558bec601e06b802698ed8c47e0e268b0583c702c1e803a3701d83c7028b460a"
+    "03f88b460c8b16701dd1e0f6e203f88b16701d8b4e12")
+
+
+def _make_copychar_island(machine, rep_arg):
+    """rep_arg is None for _CopyChar (implicit rep=1) or the sp-offset of the
+    horizontal repeat count for _CopyCharRep."""
+    from .recovered.render import copy_char, copy_char_rep
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        rw = m.rw
+        ret_ip, ret_cs = rw(ss, sp), rw(ss, (sp + 2) & 0xFFFF)
+        src_off, src_seg = rw(ss, (sp + 4) & 0xFFFF), rw(ss, (sp + 6) & 0xFFFF)
+        x = rw(ss, (sp + 8) & 0xFFFF)
+        y = rw(ss, (sp + 0x0A) & 0xFFFF)
+        dst_off, dst_seg = rw(ss, (sp + 0x0C) & 0xFFFF), rw(ss, (sp + 0x0E) & 0xFFFF)
+
+        stride = m.rw(dst_seg, dst_off) >> 3          # DIB header width word >> 3
+        m.ww(machine.seg_bases[DG_SEG_INDEX], COPYCHAR_STRIDE_G, stride)
+        src = [m.rb(src_seg, (src_off + i) & 0xFFFF) for i in range(16)]
+        if rep_arg is None:
+            writes = copy_char(src, x, y, stride)
+        else:
+            writes = copy_char_rep(src, x, y, stride, rw(ss, (sp + rep_arg) & 0xFFFF))
+        for off, b in writes.items():
+            m.wb(dst_seg, (dst_off + off) & 0xFFFF, b)
+
+        # Every register preserved (pushaw/popaw + push/pop ds,es).
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1403,6 +1453,10 @@ _ISLANDS = [
      lambda machine, off: _make_xfliplong_island(machine), "_XFlipLong"),
     (FLIP_SEG_INDEX, EXCHANGE_OFF, EXCHANGE_SIG,
      lambda machine, off: _make_exchange_island(machine), "_exchange"),
+    (COPYCHAR_SEG_INDEX, COPYCHAR_OFF, COPYCHAR_SIG,
+     lambda machine, off: _make_copychar_island(machine, None), "_CopyChar"),
+    (COPYCHAR_SEG_INDEX, COPYCHARREP_OFF, COPYCHARREP_SIG,
+     lambda machine, off: _make_copychar_island(machine, 0x10), "_CopyCharRep"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,

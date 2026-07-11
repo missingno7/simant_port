@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.20) — recovered _CopyChar / _CopyCharRep (DIB glyph blits)
+- `_CopyChar` (seg4:6C62) + `_CopyCharRep` (seg4:6CAA): blit a 16-row glyph into
+  a DIB.  Byte stride = header width word >> 3 (cached to DGROUP scratch 0x1D70,
+  segment 0x6902 which == the DGROUP selector).  Row 0 lands at
+  `4 + x + ((y*2)&0xFF)*(stride&0xFF)` past the DIB offset (the +4 skips the two-
+  word inline header; the y term is an 8-bit `mul dl`), each row steps by the
+  full 16-bit stride.  `_CopyChar` copies one source byte per row (`movsb`);
+  `_CopyCharRep` `rep stosb`s each source byte `rep` times horizontally.
+  `recovered/render.py: copy_char_rep` returns {dst_off: byte}; `copy_char` is the
+  rep==1 specialisation.  The two share an identical 0x33-byte prologue and only
+  diverge at the row-advance (`stride-1` vs `stride-rep`); sigs extended past the
+  split.  Both preserve every register (pushaw/popaw + ds,es).  A/B oracle over
+  x/y/width (and rep) grids incl. 640-wide: pixels + stride global + regs
+  byte-exact.  40 islands, suite 281 green.
+- NOTE: `_make_gennestmap_island` is defined twice in hooks.py (an early shadowed
+  copy ~L611 + the live one ~L971); harmless (last def wins) but worth a cleanup.
+
 ## 2026-07-11 (cont.19) — recovered _exchange (two-buffer byte swap)
 - `_exchange` (seg4:6E05): swaps `count` bytes between two far buffers, byte by
   byte in order — reads both current bytes before writing both, so overlapping

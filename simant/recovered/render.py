@@ -524,3 +524,32 @@ def windows_mono_make_table_2x2(tiles, table, count):
                 b |= table[ts[k]][r] & _MONO_2X2_MASKS[k]
             rows[r][j] = b
     return [bytes(r) for r in rows]
+
+
+def copy_char_rep(src, x, y, stride, rep):
+    """Blit a 16-row glyph into a DIB, replicating each source byte `rep` times
+    horizontally per row.  Returns {dst_off: byte} (relative to the DIB
+    far-pointer offset, with 16-bit offset wrap).
+
+    Recovered from `_CopyCharRep` (seg4:6CAA).  The DIB byte stride is the header
+    width word >> 3; row 0 lands at `4 + x + ((y*2)&0xFF)*(stride&0xFF)` past the
+    DIB offset (the +4 skips the two-word inline header the routine reads the
+    width from, and the y term is an 8-bit `mul dl`), each next row steps by the
+    full 16-bit `stride`.  Per row the routine `lodsb`s one source byte and
+    `rep stosb`s it `rep` times.
+    """
+    di = (4 + x + (((y * 2) & 0xFF) * (stride & 0xFF))) & 0xFFFF
+    out = {}
+    for row in range(16):
+        b = src[row] & 0xFF
+        for k in range(rep):
+            out[(di + k) & 0xFFFF] = b
+        di = (di + stride) & 0xFFFF
+    return out
+
+
+def copy_char(src, x, y, stride):
+    """Blit a 16-row, 1-byte-wide glyph column into a DIB (one source byte per
+    row).  Recovered from `_CopyChar` (seg4:6C62) — the `rep`==1 specialisation
+    of `copy_char_rep` (`movsb` per row instead of `rep stosb`)."""
+    return copy_char_rep(src, x, y, stride, 1)
