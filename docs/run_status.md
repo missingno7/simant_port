@@ -1,5 +1,27 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.34) — scripts/checkpoints.py: deterministic checkpoint traces
+- Owner ask: "a way of deterministically checking/verification, like checkpoints."
+  Built `scripts/checkpoints.py`: replays a demo and fingerprints the game-
+  observable state (win16.vmsnap.digest: memory + CPU + every window surface +
+  clock) at fixed instruction-count intervals -> a checkpoint TRACE.  Two replays
+  of the same demo under the same config MUST produce an identical trace, so a
+  saved baseline is a regression ORACLE: `--check` reports the FIRST diverging
+  checkpoint (instr / digest / length) instead of only a far-downstream crash.
+      checkpoints.py cold_nohooks --interval 25000000 --save cold.trace
+      checkpoints.py cold_nohooks --interval 25000000 --check cold.trace  -> MATCH
+- KEY detail: the session runs mostly inside ONE long WndProc/TimerProc callback
+  that cpu.run() can't return from to sample — so checkpoints are captured via
+  `sysobj.yield_check` (win16 call_far invokes it every ~8192 instrs DURING a
+  callback), chained after DemoDriver's own yield hook.  This gives full coverage:
+  8 checkpoints spanning the whole 199.6M-instruction cold_nohooks session, and a
+  re-run MATCHes exactly (determinism proven).  `--hooks` mismatches a no-hooks
+  baseline as expected (config-specific, per the instruction-keyed v4 model).
+- Comparison logic extracted to `compare_traces()` + unit tests
+  (test_checkpoints.py).  Suite 355 green.  This is the deterministic-verification
+  substrate the earlier verifyislands/HookVerifier work was reaching toward — the
+  digest-trace half (regression), complementing the per-call island-vs-ASM half.
+
 ## 2026-07-11 (cont.33) — verifyislands: cold-start demos + FLAGS_ONLY classification
 - Surveyed the next-tier gameplay routines: _CountAnts (5:04DE) is large + calls
   _myBeginSong (plays population-milestone jingles) + reads 8 segments;

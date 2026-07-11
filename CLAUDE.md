@@ -51,7 +51,10 @@ scripts/          play.py (interactive; --record, --resume; dos_re hotkeys:
                   --from-snapshot for anchored demos),
                   liftverify.py (verify AUTO-LIFTED hooks vs ASM over a demo),
                   verifyislands.py (verify the PRODUCTION islands vs ASM over a
-                  demo — the deterministic island-vs-original comparison))
+                  demo — the deterministic island-vs-original comparison),
+                  checkpoints.py (deterministic checkpoint-digest trace of a demo
+                  replay: --save a baseline, --check to catch a regression at the
+                  first diverging checkpoint))
 docs/             docs/run_status.md — the journal (newest on top)
 assets/           SIMANTW.EXE + data files (gitignored, never committed)
 win16_re/         the game-agnostic Win16 framework (git submodule)
