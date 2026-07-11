@@ -356,16 +356,20 @@ def _make_maketable1x1_island(machine):
 # read from a per-tile 8-byte pattern row selected by (mode & 7) at SS:0x26A0.
 # Fixed 0x40-pair count; full register preservation + retf ABI.  The "a" half
 # emits scanlines 0..3.  Recovered logic in simant/recovered/render.py.
-MONOMAKE4X4A_SEG_INDEX = 4
+MONOMAKE4X4_SEG_INDEX = 4
 MONOMAKE4X4A_OFF = 0x442C
-MONOMAKE4X4A_TABLE_BASE = 0x26A0                  # SS-relative pattern table base
+MONOMAKE4X4B_OFF = 0x44B9
+MONOMAKE4X4_TABLE_BASE = 0x26A0                   # SS-relative pattern table base
+MONOMAKE4X4A_PAIRS = 0x40                         # `mov cx, 0x40` (a half)
+MONOMAKE4X4B_PAIRS = 0x20                         # `mov cx, 0x20` (b half)
 MONOMAKE4X4A_SIG = bytes.fromhex(
     "558bec601e068b5e1083e30781c3a026")
+MONOMAKE4X4B_SIG = bytes.fromhex(
+    "558bec601e068b5e1083e30781c3a026")           # identical prologue to "a"
 
 
-def _make_monomake4x4a_island(machine):
-    from .recovered.render import (windows_mono_make_table_4x4a,
-                                   MONO_MAKETABLE_PAIRS)
+def _make_monomake4x4_island(machine, pairs):
+    from .recovered.render import windows_mono_make_table_4x4
 
     def island(cpu) -> None:
         m = cpu.mem
@@ -377,16 +381,15 @@ def _make_monomake4x4a_island(machine):
         dst_off, dst_seg = rw(ss, (sp + 8) & 0xFFFF), rw(ss, (sp + 0x0A) & 0xFFFF)
         mode = rw(ss, (sp + 0x0E) & 0xFFFF)          # (mode & 7) is the table phase
 
-        base = (MONOMAKE4X4A_TABLE_BASE + (mode & 7)) & 0xFFFF
-        tiles = [rb(src_seg, (src_off + i) & 0xFFFF)
-                 for i in range(2 * MONO_MAKETABLE_PAIRS)]
+        base = (MONOMAKE4X4_TABLE_BASE + (mode & 7)) & 0xFFFF
+        tiles = [rb(src_seg, (src_off + i) & 0xFFFF) for i in range(2 * pairs)]
         table = [[rb(ss, (base + t * 8 + r) & 0xFFFF) for r in range(4)]
                  for t in range(256)]
-        rows = windows_mono_make_table_4x4a(tiles, table)
+        rows = windows_mono_make_table_4x4(tiles, table, pairs)
         for r in range(4):
-            band = (dst_off + r * 0x40) & 0xFFFF
+            band = (dst_off + r * pairs) & 0xFFFF    # scanline stride == pair count
             row = rows[r]
-            for j in range(MONO_MAKETABLE_PAIRS):
+            for j in range(pairs):
                 m.wb(dst_seg, (band + j) & 0xFFFF, row[j])
 
         s.sp = (sp + 4) & 0xFFFF
@@ -1185,9 +1188,12 @@ _ISLANDS = [
      lambda machine, off: _make_xfertilemono_island(machine), "_XferTileMono"),
     (XFERLIFETILEMONO_SEG_INDEX, XFERLIFETILEMONO_OFF, XFERLIFETILEMONO_SIG,
      lambda machine, off: _make_xferlifetilemono_island(machine), "_XferLifeTileMono"),
-    (MONOMAKE4X4A_SEG_INDEX, MONOMAKE4X4A_OFF, MONOMAKE4X4A_SIG,
-     lambda machine, off: _make_monomake4x4a_island(machine),
+    (MONOMAKE4X4_SEG_INDEX, MONOMAKE4X4A_OFF, MONOMAKE4X4A_SIG,
+     lambda machine, off: _make_monomake4x4_island(machine, MONOMAKE4X4A_PAIRS),
      "_WindowsMono_MakeTable4x4a"),
+    (MONOMAKE4X4_SEG_INDEX, MONOMAKE4X4B_OFF, MONOMAKE4X4B_SIG,
+     lambda machine, off: _make_monomake4x4_island(machine, MONOMAKE4X4B_PAIRS),
+     "_WindowsMono_MakeTable4x4b"),
     (FLIP_SEG_INDEX, FLIPWORD_OFF, FLIPWORD_SIG,
      lambda machine, off: _make_flipword_island(machine), "_FlipWord"),
     (FLIP_SEG_INDEX, FLIPLONG_OFF, FLIPLONG_SIG,

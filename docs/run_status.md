@@ -1,5 +1,13 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.14) — recovered _WindowsMono_MakeTable4x4b (completes the 4x4 mono pair)
+- The "b" half (44B9) is identical to "a" (442C) except `cx=0x20` pairs and the
+  output scanline stride == the pair count.  Generalized the recovered
+  `windows_mono_make_table_4x4(tiles, table, pairs)` and made ONE island factory
+  drive both (pairs 0x40 / 0x20).  A/B oracle parametrized over both halves x 3
+  table phases; byte-exact output + register preservation.  32 islands, 256 green.
+  Remaining mono siblings: _WindowsMono_MakeTable2x2a/b (4542/45DB).
+
 ## 2026-07-11 (cont.13) — recovered the endian/word-order helper family (seg4)
 - Lifted three clean leaf helpers toward exhausting the islands for the native
   port: `_FlipWord` (7356, byte-swap a word), `_FlipLong` (7360, byte-swap each
