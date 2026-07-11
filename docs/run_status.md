@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.23) — PIVOT to the simulation core: recovered _IsItFood
+- DIRECTION (owner): steer recovery toward the "pure gameplay part" so a modern
+  native backend can be built on it later.  Rendering primitives (blitters, the
+  _PlotLine/_PlotMonoLine rasterizers) would be *replaced* by a native backend —
+  low value to grind further; the *simulation* logic must stay byte-exact.
+- Surveyed the binary: the gameplay core lives in seg6 (ant AI — _DoAntSim,
+  _DoForageAnt, _DoFightA, _SimQueenA, _DoDigOutAntA, ...), seg5 (colony/world —
+  _CountAnts, _PickupFoodA, _DigMyTile, _MoveSpider, _ScanForAnts, _MakeMap), and
+  seg7 (world sim — _SimBird/_SimCat/_SimDog, _DoAntLions, _RandWorld, _InitSimVars).
+- First gameplay island: `_IsItFood` (seg6:2D1A) -> new `recovered/gameplay.py`.
+  A world-state flag ([0xC320]:[0x9B6E]) picks the food tile range (inside nest
+  0x18..0x27, outside yard 0x48..0x4B).  Island returns AX=1/0, clobbers dx(=arg)
+  and es(=world selector), preserves the rest.  A/B oracle over 12 tiles x 2
+  modes: byte-exact.  43 islands, suite 322 green.
+- NOTE: _PlotLine (6FBE) analysis done but intentionally NOT recovered (rendering,
+  not gameplay).  Next gameplay targets: _CountAnts (5:04DE), the food carry pair
+  _PickupFoodA/_DropFoodA (5:0D18/0D86), _InNestBounds (5:115C) — these start
+  mapping the ant-list + map data structures the bigger AI routines share.
+
 ## 2026-07-11 (cont.22) — recovered _os_ClipLine (midpoint line clipper)
 - `_os_ClipLine` (seg4:6E24): the line-drawing family's clipper — a NEAR-call,
   register-in/out routine (endpoints si/di + dx/bx; clip bounds in DGROUP words

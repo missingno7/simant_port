@@ -664,6 +664,40 @@ def _make_clipline_island(machine):
     return island
 
 
+# -- _IsItFood (seg6:2D1A) — simulation: is this map tile food? ----------------
+# The first of the pure-gameplay islands (recovered/gameplay.py).  A world-state
+# flag ([0xC320]:[0x9B6E]) picks the food tile range: inside the nest 0x18..0x27,
+# in the outside yard 0x48..0x4B.  Returns AX=1/0; clobbers dx (=arg) and es
+# (=the world selector); bx/cx/si/di/bp preserved.
+ISITFOOD_SEG_INDEX = 6
+ISITFOOD_OFF = 0x2D1A
+ISITFOOD_WORLD_SEG_G = 0xC320                    # DGROUP word: world-state selector
+ISITFOOD_INSIDE_FLAG_OFF = 0x9B6E               # offset of the inside-nest flag
+ISITFOOD_SIG = bytes.fromhex(
+    "558bec8e0620c326833e6e9b0075138b560683fa487c1883fa4b7f13b801")
+
+
+def _make_isitfood_island(machine):
+    from .recovered.gameplay import is_it_food
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        tile = arg - 0x10000 if arg & 0x8000 else arg
+        world_seg = m.rw(s.ds, ISITFOOD_WORLD_SEG_G)
+        inside = m.rw(world_seg, ISITFOOD_INSIDE_FLAG_OFF) != 0
+        s.ax = is_it_food(tile, inside)               # AX = 1/0
+        s.dx = arg                                    # clobbered = the loaded arg
+        s.es = world_seg                              # clobbered = the world selector
+        # bp/bx/cx/si/di preserved; retf pops ip+cs, caller cleans the arg.
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1496,6 +1530,8 @@ _ISLANDS = [
      lambda machine, off: _make_movetexttoballoon_island(machine), "_MoveTextToBalloon"),
     (CLIPLINE_SEG_INDEX, CLIPLINE_OFF, CLIPLINE_SIG,
      lambda machine, off: _make_clipline_island(machine), "_os_ClipLine"),
+    (ISITFOOD_SEG_INDEX, ISITFOOD_OFF, ISITFOOD_SIG,
+     lambda machine, off: _make_isitfood_island(machine), "_IsItFood"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
