@@ -40,3 +40,13 @@ def in_nest_bounds(x: int, y: int) -> int:
     excluded).  Signed compares (`jl`/`jg`).  Returns 1 in bounds, 0 otherwise.
     """
     return 1 if (0 <= x <= 0x3F and 1 <= y <= 0x3F) else 0
+
+
+def is_it_dirt(tile: int) -> int:
+    """Whether a map tile value is diggable dirt.
+
+    Recovered from `_IsItDirt` (SIMANTW.SYM seg5:1182): dirt tiles are 0x20..0x2E
+    inclusive (signed compares).  Returns 1 for dirt, 0 otherwise.  Companion of
+    `is_it_food`.
+    """
+    return 1 if 0x20 <= tile <= 0x2E else 0

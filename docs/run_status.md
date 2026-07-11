@@ -1,5 +1,14 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.32) — recovered _IsItDirt (tile-type predicate)
+- `_IsItDirt` (seg5:1182): diggable dirt tiles are 0x20..0x2E (signed); AX=1/0,
+  clobbers dx(=arg).  Companion of `is_it_food`; both now in recovered/gameplay.py.
+  A/B oracle over in/out/edge/negative values; byte-exact.  46 islands, 350 green.
+- Next tier (`_CountAnts` 5:04DE, `_DeadAntHere` 6:28C0) is multi-segment (reads
+  ant arrays via runtime selectors 0x5294/0x5ef3 + count segs [0xC2D2/4/6]) — not
+  cleanly A/B-testable from a fresh machine without seeding that state, so it
+  needs a captured-state harness rather than the synthetic-input oracle.
+
 ## 2026-07-11 (cont.31) — recovered _IsYellowAnt + _InNestBounds (gameplay predicates)
 - `_IsYellowAnt` (seg5:5720): returns 1 when the caste/marker value is 0xFE or
   0xFF (the yellow-ant sentinels marking the player-controlled ant), 0 otherwise

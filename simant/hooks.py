@@ -723,6 +723,33 @@ def _make_isyellowant_island(machine):
     return island
 
 
+# -- _IsItDirt (seg5:1182) — simulation: is this tile diggable dirt? -----------
+# Returns AX=1 when 0x20 <= tile <= 0x2E (signed), else 0.  Clobbers dx (=arg);
+# bp/bx/cx/si/di/es/ds preserved.  Companion of _IsItFood.
+ISITDIRT_SEG_INDEX = 5
+ISITDIRT_OFF = 0x1182
+ISITDIRT_SIG = bytes.fromhex("558bec8b560683fa207c0b83fa2e7f06b801")
+
+
+def _make_isitdirt_island(machine):
+    from .recovered.gameplay import is_it_dirt
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        s.ax = is_it_dirt(_sx(arg))                   # AX = 1/0
+        s.dx = arg                                    # clobbered = the loaded arg
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _InNestBounds (seg5:115C) — simulation: is (x, y) a valid nest cell? -------
 # 64x64 grid: x in 0..0x3F, y in 1..0x3F (row 0 excluded).  AX=1/0.  Clobbers dx
 # (= x if the x-check failed, else y — the ASM reloads dx before the y-check);
@@ -1593,6 +1620,8 @@ _ISLANDS = [
      lambda machine, off: _make_isyellowant_island(machine), "_IsYellowAnt"),
     (INNESTBOUNDS_SEG_INDEX, INNESTBOUNDS_OFF, INNESTBOUNDS_SIG,
      lambda machine, off: _make_innestbounds_island(machine), "_InNestBounds"),
+    (ISITDIRT_SEG_INDEX, ISITDIRT_OFF, ISITDIRT_SIG,
+     lambda machine, off: _make_isitdirt_island(machine), "_IsItDirt"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
