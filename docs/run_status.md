@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 — MIDI music Phase 1 DONE (dynamic loading); Phase 2 fully scoped
+- **Phase 1 shipped** (win16_re `ff912c6`, simant_port `b4f9792`): KERNEL
+  LoadLibrary/FreeLibrary/GetProcAddress(ord 50!)/GetModuleHandle + ApiRegistry
+  runtime thunk minting (GetProcAddress hands back a callable INT3 thunk that
+  dispatches to a by-name handler).  midiOutGetNumDevs registered but reports 0
+  (non-breaking — SOUND.DRV fallback intact).  2 integration tests, suites green.
+- **The soundtrack is real MIDI**: 29 `.MID` files in assets/ANTWIN/SOUND/
+  (ANTTHME/GAMETHME/ATTACK/VICTORY/...).  Host CAN play them (pygame-ce SDL_mixer
+  loads .mid; OS "Microsoft GS Wavetable Synth" present).
+- **SimAnt's MMSYSTEM engine is EXTENSIVE** — it GetProcAddress-resolves 28 procs
+  across three DLLs (extracted statically):
+  * MMSYSTEM MIDI: `mciSendCommand`, `midiOutGetNumDevs`  ← the music path we CAN do
+  * MMSYSTEM WAV (sound FX, _myBeginSound/_MciOutWave): PlaySound, sndPlaySound,
+    waveOutOpen/Close/Write/Reset/GetNumDevs/GetPosition/Prepare/UnprepareHeader
+  * SoundBlaster driver (DSOUND.DLL/SNDBLST.DLL — proprietary, we CANNOT provide):
+    GetDSoundVersion, musOpenDevice/CloseDevice/PlayMemMidi/StopMusic/TransposeNote,
+    vocOpenDevice/CloseDevice/PlayMemUnFormat/StopVoice, sbc*.
+  * COMMDLG: GetOpenFileName/GetSaveFileName (the editor's file dialogs).
+- **Key runtime facts (probed):** the mmsystem state block is at seg[DGROUP:0xBF78]
+  (=seg 0x5294): handle[+0x8d08], midiAvail[+0x8d0a], [+0x8d0c], mciProc[+0x8d0e].
+  `_musicDevice`(DGROUP:0xB91C) has a DEFAULT of 6 baked into the EXE data — it is
+  NOT the result of a completed init.  `_MusicInit`(seg2:8294) alone doesn't load
+  mmsystem (its handle==0 path just CloseSound()s).  The real music-device init
+  (LoadLibrary mmsystem + set handle + select MIDI Mapper) runs on a trigger we
+  haven't hit (music-toggle seg1:07B2 / game-start seg3:A232); newcold reaches
+  `_myBeginSong` but never inits MIDI, so it plays via SOUND.DRV.
+- **Recommended Phase 2 path:** the MMSYSTEM **MCI MIDI** route only — implement
+  `midiOutGetNumDevs`(report a device) + `mciSendCommand` (MCI_OPEN a sound\X.mid /
+  SET time / PLAY / STOP / STATUS / CLOSE), deterministic event-log + pygame
+  presentation backend.  Leave DSOUND/SNDBLST unprovided (LoadLibrary fails → the
+  game skips SoundBlaster and takes the MIDI Mapper path).  OPEN QUESTION to crack
+  first next session: find the music-device-init function + its trigger, and what
+  `_musicDevice` value selects the MIDI Mapper, so a headless harness can drive
+  _MusicInit→_myBeginSong→mciSendCommand and reveal the exact MCI command sequence
+  to implement.  (Probes: scratchpad mci2.py / procnames.py / findll.py.)
+
 ## 2026-07-10 — FIXED _DrawChar island rendering bug (garbled "registered to" screen)
 - Repro: demo_195527 — the "This copy of SimAnt is registered to: eXo" screen
   rendered GARBLED with islands on.  Bisected via island-A/B over the real demo
