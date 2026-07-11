@@ -1,5 +1,28 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.) — MIDI detection chain FULLY traced (the trigger + the loader)
+- **The device is config-driven:** `assets/ANTWIN/SIMANT.CFG` is text — "Display Mode: ?\n
+  Sound Mode: 6\n".  `_ReadConfig`(seg2:0x8F4, called by `_IBMInitStuff`) does
+  `musicDevice(DGROUP:0xB91C) = 'Sound Mode' digit - '0'` → 6 currently.  So the sound
+  device is just that CFG digit.  (Which digit == MIDI Mapper is still TBD — needs the
+  mode→driver map, or empirically sweeping the digit with mmsystem provided.)
+- **The mmsystem loader is `_CheckMMWave`(seg2:0x7766):** builds "<GetWindowsDirectory>\
+  system\mmsystem.dll", checks the FILE EXISTS (call seg4:0x73A ~= _access), and only
+  then `LoadLibrary`(KERNEL.95, thunk 0x22c) it and stores the HANDLE at mmsystem-block
+  `es:[0x8d08]` (es=[DGROUP:0xBF78]=seg 0x5294).  Then GetProcAddress(handle, name).
+- **Why we get handle=0 → SOUND fallback:** our file layer has no `mmsystem.dll`, so the
+  existence check fails and `_CheckMMWave` never LoadLibrary's it.  Phase 1's LoadLibrary
+  WOULD now succeed if reached.
+- mmsystem state block (seg 0x5294): +0x8d06 sound-enabled, +0x8d08 mmsystem handle,
+  +0x8d0a avail flags, +0x8d0c, +0x8d0e mciProc, +0x8d28 second DLL handle (SB).
+  `_myBeginSound`(0x98B0)/`_myBeginSong`(0x858E) bail if +0x8d06==0, else GetProcAddress
+  via the stored handle.
+- **Concrete Phase 2 start next session:** (1) provide `mmsystem.dll` to the file layer
+  so `_CheckMMWave`'s existence check passes (a stub file is enough — LoadLibrary is
+  already faked); (2) find `_CheckMMWave`'s caller / the sound-init trigger; (3) sweep
+  the CFG Sound-Mode digit to find the MIDI value; (4) implement `mciSendCommand` +
+  `midiOutGetNumDevs`>0; (5) host backend.  All chain pieces are now mapped.
+
 ## 2026-07-11 — MIDI music Phase 1 DONE (dynamic loading); Phase 2 fully scoped
 - **Phase 1 shipped** (win16_re `ff912c6`, simant_port `b4f9792`): KERNEL
   LoadLibrary/FreeLibrary/GetProcAddress(ord 50!)/GetModuleHandle + ApiRegistry
