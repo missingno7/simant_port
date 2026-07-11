@@ -1,5 +1,17 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.10) — state-view seam adopted by 3 diverse islands (PRNG/render/codec)
+- Grew the seam past the proof: migrated the `_DrawChar` blit's cached DGROUP
+  scratch (src/dst selectors + strides + word count, 0xB90E..0xB918) onto a
+  `DrawCharGlobals` StructView, and the `_Unpack` LZSS decoder's resumable state
+  (0xB7C0..0xB7D4 — win_seg/thresh/src/in_rem/r/flags/dx/cx/match_rem/resume)
+  onto an `UnpackState` StructView (`_S16 in_rem` drops the manual sign-extend).
+- Both islands read/write through the named view instead of raw offsets and stay
+  byte-exact vs the ASM oracle; the DrawChar test seeds its strides through the
+  same view.  So the seam now carries a PRNG, a renderer, and a codec — three
+  different routine kinds — proving it is general, not PRNG-specific.  Dead
+  DRAWCHAR_G_* offset constants removed.  Suite 238 green.
+
 ## 2026-07-11 (cont.9) — VM-less port groundwork: the state-view seam (pre2-style)
 - Started the enhanced-layer endgame direction (VM becomes an oracle, recovered
   source runs on the game's own state).  Established the layering + the concrete

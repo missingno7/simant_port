@@ -108,14 +108,16 @@ DG_SEG_INDEX = 10                                # DGROUP (auto-data) segment
 
 
 def _make_unpack_island(machine):
+    from .bridge.dgroup_view import SelectorBackend, UnpackState, UNPACK_STATE_BASE
     dg = machine.seg_bases[DG_SEG_INDEX]
 
     def island(cpu) -> None:
         m = cpu.mem
         s = cpu.s
         rw, ww = m.rw, m.ww
+        u = UnpackState(SelectorBackend(m, dg), UNPACK_STATE_BASE)
 
-        resume = rw(dg, 0xB7D4)
+        resume = u.resume
         if resume != 0:
             # Mid-operation resume — let the real routine handle it.  Emulate the
             # hooked `push bp` and continue at A669 (mov bp,sp).
@@ -130,17 +132,15 @@ def _make_unpack_island(machine):
         out_seg = rw(s.ss, (sp + 6) & 0xFFFF)
         budget = rw(s.ss, (sp + 8) & 0xFFFF)      # [bp+10] output byte count
 
-        r = rw(dg, 0xB7CA)                        # window write pos (bx)
-        dx = rw(dg, 0xB7CE)
-        cx = rw(dg, 0xB7D0)
-        flags = rw(dg, 0xB7CC)                    # flag bit buffer (ax)
-        win_seg = rw(dg, 0xB7C0)
-        thresh = rw(dg, 0xB7C2)
-        src_seg = rw(dg, 0xB7C6)
-        src_off = rw(dg, 0xB7C4)
-        in_rem = rw(dg, 0xB7C8)                   # signed input-remaining counter
-        if in_rem >= 0x8000:
-            in_rem -= 0x10000
+        r = u.r                                   # window write pos (bx)
+        dx = u.dx
+        cx = u.cx
+        flags = u.flags                           # flag bit buffer (ax)
+        win_seg = u.win_seg
+        thresh = u.thresh
+        src_seg = u.src_seg
+        src_off = u.src_off
+        in_rem = u.in_rem                         # _S16 -> already sign-extended
 
         # Drive the recovered VM-free decoder (simant/recovered/lzss.py) over
         # memoryviews straight into VM memory — no copies.  window[i] IS the
@@ -161,16 +161,16 @@ def _make_unpack_island(machine):
         r, flags, in_rem, dx, cx = st_.r, st_.flags, st_.in_rem, st_.dx, st_.cx
         src_off = (src_off + st_.src_pos) & 0xFFFF
         if code == lzss.CODE_MATCH_COPY:
-            ww(dg, 0xB7D2, st_.match_rem & 0xFFFF)        # save match countdown
+            u.match_rem = st_.match_rem & 0xFFFF          # save match countdown
 
         # -- write back the exit state exactly as A779 does ------------------
-        ww(dg, 0xB7D4, code)
-        ww(dg, 0xB7CC, flags & 0xFFFF)
-        ww(dg, 0xB7CA, r & 0xFFFF)
-        ww(dg, 0xB7C4, src_off & 0xFFFF)
-        ww(dg, 0xB7CE, dx & 0xFFFF)
-        ww(dg, 0xB7D0, cx & 0xFFFF)
-        ww(dg, 0xB7C8, in_rem & 0xFFFF)           # ASM decremented this in place
+        u.resume = code
+        u.flags = flags & 0xFFFF
+        u.r = r & 0xFFFF
+        u.src_off = src_off & 0xFFFF
+        u.dx = dx & 0xFFFF
+        u.cx = cx & 0xFFFF
+        u.in_rem = in_rem                         # _S16 setter wraps to 16-bit
         # Reproduce the values the ASM leaves in its stack frame — after the
         # retf that memory is freed, but SimAnt (C, uninitialised locals) can
         # read the scratch, so the freed-frame contents must match byte-for-byte

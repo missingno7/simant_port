@@ -270,6 +270,28 @@ class DgroupView(StructView):
         super().__init__(_coerce_backend(source, dgroup_base), 0)
 
 
+#: base of the _Unpack (LZSS) decoder's resumable state block in DGROUP.
+UNPACK_STATE_BASE = 0xB7C0
+
+
+class UnpackState(StructView):
+    """The _Unpack LZSS decompressor's resumable state (base 0xB7C0) — the
+    decoder is called in chunks and parks all of this between calls.  Named as a
+    struct so the island reads like the decoder it drives, not scattered offsets.
+    """
+    win_seg = _U16(0x00)        # 0xB7C0 — 4 KB sliding-window selector
+    thresh = _U16(0x02)         # 0xB7C2 — match-length threshold
+    src_off = _U16(0x04)        # 0xB7C4 — compressed-input cursor
+    src_seg = _U16(0x06)        # 0xB7C6 — compressed-input selector
+    in_rem = _S16(0x08)         # 0xB7C8 — signed input-bytes-remaining counter
+    r = _U16(0x0A)              # 0xB7CA — window write position
+    flags = _U16(0x0C)          # 0xB7CC — flag-bit buffer
+    dx = _U16(0x0E)             # 0xB7CE — decoder scratch (dx)
+    cx = _U16(0x10)             # 0xB7D0 — decoder scratch (cx)
+    match_rem = _U16(0x12)      # 0xB7D2 — bytes left in the current match copy
+    resume = _U16(0x14)         # 0xB7D4 — resume/return code (0 = fresh call)
+
+
 #: base of the _DrawChar blit's cached scratch block in DGROUP.
 DRAWCHAR_GLOBALS_BASE = 0xB90E
 
