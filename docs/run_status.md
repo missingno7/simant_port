@@ -1,5 +1,17 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.11) — window islands migrated; every descriptor kind exercised
+- Migrated `_win_IsWinOpen` and `_win_GetObjRect` onto the seam: the slot->HWND
+  word table (0xBCA6) is `SimAntState.window_hwnd` (`_U16Array`), the slot->winrec
+  far-ptr table (0xCE9A) is `window_records` (`StructArray` of a reusable `FarPtr`
+  StructView), and the inclusive-rects flag (0xBD0A) is `obj_rect_inclusive`.  The
+  record-internal object-rect array (in the record's own segment, not DGROUP)
+  stays a raw far read.  Both byte-exact vs the ASM oracle; tests seed the tables
+  through the same view.  Dead offset constants removed.
+- The state-view seam now carries FIVE diverse islands (PRNG, DrawChar, Unpack,
+  IsWinOpen, GetObjRect) and exercises every descriptor kind — `_U16/_S16/
+  _U16Array/StructView/StructArray/FarPtr` — over both backends.  Suite 238 green.
+
 ## 2026-07-11 (cont.10) — state-view seam adopted by 3 diverse islands (PRNG/render/codec)
 - Grew the seam past the proof: migrated the `_DrawChar` blit's cached DGROUP
   scratch (src/dst selectors + strides + word count, 0xB90E..0xB918) onto a

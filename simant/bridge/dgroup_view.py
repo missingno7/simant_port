@@ -308,6 +308,12 @@ class DrawCharGlobals(StructView):
     words = _U16(0x0A)          # 0xB918 — cached full-word span (written)
 
 
+class FarPtr(StructView):
+    """A 16:16 far pointer (offset then selector) — a reusable 4-byte record."""
+    off = _U16(0x00)
+    seg = _U16(0x02)
+
+
 class SimAntState(DgroupView):
     """SimAnt's DGROUP as named source-level fields — the human-readable state
     the recovered logic reads/writes.  Grows one verified field at a time as
@@ -323,3 +329,13 @@ class SimAntState(DgroupView):
     map_rows = _U16(0xCD7A)
     #: nonzero while songs are enabled (gates the MMSYSTEM music path).
     songs_on = _U16(0x0AF6)
+
+    # -- window management (SIMTWO_MODULE) --  the object handle's HIGH byte is a
+    # window-table slot, so both tables are addressed by slot 0..255 (the live
+    # window count is smaller; the length is the addressable range).
+    #: slot -> HWND (_win_IsWinOpen's `g_window_hwnd`).
+    window_hwnd = _U16Array(0xBCA6, 256)
+    #: slot -> far pointer to the window record (_win_GetObjRect's table).
+    window_records = StructArray(0xCE9A, 4, 256, FarPtr)
+    #: nonzero => stored object rects are inclusive (bump right/bottom by one).
+    obj_rect_inclusive = _U16(0xBD0A)

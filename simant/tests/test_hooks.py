@@ -571,16 +571,18 @@ def _run_getobjrect(with_island, obj_handle, rect, flag):
     WINREC, SRC, LPRECT = 0x7000, 0x7100, 0x7200        # scratch offsets in DGROUP
     slot, obj = (obj_handle >> 8) & 0xFF, obj_handle & 0xFF
 
-    # far-ptr table[slot] -> winrec;  winrec+0x2C+obj*4 -> src RECT
-    tab = (hooks.GETOBJRECT_WINTAB_OFF + slot * 4) & 0xFFFF
-    m.mem.ww(DG, tab, WINREC);            m.mem.ww(DG, (tab + 2) & 0xFFFF, DG)
+    # Seed the DGROUP-side tables through the same bridge view the island reads.
+    from simant.bridge.dgroup_view import SelectorBackend, SimAntState
+    st = SimAntState(SelectorBackend(m.mem, DG))
+    st.window_records[slot].off = WINREC        # far-ptr table[slot] -> winrec
+    st.window_records[slot].seg = DG
     arr = (WINREC + hooks.GETOBJRECT_OBJARR_OFF + obj * 4) & 0xFFFF
     m.mem.ww(DG, arr, SRC);              m.mem.ww(DG, (arr + 2) & 0xFFFF, DG)
     for i, v in enumerate(rect):
         m.mem.ww(DG, (SRC + i * 2) & 0xFFFF, v & 0xFFFF)
     for i in range(4):
         m.mem.ww(DG, (LPRECT + i * 2) & 0xFFFF, 0xEEEE)   # poison the output
-    m.mem.ww(DG, hooks.GETOBJRECT_FLAG_OFF, flag)
+    st.obj_rect_inclusive = flag
 
     s.ds = DG
     s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1

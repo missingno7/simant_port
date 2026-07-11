@@ -582,19 +582,20 @@ ISWINOPEN_SIG = bytes.fromhex(                   # enter..push si..sar..shl..add
 
 def _make_iswinopen_island(machine):
     from .recovered.window import win_is_win_open, _sar16
+    from .bridge.dgroup_view import SelectorBackend, SimAntState
     from win16.callback import call_far
     from win16.loader import THUNK_SEG
 
     def island(cpu) -> None:
         s, m = cpu.s, cpu.mem
+        state = SimAntState(SelectorBackend(m, s.ds))
         ss, sp = s.ss, s.sp
         ret_ip = m.rw(ss, sp)
         ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
         obj_handle = m.rw(ss, (sp + 4) & 0xFFFF)
 
         def hwnd_of_slot(slot: int) -> int:
-            off = (ISWINOPEN_HWND_TABLE_OFF + (slot * 2 & 0xFFFF)) & 0xFFFF
-            return m.rw(s.ds, off)
+            return state.window_hwnd[slot & 0xFFFF]
 
         def is_window_visible(hwnd: int) -> int:
             ax, _dx = call_far(cpu, THUNK_SEG, THUNK_SEG, ISWINVISIBLE_THUNK_OFF, [hwnd])
@@ -633,18 +634,20 @@ def _make_iswinopen_island(machine):
 #  island, the machine lift covers full-state incl. flags.)
 GETOBJRECT_SEG_INDEX = 7
 GETOBJRECT_OFF = 0xC2D2
-GETOBJRECT_WINTAB_OFF = 0xCE9A                   # DGROUP far-ptr table: slot -> winrec
+# The DGROUP slot->winrec far-ptr table (0xCE9A) and the inclusive-rects flag
+# (0xBD0A) are named in the bridge (SimAntState.window_records / obj_rect_inclusive).
 GETOBJRECT_OBJARR_OFF = 0x2C                     # winrec+0x2C: far-ptr array, obj -> RECT
-GETOBJRECT_FLAG_OFF = 0xBD0A                     # DGROUP "inclusive rects" flag
 GETOBJRECT_SIG = bytes.fromhex(                  # prologue + push arg + call _win_LockWin
     "558bec5756ff7606900ee8c92083c4028a5e06")
 
 
 def _make_getobjrect_island(machine):
     from .recovered.window import win_get_obj_rect
+    from .bridge.dgroup_view import SelectorBackend, SimAntState
 
     def island(cpu) -> None:
         s, m = cpu.s, cpu.mem
+        state = SimAntState(SelectorBackend(m, s.ds))
         ss, sp = s.ss, s.sp
         ret_ip = m.rw(ss, sp)
         ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
@@ -653,17 +656,20 @@ def _make_getobjrect_island(machine):
         lprect_seg = m.rw(ss, (sp + 8) & 0xFFFF)
 
         # The far-pointer walk that resolves an object's stored RECT; also
-        # captures the source far pointer, which the ASM leaves in DX:AX.
+        # captures the source far pointer, which the ASM leaves in DX:AX.  The
+        # DGROUP-side slot table is named (state.window_records); the record's
+        # own object-rect array lives in the record's segment, so it stays a raw
+        # far read.
         src = {}
 
         def resolve_rect(slot: int, obj: int):
-            t = (GETOBJRECT_WINTAB_OFF + (slot * 4 & 0xFFFF)) & 0xFFFF
-            rec_off, rec_seg = m.rw(s.ds, t), m.rw(s.ds, (t + 2) & 0xFFFF)
+            rec = state.window_records[slot & 0xFFFF]
+            rec_off, rec_seg = rec.off, rec.seg
             p = (rec_off + GETOBJRECT_OBJARR_OFF + obj * 4) & 0xFFFF
             src["off"], src["seg"] = m.rw(rec_seg, p), m.rw(rec_seg, (p + 2) & 0xFFFF)
             return tuple(m.rw(src["seg"], (src["off"] + i * 2) & 0xFFFF) for i in range(4))
 
-        flag = m.rw(s.ds, GETOBJRECT_FLAG_OFF)
+        flag = state.obj_rect_inclusive
         rect = win_get_obj_rect(obj_handle, resolve_rect, flag)
         for i, word in enumerate(rect):
             m.ww(lprect_seg, (lprect_off + i * 2) & 0xFFFF, word)
