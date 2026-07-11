@@ -892,12 +892,16 @@ class PlayApp:
             print(f"[play] recording demo to {record}"
                   + (f" (anchored to {anchor})" if anchor else ""), flush=True)
 
-        # Host audio: square-wave synthesis of the SOUND.DRV voice stream.
+        # Host audio: square-wave synthesis of the SOUND.DRV voice stream, plus
+        # the real MIDI soundtrack (the game's sound\*.mid via MMSYSTEM MCI).
         self.audio = None
+        self.midi = None
         if not mute:
-            from win16.audio import SquareWaveBackend
+            from win16.audio import MidiBackend, SquareWaveBackend
             self.audio = SquareWaveBackend()
             self.machine.api.services["sound_backend"] = self.audio
+            self.midi = MidiBackend()       # reuses the mixer SquareWave opened
+            self.machine.api.services["music_backend"] = self.midi
         self.views: dict[int, WindowView] = {}
         self.dialog_views: dict[int, DialogView] = {}
         self._dialog_reqs: list[tuple] = []
@@ -1152,6 +1156,9 @@ class PlayApp:
 
     def on_close(self) -> None:
         self.driver.stop()
+        if self.midi is not None:
+            self.midi.shutdown()
+            self.midi = None
         if self.audio is not None:
             self.audio.close()
             self.audio = None

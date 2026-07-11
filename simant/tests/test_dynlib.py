@@ -67,12 +67,17 @@ def test_getprocaddress_mints_a_callable_thunk_that_dispatches():
     assert proc != 0
     assert (proc >> 16) == THUNK                      # a minted thunk slot
 
-    # Calling it dispatches to our handler; Phase 1 reports 0 MIDI devices.
+    # Calling it dispatches to our handler; the MIDI Mapper reports one device.
     ax, _ = _call_farptr(m, proc, [])
-    assert ax == 0
+    assert ax == 1
 
-    # An unimplemented export resolves to NULL (Phase 1: no mciSendCommand yet).
+    # mciSendCommand is also implemented -> a callable thunk (not NULL).
     ax, dx = _call_slot(m, K_GETPROCADDRESS, [hinst, (mci >> 16), mci & 0xFFFF])
+    assert (dx << 16 | ax) != 0
+
+    # An export we do NOT implement resolves to NULL.
+    nope = _put(m, 0x7080, "midiInGetNumDevs")
+    ax, dx = _call_slot(m, K_GETPROCADDRESS, [hinst, (nope >> 16), nope & 0xFFFF])
     assert (dx << 16 | ax) == 0
 
     # Minting is idempotent per name (same far pointer on re-resolve).

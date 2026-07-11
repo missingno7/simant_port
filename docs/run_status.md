@@ -1,5 +1,49 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.5) — MIDI music WORKS end-to-end (real .mid soundtrack plays)
+- Phases 1-3 landed.  The game now loads mmsystem, resolves the MCI procs, opens
+  `C:\sound\gamethme.mid` (→ assets/ANTWIN/SOUND/GAMETHME.MID) and plays it through
+  the host synth.  newcold runs clean to the end with MIDI on; both suites green
+  (simant_port 220, win16_re 101).
+- What made it work (the ONLY blocker was the missing DLL file):
+  * `api.provided_dlls` (MMSYSTEM.DLL) — single source of truth: a provided DLL
+    LoadLibrary's AND reports as an existing file (system.file_open), so the game's
+    `_access(mmsystem.dll)` existence probe passes and its loader runs.
+  * `midiOutGetNumDevs`→1; `waveOutGetNumDevs`→0 + waveOut* safe stubs (correct arg
+    specs so callee-clean far-return pops right) so the game uses MIDI music and
+    skips the digitized-WAV effect path (which we don't provide) without crashing.
+  * `mciSendCommand` engine: OPEN(element=.mid) assigns a device id, resolves the
+    DOS path to the real asset (new `Win16System.resolve_host_path`, follows subdirs
+    case-insensitively), SET/STATUS/PLAY/STOP/CLOSE; deterministic `mci_log` +
+    optional `music_backend` (presentation only, so replay stays exact).
+  * `win16.audio.MidiBackend` (pygame SDL_mixer music stream) plays the real .mid;
+    wired in play.py alongside the SFX SquareWaveBackend.
+  * new KERNEL.8/9 LocalLock/LocalUnlock (fixed-block identity) — a small frontier
+    the deeper MIDI path reached.
+- Fixed a Phase-1 regression along the way: GetProcAddress keyed libs by full
+  filename but procs register under the module name — strip ".DLL" before minting.
+- CORRECTION recorded: my earlier "MIDI is dead code / unrecoverable" (cont.2/3) was
+  a static-analysis error; owner was right.  songid 10001 = GAMETHME.MID.
+
+## 2026-07-11 (cont.4) — CORRECTION: MIDI is NOT dead — it works once mmsystem.dll "exists"
+- Owner was right (pointed at how otvdm plays the .mid).  My "dead code" /
+  "unrecoverable" conclusions (cont.2/cont.3) were WRONG — a static-analysis error
+  (`_CheckMMWave` was a red herring; the real mmsystem loader is a different,
+  reachable function that IS called).  The ONLY blocker was the missing
+  `mmsystem.dll` file: `_access`(INT21/43h) fails → the loader skips.
+- **Proof (empirical):** provide a virtual `MMSYSTEM.DLL` so the existence check
+  passes, and over the newcold run the game DOES: LoadLibrary(MMSYSTEM.DLL)→0x100,
+  GetProcAddress(midiOutGetNumDevs)→call→1, GetProcAddress(mciSendCommand), then the
+  MCI play sequence for songid 10001:
+    mci OPEN flags=0x200(MCI_OPEN_ELEMENT) element='C:\sound\gamethme.mid'  (+12 in the parms)
+    mci STATUS flags=0x4003 ; mci SET 0x20000 ; mci SET 0x400 ; mci PLAY 0x4
+  So songid 10001 → GAMETHME.MID.  The handle DID get set (0x100).  MIDI works.
+- **Phase 2 is achievable & clear:** (1) report provided DLLs (MMSYSTEM) as existing
+  in the file layer so the loader runs; (2) implement `midiOutGetNumDevs`(≥1) +
+  `mciSendCommand` (OPEN element=.mid → resolve C:\sound\NAME.mid to assets/ANTWIN/
+  SOUND/NAME.MID; SET/STATUS/PLAY/STOP/CLOSE), deterministic event-log; (3) pygame
+  host backend plays the real .mid.  In progress.
+
 ## 2026-07-11 (cont.3) — the songid→.mid mapping is NOT recoverable from the running game
 - Chased the "intercept _myBeginSong → play .mid" plan and hit an information wall:
   * The .mid base names (ANTTHME1/GAMETHME/ATTACK/...) appear NOWHERE as strings —
