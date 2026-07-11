@@ -951,8 +951,30 @@ class PlayApp:
                 print("   ", line, file=sys.stderr)
             for line in self.machine.api.call_log[-10:]:
                 print("    api:", line, file=sys.stderr)
+            self._save_crash_snapshot(exc)
         self.stopped = True
         self.driver.running = False
+
+    def _save_crash_snapshot(self, exc: Exception) -> None:
+        """Best-effort post-mortem snapshot on a VM stop, for offline debugging.
+
+        Unlike take_snapshot (F12), this does NOT park at a quiescent boundary —
+        the CPU has already halted at the faulting instruction, and we want that
+        exact state.  save_snapshot works at any instruction boundary; it only
+        refuses while a modal dialog is open.  Never masks the original crash."""
+        from win16.vmsnap import save_snapshot
+        try:
+            stamp = time.strftime("%H%M%S")
+            out = Path("artifacts") / "snapshots" / f"crash_{stamp}"
+            note = f"crash @ {self.machine.cpu.s.cs:04X}:{self.machine.cpu.s.ip:04X}: " \
+                   f"{type(exc).__name__}: {exc}"
+            save_snapshot(self.machine, out, note=note[:200], game=self.game_name)
+            print(f"[play] crash snapshot saved to {out}", file=sys.stderr, flush=True)
+            print(f"[play] resume/inspect: python scripts/replay.py <demo> "
+                  f"--from-snapshot {out}", file=sys.stderr, flush=True)
+        except Exception as snap_exc:  # noqa: BLE001 — never mask the original crash
+            print(f"[play] crash snapshot failed: {type(snap_exc).__name__}: {snap_exc}",
+                  file=sys.stderr, flush=True)
 
     # -- modal MessageBox bridge (CPU thread <-> GUI thread) ---------------------
     def present_box(self, caption: str, text: str, mtype: int) -> "ModalBox":
