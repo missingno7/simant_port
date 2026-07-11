@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.29) — ghosting ROOT CAUSE: a play.py display race, NOT the VM
+- Owner: ghosting appears with NO hooks too -> suspected a serious VM bug.
+- Method: replayed the no-hooks demo_185520 FAITHFULLY (pure ASM via replay.py's
+  path — no island desync), dumped the map child surface (423x346) at EVERY
+  EndPaint, and diffed pre/post-scroll frames against the clean-shift hypothesis
+  (post == pre shifted by (dx,dy), only the newly-exposed strip differing).
+- RESULT: all 14 scrolls — 8 horizontal (dx=16), 5 vertical (dy=-16/80), and the
+  big diagonal (dx=192,dy=144) — are a PIXEL-PERFECT clean shift: **0 overlap
+  mismatch**.  Plus: the hugeheap maps the map DIB's >64K huge selectors
+  contiguously (sel_base[base+8k] = lin+64k*k), so the tile-write and DIB-read
+  paths agree; `_XferTileColor` is byte-exact; the compositor is stateless
+  (rebuilt each frame); the version gate redraws on any surface touch.
+- CONCLUSION: the VM/win16 RENDERING CORE IS CORRECT — the ghosting is NOT a VM
+  bug.  The only headless-vs-live difference is threading: play.py runs the CPU on
+  a worker thread (surface numpy-blits) and the display on the tkinter thread
+  (composite copy).  The `_composited` version fence catches writes that COMPLETE
+  mid-copy but NOT a blit IN FLIGHT -> a torn/ghosted frame.  This exactly
+  explains headless-perfect + live-ghost.
+- Tried a coarse render_lock (worker holds it around each cpu.run burst; display
+  around the composite) — REVERTED: deadlocks, because cpu.run BLOCKS in a
+  GetMessage wait (idle/modal) while holding the lock, starving the GUI.  A safe
+  fix needs fine-grained locking around the surface mutations themselves (win16_re
+  gdi/user blit sites) or double-buffered surface swaps — a careful follow-up, not
+  a quick change.  No code shipped; suite 324 green.
+- Caveat: this explains TRANSIENT tearing during active redraw.  If the owner's
+  ghosting is PERSISTENT (stays after scrolling stops), that is a different bug —
+  an F10 screenshot of it would settle which.
+
 ## 2026-07-11 (cont.28) — deterministic demo comparison: scripts/verifyislands.py
 - Owner asked for a way to make replays "deterministically comparable" (like
   pre2_port's verify_native_tick_demo.py).  pre2_port isn't on this machine and
