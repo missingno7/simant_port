@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.28) — deterministic demo comparison: scripts/verifyislands.py
+- Owner asked for a way to make replays "deterministically comparable" (like
+  pre2_port's verify_native_tick_demo.py).  pre2_port isn't on this machine and
+  dos_re doesn't vendor a native-tick verifier, BUT the engine underneath is
+  dos_re's `HookVerifier` (already wired for auto-lifted hooks via liftverify.py).
+- Built `scripts/verifyislands.py`: installs the PRODUCTION islands (hooks.py),
+  wraps each (or `--only NAME`) in the HookVerifier, and replays a demo — every
+  island CALL clones the machine, re-runs the ORIGINAL ASM from the same
+  pre-state to the island's continuation, and diffs full CPU state + memory.
+  This is config-invariant and deterministic: it checks each call at its REAL
+  pre-state, so the verdict holds even when the overall replay timeline drifts
+  (unlike comparing two whole-run replays, which desync — see cont.27).  Sweeps
+  all islands, continuing past a divergence (retire-from-verify, keep running).
+- First sweep over demo_185520 (samples=2): **10 islands fully byte-exact** (SRand
+  family, _win_IsWinOpen, bytecopy, _SetSRandSeed).  4 DIVERGED — `__aFuldiv`,
+  `_DrawChar`, `_win_GetObjRect`, `_Unpack` — but ALL are FLAGS-ONLY (arithmetic
+  ZF/SF/PF residue the islands leave at entry instead of the ASM's computed
+  value); `_Unpack` also differs by 1 scratch byte.  Registers + memory otherwise
+  match -> NO island corrupts game state (reconfirms the ghosting isn't island
+  pixels).  Also verified `_XferTileColor` byte-exact (3 calls) directly.
+- Root of the flag gap: the unit A/B oracle (test_hooks.py) compares registers,
+  NOT flags; the HookVerifier compares flags too.  FOLLOW-UP: make those 4
+  islands flag-exact (or establish the post-routine flags are don't-care), and
+  investigate the 1-byte _Unpack scratch diff.
+- Limitation: snap_185520 predates callback-frame recording, so the sweep hits
+  an OrphanReturnError at ~0.8M and 28 islands stay NOT_REACHED — re-take the
+  snapshot (and record a hooks demo) for a full-session sweep.  Smoke test added
+  (test_verifyislands.py); suite 324 green.
+
 ## 2026-07-11 (cont.27) — "ghosting worse with hooks" -> a demo/hook desync, NOT an island bug
 - Owner report: quickgame scroll ghosting, "worse with our hooks"; demo
   `demo_185520.jsonl` (anchored snap_185520 @ 30.8M).

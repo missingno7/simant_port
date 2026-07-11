@@ -48,7 +48,10 @@ simant/           the adapter + recovered logic:
 scripts/          play.py (interactive; --record, --resume; dos_re hotkeys:
                   F10 screenshot, F11 demo-record toggle, F12 snapshot),
                   boot.py (frontier probe), replay.py (headless demo replay,
-                  --from-snapshot for anchored demos)
+                  --from-snapshot for anchored demos),
+                  liftverify.py (verify AUTO-LIFTED hooks vs ASM over a demo),
+                  verifyislands.py (verify the PRODUCTION islands vs ASM over a
+                  demo — the deterministic island-vs-original comparison))
 docs/             docs/run_status.md — the journal (newest on top)
 assets/           SIMANTW.EXE + data files (gitignored, never committed)
 win16_re/         the game-agnostic Win16 framework (git submodule)
