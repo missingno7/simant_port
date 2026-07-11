@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.33) — verifyislands: cold-start demos + FLAGS_ONLY classification
+- Surveyed the next-tier gameplay routines: _CountAnts (5:04DE) is large + calls
+  _myBeginSong (plays population-milestone jingles) + reads 8 segments;
+  _GetExitDirB/_IncFoodHere/_DeadAntHere all call subroutines / read runtime
+  state.  The trivial predicates are exhausted; the real AI logic is complex and
+  interconnected — needs the captured-state harness, not synthetic oracles.
+- Improved `scripts/verifyislands.py` (51161de): (1) `--snapshot` optional — a
+  cold-start demo (recorded from boot, e.g. `cold_nohooks`) replays from a fresh
+  create_machine; (2) classify a divergence in ONLY the arithmetic flags
+  (registers/segments/memory all match) as **FLAGS_ONLY** (undefined-after-routine
+  residue no caller reads) instead of a scary "DIVERGED".  Over cold_nohooks the
+  four divergences resolve to 3 flags-only (__aFuldiv, _DrawChar, _win_GetObjRect)
+  + 1 REAL (`_Unpack`: 1 scratch byte at ~0x77E38 — worth a look; the native
+  unpack test already excludes match_rem as don't-care).
+- KNOWN LIMIT: verifyislands over a NO-HOOKS demo still terminates early with an
+  OrphanReturnError (~22.7M on cold_nohooks) — installing islands shifts the
+  instruction timeline so the callback nesting desyncs.  Full-session island
+  verification needs a demo recorded WITH the islands (same config), OR a fix to
+  the callback-frame tracking under the verifier's clone re-runs.
+
 ## 2026-07-11 (cont.32) — recovered _IsItDirt (tile-type predicate)
 - `_IsItDirt` (seg5:1182): diggable dirt tiles are 0x20..0x2E (signed); AX=1/0,
   clobbers dx(=arg).  Companion of `is_it_food`; both now in recovered/gameplay.py.
