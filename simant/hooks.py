@@ -349,6 +349,53 @@ def _make_maketable1x1_island(machine):
     return island
 
 
+# -- _WindowsMono_MakeTable4x4a (seg4:442C) — the zoomed mono tile packer -----
+#
+# The monochrome sibling of MakeTable4x4: packs pairs of source tiles (even ->
+# high nibble, odd -> low nibble) across four 0x40-strided scanlines, each pixel
+# read from a per-tile 8-byte pattern row selected by (mode & 7) at SS:0x26A0.
+# Fixed 0x40-pair count; full register preservation + retf ABI.  The "a" half
+# emits scanlines 0..3.  Recovered logic in simant/recovered/render.py.
+MONOMAKE4X4A_SEG_INDEX = 4
+MONOMAKE4X4A_OFF = 0x442C
+MONOMAKE4X4A_TABLE_BASE = 0x26A0                  # SS-relative pattern table base
+MONOMAKE4X4A_SIG = bytes.fromhex(
+    "558bec601e068b5e1083e30781c3a026")
+
+
+def _make_monomake4x4a_island(machine):
+    from .recovered.render import (windows_mono_make_table_4x4a,
+                                   MONO_MAKETABLE_PAIRS)
+
+    def island(cpu) -> None:
+        m = cpu.mem
+        s = cpu.s
+        ss, sp = s.ss, s.sp
+        rw, rb = m.rw, m.rb
+        ret_ip, ret_cs = rw(ss, sp), rw(ss, (sp + 2) & 0xFFFF)
+        src_off, src_seg = rw(ss, (sp + 4) & 0xFFFF), rw(ss, (sp + 6) & 0xFFFF)
+        dst_off, dst_seg = rw(ss, (sp + 8) & 0xFFFF), rw(ss, (sp + 0x0A) & 0xFFFF)
+        mode = rw(ss, (sp + 0x0E) & 0xFFFF)          # (mode & 7) is the table phase
+
+        base = (MONOMAKE4X4A_TABLE_BASE + (mode & 7)) & 0xFFFF
+        tiles = [rb(src_seg, (src_off + i) & 0xFFFF)
+                 for i in range(2 * MONO_MAKETABLE_PAIRS)]
+        table = [[rb(ss, (base + t * 8 + r) & 0xFFFF) for r in range(4)]
+                 for t in range(256)]
+        rows = windows_mono_make_table_4x4a(tiles, table)
+        for r in range(4):
+            band = (dst_off + r * 0x40) & 0xFFFF
+            row = rows[r]
+            for j in range(MONO_MAKETABLE_PAIRS):
+                m.wb(dst_seg, (band + j) & 0xFFFF, row[j])
+
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs = ret_cs
+        s.ip = ret_ip
+
+    return island
+
+
 # -- the SIMONE PRNG family (seg5) -------------------------------------------
 #
 # The simulation's one LFSR (recovered in simant/recovered/simone.py): every
@@ -1061,6 +1108,9 @@ _ISLANDS = [
      lambda machine, off: _make_xfertilemono_island(machine), "_XferTileMono"),
     (XFERLIFETILEMONO_SEG_INDEX, XFERLIFETILEMONO_OFF, XFERLIFETILEMONO_SIG,
      lambda machine, off: _make_xferlifetilemono_island(machine), "_XferLifeTileMono"),
+    (MONOMAKE4X4A_SEG_INDEX, MONOMAKE4X4A_OFF, MONOMAKE4X4A_SIG,
+     lambda machine, off: _make_monomake4x4a_island(machine),
+     "_WindowsMono_MakeTable4x4a"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,

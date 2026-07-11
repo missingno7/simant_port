@@ -376,3 +376,32 @@ def windows_make_table_1x1(tiles, table):
     """
     return bytes(table[tiles[2 * i]] | table[0x10 + tiles[2 * i + 1]]
                  for i in range(len(tiles) // 2))
+
+
+#: The mono MakeTable builders process a fixed 0x40 tile PAIRS per call (the
+#: ASM's `mov cx, 0x40`), producing that many bytes per output scanline band.
+MONO_MAKETABLE_PAIRS = 0x40
+
+
+def windows_mono_make_table_4x4a(tiles, table):
+    """Build the first four scanlines of a zoomed monochrome tile band.
+
+    Each output byte packs TWO tiles — the even tile in the high nibble, the odd
+    tile in the low nibble — so for each of `MONO_MAKETABLE_PAIRS` pairs
+    `(t0, t1)` and each scanline `r` in 0..3::
+
+        out[r][j] = (table[t0][r] & 0xF0) | (table[t1][r] & 0x0F)
+
+    `table[tile]` is the tile's per-scanline pattern row (8 bytes; this "a" half
+    uses scanlines 0..3).  Returns four rows of `MONO_MAKETABLE_PAIRS` bytes.
+
+    Recovered from `_WindowsMono_MakeTable4x4a` (SIMANTW.SYM, seg4:442C): a fixed
+    0x40-count loop, two `lodsb` per byte, four `ss:[bx+r]` reads each masked to
+    a nibble and stored/OR'd at the destination's 0x40-strided scanlines.
+    """
+    rows = [bytearray(MONO_MAKETABLE_PAIRS) for _ in range(4)]
+    for j in range(MONO_MAKETABLE_PAIRS):
+        t0, t1 = tiles[2 * j], tiles[2 * j + 1]
+        for r in range(4):
+            rows[r][j] = (table[t0][r] & 0xF0) | (table[t1][r] & 0x0F)
+    return [bytes(r) for r in rows]

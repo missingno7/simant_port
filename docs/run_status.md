@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.8) — recovered _WindowsMono_MakeTable4x4a; render routines unexercised by newcold
+- Lifted `_WindowsMono_MakeTable4x4a` (seg4:442C) — the zoomed monochrome tile
+  packer, sibling of the recovered _Windows_MakeTable4x4/1x1.  Packs a fixed 0x40
+  tile PAIRS into four 0x40-strided output scanlines: `out[r][j] =
+  (table[t0][r] & 0xF0) | (table[t1][r] & 0x0F)`, where table[tile] is an 8-byte
+  per-scanline pattern row selected by (mode & 7) at SS:0x26A0 (the "a" half uses
+  scanlines 0..3).  `recovered/render.py: windows_mono_make_table_4x4a` +
+  `MONO_MAKETABLE_PAIRS`; island reads the SS table; A/B oracle over 3 table
+  phases (byte-exact + full register preservation).  28 islands; suite 231 green.
+- **Reachability finding:** NONE of the seg4 render routines — the four Xfer* tile
+  blits (incl. the two just recovered), the MakeTable/EditScroll/Plot families —
+  are called during the newcold demo.  newcold is intro/menu/registration (its
+  profile is busy-waits), and never enters the in-game MAP VIEW where tile
+  rendering runs.  So render recoveries can only be validated by the synthetic A/B
+  oracle (which is the standard proof).  To profile/validate render lifts against
+  real gameplay, a future demo must reach the map view (ants simulating, scrolling).
+
 ## 2026-07-11 (cont.7) — recovered _XferLifeTileMono (the masked 1bpp overlay)
 - Lifted `_XferLifeTileMono` (seg4:49B7) — the transparent sibling of _XferTileMono
   and mono counterpart of _XferLifeTileColor.  Same bottom-up mono geometry, but a
