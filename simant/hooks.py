@@ -445,19 +445,21 @@ def _srand_common(cpu, seed: int, new: int) -> None:
 
 def _make_srand1_island(machine):
     from .recovered.simone import srand1
+    from .bridge.dgroup_view import SelectorBackend, SimAntState
 
     def island(cpu) -> None:
         m, s = cpu.mem, cpu.s
+        state = SimAntState(SelectorBackend(m, s.ds))   # the state-view seam
         sp = s.sp
         ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
         n = m.rw(s.ss, (sp + 4) & 0xFFFF)
-        seed = m.rw(s.ds, SRAND_SEED_OFF)
+        seed = state.rng_seed
         if n == 0:
             raise ZeroDivisionError(
                 "_SRand1 island: modulus 0 — the ASM would #DE here")
         new, result = srand1(seed, n)
         _srand_common(cpu, seed, new)            # div writes no flags (dos_re)
-        m.ww(s.ds, SRAND_SEED_OFF, new)
+        state.rng_seed = new
         m.ww(s.ss, (sp - 2) & 0xFFFF, s.bp)      # freed frame: enter's push bp
         m.ww(s.ss, (sp - 4) & 0xFFFF, result)    # [bp-2] result scratch
         s.ax = result
@@ -471,18 +473,20 @@ def _make_srand1_island(machine):
 
 def _make_srand_mask_island(machine, off):
     from .recovered.simone import srand_pow2
+    from .bridge.dgroup_view import SelectorBackend, SimAntState
     cs = machine.seg_bases[SRAND_SEG_INDEX]
     mask = machine.mem.rw(cs, off + len(SRAND_MASK_SIG_PREFIX))
 
     def island(cpu) -> None:
         m, s = cpu.mem, cpu.s
+        state = SimAntState(SelectorBackend(m, s.ds))
         sp = s.sp
         ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
-        seed = m.rw(s.ds, SRAND_SEED_OFF)
+        seed = state.rng_seed
         new, result = srand_pow2(seed, mask)
         _srand_common(cpu, seed, new)
         cpu.set_logic_flags(result, 16)          # the AND's flags
-        m.ww(s.ds, SRAND_SEED_OFF, new)
+        state.rng_seed = new
         m.ww(s.ss, (sp - 2) & 0xFFFF, s.bp)
         m.ww(s.ss, (sp - 4) & 0xFFFF, result)
         s.ax = result
@@ -494,12 +498,14 @@ def _make_srand_mask_island(machine, off):
 
 
 def _make_setsrandseed_island(machine):
+    from .bridge.dgroup_view import SelectorBackend, SimAntState
+
     def island(cpu) -> None:
         m, s = cpu.mem, cpu.s
         sp = s.sp
         ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
         v = m.rw(s.ss, (sp + 4) & 0xFFFF)
-        m.ww(s.ds, SRAND_SEED_OFF, v)
+        SimAntState(SelectorBackend(m, s.ds)).rng_seed = v
         m.ww(s.ss, (sp - 2) & 0xFFFF, s.bp)      # push bp / leave residue
         s.ax = v
         s.sp = (sp + 4) & 0xFFFF
@@ -509,11 +515,13 @@ def _make_setsrandseed_island(machine):
 
 
 def _make_getsrandseed_island(machine):
+    from .bridge.dgroup_view import SelectorBackend, SimAntState
+
     def island(cpu) -> None:
         m, s = cpu.mem, cpu.s
         sp = s.sp
         ret_ip, ret_cs = m.rw(s.ss, sp), m.rw(s.ss, (sp + 2) & 0xFFFF)
-        s.ax = m.rw(s.ds, SRAND_SEED_OFF)
+        s.ax = SimAntState(SelectorBackend(m, s.ds)).rng_seed
         cpu.set_sub_flags(s.dx, s.dx, 0, 16)     # sub dx,dx
         s.dx = 0
         s.sp = (sp + 4) & 0xFFFF

@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.9) — VM-less port groundwork: the state-view seam (pre2-style)
+- Started the enhanced-layer endgame direction (VM becomes an oracle, recovered
+  source runs on the game's own state).  Established the layering + the concrete
+  seam, adapted from pre2_port for win16's selector model:
+  * `simant/bridge/dgroup_view.py` — the layout bridge (pure, VM-free): named
+    fields via `_U8/_S8/_U16/_S16/_U16Array/StructView/StructArray/DgroupView`;
+    backends `SelectorBackend` (VM-faithful mem.rb/rw — matches selector xlat/RPL),
+    `ByteBackend` (flat native image), `OverlayBackend` (write contract).  A
+    `SimAntState` names the first verified globals: rng_seed 0xCBF2, music_device
+    0xB91C, map_cols 0xCC80, map_rows 0xCD7A, songs_on 0x0AF6.
+  * `simant/native/state.py` — `NativeGameState` (the owned .data image +
+    dgroup_base; `.from_machine()` bootstrap).
+  * Proven IN-USE: the `_SRand*`/Set/GetSRandSeed islands now read/write the seed
+    through `SimAntState.rng_seed` (not raw 0xCBF2) and stay byte-exact vs the ASM.
+  * `tests/test_state_view.py` (7) pins that the same view + recovered srand_step
+    give identical results over a live VM and a NativeGameState.  Suite 238 green.
+- Docs: `docs/vmless_port.md` (execution modes native/oracle/hybrid/verify + the
+  layering rule + the seam).  Far endgame (native cold boot) still needs the core
+  loop recovered; this seam is the groove future recovery runs in.
+
 ## 2026-07-11 (cont.8) — recovered _WindowsMono_MakeTable4x4a; render routines unexercised by newcold
 - Lifted `_WindowsMono_MakeTable4x4a` (seg4:442C) — the zoomed monochrome tile
   packer, sibling of the recovered _Windows_MakeTable4x4/1x1.  Packs a fixed 0x40
