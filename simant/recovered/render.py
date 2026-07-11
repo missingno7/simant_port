@@ -98,6 +98,51 @@ def xfer_tile_color(read_src: Callable[[int], int],
         src = (src + row_bytes) & M
 
 
+def _tile_blit_geometry_mono(dst_x: int, top: int, height: int, tile_w: int,
+                             y_extent: int, map_w: int, src_tile: int):
+    """The 1bpp (monochrome) counterpart of `_tile_blit_geometry`.
+
+    Same padded-scanline destination geometry, but one BIT per pixel: the
+    scanline stride packs `map_w * tile_w` bits (not 4bpp) into 32-bit-aligned
+    bytes, byte offsets are pixel counts `>> 3`, and each source tile is 32
+    bytes.  `start` is the block's LAST scanline (`(y_extent - top) * height -
+    1`) because the mono blit walks the band bottom-up (see `xfer_tile_mono`).
+    All products are 16-bit, matching the original's registers.
+    """
+    M = 0xFFFF
+    stride = ((((map_w * tile_w) & M) + 0x1F) & M) >> 5 << 2
+    row_bytes = tile_w >> 3
+    band_last = ((((y_extent - top) & M) * height) & M) - 1 & M   # last scanline index
+    start = band_last * stride + (((dst_x * tile_w) & M) >> 3)
+    return stride, row_bytes, start, (src_tile << 5) & M
+
+
+def xfer_tile_mono(read_src: Callable[[int], int],
+                   write_dst: Callable[[int, int], None],
+                   dst_x: int, top: int, height: int, tile_w: int,
+                   y_extent: int, map_w: int, src_tile: int) -> None:
+    """Blit a `height` x `tile_w` 1bpp (monochrome) tile block into a padded DIB.
+
+    The monochrome sibling of :func:`xfer_tile_color`.  Each of `height` rows
+    copies `tile_w // 8` bytes (eight 1bpp pixels per byte) from the source tile
+    into the destination; the destination walks the band BOTTOM-UP, one scanline
+    `stride` UP per row (the original decrements its huge pointer), so source row
+    j lands in band row `height-1-j`.  `read_src`/`write_dst` are as in
+    :func:`xfer_tile_color` (write offsets are resolved against the huge pointer
+    by the caller).
+
+    Recovered from `_XferTileMono` (SIMANTW.SYM seg4:486C, _TEXT).
+    """
+    M = 0xFFFF
+    stride, row_bytes, start, src = _tile_blit_geometry_mono(
+        dst_x, top, height, tile_w, y_extent, map_w, src_tile)
+    for _row in range(height):
+        for i in range(row_bytes):
+            write_dst(start + i, read_src((src + i) & M))
+        start -= stride                       # bottom-up (the huge ptr decrements)
+        src = (src + row_bytes) & M
+
+
 #: Per-view-mode tile-map layout for `do_calc_tile`, keyed by the mode selector
 #: (DGROUP:0xCC76).  Modes 0 and 1 share layout 0.  Fields: the tile-x mask, the
 #: graphic map's DGROUP offset and additive bias, the attribute map's offset, and

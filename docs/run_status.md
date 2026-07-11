@@ -1,5 +1,19 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-11 (cont.6) — recovered _XferTileMono (the 1bpp sibling of _XferTileColor)
+- Back to source recovery.  Lifted `_XferTileMono` (seg4:486C, _TEXT) — the
+  monochrome sibling of the already-recovered `_XferTileColor`.  Same 22-byte far
+  ABI + huge-pointer DIB walk, but 1bpp (eight pixels/byte): stride packs bits not
+  nibbles (no `<<2`), byte offsets are pixel>>3, tiles are 32 bytes, and the band
+  is walked BOTTOM-UP (`di -= stride`) from `((y_extent-top)*height-1)` so source
+  row j lands in band row height-1-j.  A pure copy; pusha/popa preserves all regs.
+- `recovered/render.py`: `xfer_tile_mono` + `_tile_blit_geometry_mono`; island in
+  `hooks.py` (26 now); A/B oracle in test_hooks.py (4 cases, byte-exact dest +
+  full register preservation).  Suite 224 green.
+- Profiling note: newcold is mostly intro/menu, so its top buckets are busy-waits
+  (_TickCount/_WaitedEnough/_StillDown) + the deliberate _Unpack resume-passthrough,
+  not new pure-compute loops — picked the clean mono-sibling recovery instead.
+
 ## 2026-07-11 (cont.5) — MIDI music WORKS end-to-end (real .mid soundtrack plays)
 - Phases 1-3 landed.  The game now loads mmsystem, resolves the MCI procs, opens
   `C:\sound\gamethme.mid` (→ assets/ANTWIN/SOUND/GAMETHME.MID) and plays it through

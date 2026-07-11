@@ -766,6 +766,52 @@ def _make_xferlifetilecolor_island(machine):
     return island
 
 
+# -- _XferTileMono (seg4:486C, _TEXT) ----------------------------------------
+#
+# The 1bpp (monochrome) sibling of _XferTileColor: same 22-byte far ABI and huge-
+# pointer DIB walk, but eight 1bpp pixels per byte (stride packs bits not nibbles,
+# byte offsets are pixel>>3, tiles are 32 bytes) and the band is walked bottom-up.
+# A pure copy (rep movsb), pusha/popa preserves every register.  Prologue matches
+# _XferTileColor until the stride mul (mono `add ax,0x1F` where colour `shl ax,2`).
+XFERTILEMONO_SEG_INDEX = 4
+XFERTILEMONO_OFF = 0x486C
+XFERTILEMONO_HUGE_INCR = 8                        # selector delta per 64K (Win16 __AHINCR)
+XFERTILEMONO_SIG = bytes.fromhex(
+    "558bec601e068b4614f7661083c01f")
+
+
+def _make_xfertilemono_island(machine):
+    from .recovered.render import xfer_tile_mono
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        dst_off, dst_seg = arg(4), arg(6)
+        dst_x, top, height, tile_w = arg(8), arg(0x0A), arg(0x0C), arg(0x0E)
+        y_extent, map_w, src_tile = arg(0x10), arg(0x12), arg(0x14)
+        src_off, src_seg = arg(0x16), arg(0x18)
+
+        def read_src(off):
+            return m.rb(src_seg, (src_off + off) & 0xFFFF)
+
+        def write_dst(off, byte):
+            full = dst_off + off
+            seg = (dst_seg + XFERTILEMONO_HUGE_INCR * (full >> 16)) & 0xFFFF
+            m.wb(seg, full & 0xFFFF, byte)
+
+        xfer_tile_mono(read_src, write_dst, dst_x, top, height, tile_w,
+                       y_extent, map_w, src_tile)
+
+        # pusha/popa + push/pop ds/es/bp restore every register — touch none.
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 def _make_xfertilecolor_island(machine):
     from .recovered.render import xfer_tile_color
 
@@ -959,6 +1005,8 @@ _ISLANDS = [
      lambda machine, off: _make_xfertilecolor_island(machine), "_XferTileColor"),
     (XFERLIFETILECOLOR_SEG_INDEX, XFERLIFETILECOLOR_OFF, XFERLIFETILECOLOR_SIG,
      lambda machine, off: _make_xferlifetilecolor_island(machine), "_XferLifeTileColor"),
+    (XFERTILEMONO_SEG_INDEX, XFERTILEMONO_OFF, XFERTILEMONO_SIG,
+     lambda machine, off: _make_xfertilemono_island(machine), "_XferTileMono"),
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,
