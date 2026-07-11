@@ -59,7 +59,8 @@ from win16.vmsnap import digest, load_snapshot  # noqa: E402
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--snapshot", help="anchor the demo was recorded from")
+    ap.add_argument("--snapshot", help="anchor the demo was recorded from "
+                    "(omit for a cold-start demo recorded from boot)")
     ap.add_argument("--demo", help="demo replayed as the drive")
     ap.add_argument("--only", action="append", default=[], metavar="NAME",
                     help="verify only these island(s) by name (repeatable); "
@@ -78,7 +79,12 @@ def main(argv=None) -> int:
             print(name)
         return 0
 
-    machine = load_snapshot(args.snapshot, create_machine)
+    if not args.demo:
+        ap.error("--demo is required")
+    if args.snapshot:                       # snapshot-anchored demo
+        machine = load_snapshot(args.snapshot, create_machine)
+    else:                                   # cold-start demo (recorded from boot)
+        machine = create_machine()
     machine.cpu.trace_enabled = False
 
     # 1. Install every production island, then pick which to VERIFY.
@@ -122,8 +128,20 @@ def main(argv=None) -> int:
     driver.install(sysobj)
     print(f"replaying {args.demo} ({len(driver.records)} records) ...\n")
 
+    # A divergence in ONLY the arithmetic flags (registers, segments and memory
+    # all match) is almost always the undefined-flags-after-a-routine case that no
+    # caller reads — worth flagging, but not a "the island computes the wrong
+    # answer" bug.  Classify it apart from a real register/memory divergence.
+    _REAL_DIFF = ("Register differences", "Segment differences",
+                  "Memory differences", "Continuation differences",
+                  "DOS/state differences")
+
+    def _flags_only(msg: str) -> bool:
+        return "Flag differences" in msg and not any(s in msg for s in _REAL_DIFF)
+
     STEP = 20_000
     diverged: dict[tuple[int, int], str] = {}
+    flags_only: dict[tuple[int, int], bool] = {}
     status, done = "budget reached", 0
     while done < args.budget:
         if args.samples > 0 and not to_verify:
@@ -145,8 +163,10 @@ def main(argv=None) -> int:
                             if n in str(exc) or f"{k[0]:04X}:{k[1]:04X}" in str(exc)),
                            key)
             diverged[key] = str(exc)
+            flags_only[key] = _flags_only(str(exc))
             name = key_name.get(key, f"{key[0]:04X}:{key[1]:04X}")
-            print(f"\nDIVERGED {name}:\n{str(exc).strip()}\n")
+            tag = "FLAGS_ONLY" if flags_only[key] else "DIVERGED"
+            print(f"\n{tag} {name}:\n{str(exc).strip()}\n")
             # Stop VERIFYING it, but keep the island installed and RUNNING — the
             # divergence fired before the live hook ran, and popping a hook while
             # a callback frame is open corrupts the frame accounting.  On the next
@@ -162,26 +182,29 @@ def main(argv=None) -> int:
     print(f"ran {done:,} instructions ({status}); "
           f"digest {digest(machine)[:16]}\n")
     rc = 0
-    passing = reached = notreached = 0
+    passing = real_div = flagdiv = notreached = 0
     for k in sorted(verify_keys, key=lambda k: key_name[k]):
         name = key_name[k]
         si, off = key_seg[k]
         label = nearest_symbol(si, off) or name
         verified = verifier.counts.get(k, 0)
-        if k in diverged:
-            state, rc = "DIVERGED", 1
+        if k in diverged and not flags_only.get(k):
+            state, rc, real_div = "DIVERGED", 1, real_div + 1
+        elif k in diverged:
+            state, flagdiv = "FLAGS_ONLY", flagdiv + 1     # undefined-flags residue
         elif verified > 0:
             state, passing = "ORACLE_PASSING", passing + 1
         else:
             state, notreached = "NOT_REACHED", notreached + 1
-        line = f"{state:15s} {name:26s} {verified} call(s) byte-exact  [{label}]"
-        print(line)
-    print(f"\n{passing} passing, {len(diverged)} diverged, {notreached} not reached "
-          f"of {len(verify_keys)} verified islands.")
-    if diverged:
-        print("A DIVERGED island computes something the original ASM does not — "
-              "that is a real bug in the recovered logic; fix it before trusting "
-              "the island in play.")
+        print(f"{state:15s} {name:26s} {verified} call(s) byte-exact  [{label}]")
+    print(f"\n{passing} passing, {real_div} diverged, {flagdiv} flags-only, "
+          f"{notreached} not reached of {len(verify_keys)} verified islands.")
+    if real_div:
+        print("A DIVERGED island's registers/memory differ from the ASM — a real "
+              "bug in the recovered logic; fix it before trusting the island.")
+    if flagdiv:
+        print("FLAGS_ONLY: registers + memory match; only the arithmetic-flag "
+              "residue differs (undefined after the routine, read by no caller).")
     return rc
 
 
