@@ -1482,8 +1482,8 @@ def _run_gennestmap(with_island, mode):
         m.mem.wb(DG, (TBL + j) & 0xFFFF, (j * 13 + 5) & 0xFF)
     for i in range(0x1000):
         m.mem.wb(DST_SEG, (DST_OFF + i) & 0xFFFF, 0xEE)         # poison dst
-    for a in (hooks.GENNESTMAP_TBL_G, hooks.GENNESTMAP_FEFF_G,
-              hooks.GENNESTMAP_HIGH_G, hooks.GENNESTMAP_ELSE_G):
+    for a in (hooks.GENNEST_TABLE_GLOBAL, hooks.GENNEST_COLA_GLOBAL,
+              hooks.GENNEST_COLB_GLOBAL, hooks.GENNEST_COLC_GLOBAL):
         m.mem.ww(DG, a, 0xABCD)                                 # poison scratch
 
     s.ds = DG
@@ -1511,8 +1511,8 @@ def _run_gennestmap(with_island, mode):
     assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
     dst_lin = m.mem._xlat(DST_SEG, DST_OFF)
     dst = bytes(m.mem.data[dst_lin:dst_lin + 0x1000])
-    glob = (m.mem.rw(DG, hooks.GENNESTMAP_TBL_G), m.mem.rb(DG, hooks.GENNESTMAP_FEFF_G),
-            m.mem.rb(DG, hooks.GENNESTMAP_HIGH_G), m.mem.rb(DG, hooks.GENNESTMAP_ELSE_G))
+    glob = (m.mem.rw(DG, hooks.GENNEST_TABLE_GLOBAL), m.mem.rb(DG, hooks.GENNEST_COLA_GLOBAL),
+            m.mem.rb(DG, hooks.GENNEST_COLB_GLOBAL), m.mem.rb(DG, hooks.GENNEST_COLC_GLOBAL))
     regs = dict(ax=s.ax, bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di,
                 bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
     return dst, glob, regs

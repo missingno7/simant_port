@@ -449,50 +449,6 @@ def gen_over_map(cx0, dx0, tbl1, tbl2, mode, read_byte):
     return writes
 
 
-def gen_nest_map(cx0, dx0, tbl, val_feff, val_high, val_else, mode, read_byte):
-    """Build the nest map (64 rows x 64 columns) by classifying a terrain layer.
-
-    For each of the 64x64 cells (destination index advancing 0..4095), read the
-    primary layer byte `a = src[cx]` (cursor steps 0x40 per column, +1 per row —
-    column-major read, row-major write) and classify:
-
-    * `a == 0`  -> if `mode != 0` SKIP (destination byte unchanged); else the
-      secondary layer, `table[src2[dx] >> 2]`;
-    * `a in (0xFE, 0xFF)` -> `val_feff`;
-    * `a & 0x80`          -> `val_high`;
-    * else               -> `val_else`.
-
-    `read_byte(off)` reads DS:[off].  Returns `{dst_index: value}` — only cells
-    actually written (skips absent).
-
-    Recovered from `_GenNestMap` (SIMANTW.SYM, seg4:4754): a 0x40 x 0x40 nested
-    `lodsb`/`stosb` classifier; `pushaw`/`popaw` preserve every register, so the
-    only effect is this write set (plus echoing tbl / the three fill bytes to
-    scratch globals 0x1B78 / 0x1B7A / 0x1B7B / 0x1B7C).
-    """
-    writes = {}
-    di = 0
-    cx, dx = cx0, dx0
-    for _row in range(0x40):
-        for _col in range(0x40):
-            a = read_byte(cx & 0xFFFF)
-            if a == 0:
-                if mode == 0:
-                    writes[di] = read_byte((tbl + (read_byte(dx & 0xFFFF) >> 2)) & 0xFFFF)
-            elif a in (0xFE, 0xFF):
-                writes[di] = val_feff
-            elif a & 0x80:
-                writes[di] = val_high
-            else:
-                writes[di] = val_else
-            di += 1
-            cx = (cx + 0x40) & 0xFFFF
-            dx = (dx + 0x40) & 0xFFFF
-        cx = (cx - 0xFFF) & 0xFFFF
-        dx = (dx - 0xFFF) & 0xFFFF
-    return writes
-
-
 #: The four 2-bit destination slots of the half-resolution mono packer, one per
 #: tile of the group of four (`and 0xC0 / 0x30 / 0x0C / 0x03`).
 _MONO_2X2_MASKS = (0xC0, 0x30, 0x0C, 0x03)
