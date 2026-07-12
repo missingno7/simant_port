@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-12 (cont.38) — dos_re bumped +30 commits; synergy assessment
+- Owner asked to update dos_re and look for win16_re synergies.  Bumped the
+  nested submodule 58a1a51 -> af0db41 (30 commits); all three suites green
+  (dos_re 341, win16_re 112, simant 356).  win16_re 75796f2 pins it.
+- SYNERGIES, in value order:
+  1. **`dos_re.tick_demo`** — the promoted pre2_port endgame-equivalence engine:
+     demos keyed to the GAME TICK (not instruction count), storing per-tick
+     consumed input + sidebands + a masked digest of gameplay-owned state.  This
+     is the designed fix for our v4 desync (cont.27: instruction-keyed input is
+     mode-dependent; hooks change instruction timing).  SimAnt's tick = the
+     ~59fps WM_TIMER sim tick.  Adopting it needs a win16 adapter: consumption-
+     point key observers, GetTickCount sidebands, and the gameplay ownership
+     mask (digest boundary).  THE roadmap item for the native-port endgame.
+  2. **`dos_re.coverage`** — the measured "native %" collector, fed by
+     `cpu.coverage_telemetry` on the SHARED CPU8086, so win16 gets it for free.
+     Proven live on a cold_nohooks slice (71.9M instrs, per-island buckets,
+     2.86M hook dispatches).  Honest % needs ASM-equivalents: run the verifier
+     (verifyislands.py) with telemetry attached once -> save_cache() -> later
+     replays estimate from the cache.  Cheap follow-up, gives the headline
+     recovery metric.
+  3. **`dos_re.frontend_timeline`** — per-present-frame screen timeline compare
+     (the front-end analogue of tick_demo).  win16 analog would sample at the
+     compositor/present boundary.  Relevant once a native front end exists.
+  4. numpy is now first-class in dos_re policy (win16 always used it); dos_re
+     also gained its own `checkpoints.py` (VM-until-checkpoint stepping off a
+     HookTaxonomy phase map) — DIFFERENT from our scripts/checkpoints.py
+     (digest-trace tool); name collision worth remembering.
+  5. The 32-bit PM stack (LE loader / CPU386 / DOS4GW / pmlift) is DOS-only —
+     no win16 relevance.
+- NOT adopted this turn (scoped follow-ups): tick_demo adapter, coverage-with-
+  verifier native-% run, frontend_timeline adapter.
+
 ## 2026-07-12 (cont.37) — live hooks crash: reachable render islands ruled out
 - Owner report: LIVE play WITH hooks (46) crashes at 76.8M — _Punt (panic
   MessageBox, garbage caption + MB_ICONHAND) then runaway into the C-runtime
