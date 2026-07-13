@@ -1041,6 +1041,46 @@ def _make_issameplane_island(machine):
     return island
 
 
+# -- _GetMap (seg5:60E2) — read a map cell (plane, x, y) from the DGROUP planes -
+# Returns AX = the tile byte (0..0xFF) for a valid cell, or 0xFFFF out of range.
+# dx mirrors ax; si/di/bp/es/ds preserved (pushed/popped).  bx residue: the
+# y arg on the valid path, 0xFFFF when the coordinates were out of range, 0 when
+# only the plane was out of range (the ASM's two distinct invalid exits).
+GETMAP_SEG_INDEX = 5
+GETMAP_OFF = 0x60E2
+GETMAP_SIG = bytes.fromhex(
+    "c802000057568b5606c746feffff83fa017f1d8b7608")
+
+
+def _make_getmap_island(machine):
+    from .recovered.gameplay import is_valid_a, is_valid_b, map_cell_offset
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane = _sx(m.rw(ss, (sp + 4) & 0xFFFF))
+        x = _sx(m.rw(ss, (sp + 6) & 0xFFFF))
+        y_w = m.rw(ss, (sp + 8) & 0xFFFF)
+        y = _sx(y_w)
+        off = map_cell_offset(plane, x, y)
+        if off is not None:
+            tile = m.rb(s.ds, off)
+            s.ax = s.dx = tile
+            s.bx = y_w                               # bx = y on the valid path
+        else:
+            s.ax = s.dx = 0xFFFF
+            coords_ok = is_valid_a(x, y) if plane <= 1 else is_valid_b(x, y)
+            s.bx = 0 if coords_ok else 0xFFFF        # plane-invalid -> 0, else 0xFFFF
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1899,6 +1939,8 @@ _ISLANDS = [
      lambda machine, off: _make_islessthanhole_island(machine), "_IsLessThanHole"),
     (ISSAMEPLANE_SEG_INDEX, ISSAMEPLANE_OFF, ISSAMEPLANE_SIG,
      lambda machine, off: _make_issameplane_island(machine), "_IsSamePlane"),
+    (GETMAP_SEG_INDEX, GETMAP_OFF, GETMAP_SIG,
+     lambda machine, off: _make_getmap_island(machine), "_GetMap"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
@@ -1942,7 +1984,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 55
+EXPECTED_ISLAND_COUNT = 56
 
 
 def install(machine) -> int:

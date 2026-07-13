@@ -1,5 +1,23 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.48) — recovered _GetMap: the keystone map-cell accessor
+- RECOVERED `_GetMap` (seg5:60E2), the map accessor the whole map-query family
+  builds on.  This maps out the world storage: THREE plane arrays packed in
+  DGROUP — planes 0-1 (yard, 128x64) at ds:0x28E8, plane 2 (nest) at 0x48E8,
+  plane 3 at 0x58E8 — addressed column-major with x-stride 64
+  (offset = base + (x<<6) + y).  Coordinate validity is exactly the already-
+  recovered is_valid_a (yard) / is_valid_b (nest).  Out-of-range returns 0xFFFF.
+- The recovered logic is a pure `map_cell_offset(plane,x,y) -> int|None`; the
+  island reads the DS byte and replicates _GetMap's THREE distinct exits and
+  their bx residue exactly (bx=y valid, 0xFFFF coord-invalid, 0 plane-invalid),
+  proven over valid/coord-invalid/plane-invalid cases on every plane.
+- Islands 55 -> 56.  Suite: simant 455.
+- NEXT (now unblocked by the map seam): the map-query predicates that read the
+  planes — _IsItHole (6:2CC0: valid + inside 0x80..0x8F / outside ==0x50 at
+  ds:0x28E8), and the movement family _TileCanBeMovedOn / _IsNotBarrier /
+  _IsNotObstacle / _IsItDigable (5:9342..95C6), which compose _GetMap + the leaf
+  tile predicates already recovered.
+
 ## 2026-07-13 (cont.47) — recovered the world-state predicate seam (_IsLessThanHole/_IsSamePlane)
 - RECOVERED the first two STATEFUL leaf predicates, using the _IsItFood
   world-state seam (island reads DGROUP globals, recovered fn stays pure):

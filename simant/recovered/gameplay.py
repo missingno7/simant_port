@@ -160,3 +160,29 @@ def is_same_plane(plane: int, current_plane: int) -> int:
     """
     p = 1 if plane == 0 else plane
     return 1 if current_plane == p else 0
+
+
+# The map is three plane arrays packed in DGROUP, addressed column-major with an
+# x-stride of 64 (offset = base + (x << 6) + y).
+MAP_PLANE_BASE = {0: 0x28E8, 1: 0x28E8, 2: 0x48E8, 3: 0x58E8}
+
+
+def map_cell_offset(plane: int, x: int, y: int) -> int | None:
+    """DGROUP byte offset of map cell (plane, x, y), or None if out of range.
+
+    Recovered from `_GetMap` (SIMANTW.SYM seg5:60E2).  Coordinate validity is
+    exactly `is_valid_a` on the yard planes (plane <= 1: x 0..0x7F, y 0..0x3F)
+    and `is_valid_b` on the nest planes (plane > 1: x,y 0..0x3F).  Planes 0 and 1
+    share the yard array at 0x28E8; plane 2 is at 0x48E8, plane 3 at 0x58E8;
+    every other plane (including negative) is out of range.  The caller reads the
+    byte at DS:offset; the ASM returns 0xFFFF for the None case.
+    """
+    if plane <= 1:
+        if not (0 <= x <= 0x7F and 0 <= y <= 0x3F):
+            return None
+    elif not (0 <= x <= 0x3F and 0 <= y <= 0x3F):
+        return None
+    base = MAP_PLANE_BASE.get(plane) if plane >= 0 else None
+    if base is None:
+        return None
+    return base + (x << 6) + y

@@ -1857,6 +1857,51 @@ def test_issameplane_island_matches_asm(plane, current):
     assert asm["ax"] == is_same_plane(plane, current)
 
 
+# ---- _GetMap (seg5:60E2) — the map-cell accessor over the DGROUP planes ------
+# Seeds the three plane arrays in DGROUP so a valid read returns a known byte;
+# args are (plane, x, y) with plane@[bp+6].
+def _run_getmap(with_island, plane, x, y, seed):
+    from simant.recovered.gameplay import map_cell_offset
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    off = map_cell_offset(plane, x, y)               # seed the target cell
+    if off is not None:
+        m.mem.wb(DG, off & 0xFFFF, seed)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.GETMAP_SEG_INDEX], hooks.GETMAP_OFF
+    sp = s.sp
+    for v in (y, x, plane, SENT_CS, SENT_IP):        # plane@[bp+6], x@[bp+8], y@[bp+0xa]
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_GetMap")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("plane,x,y", [
+    (0, 0, 0), (1, 0x7F, 0x3F), (1, 0x10, 0x20),     # valid yard planes
+    (2, 0, 0), (2, 0x3F, 0x3F),                       # valid nest plane
+    (3, 0x20, 0x10),                                  # valid plane 3
+    (0, 0x80, 0x00), (0, 0x10, 0x40), (2, 0x40, 0),   # coord-invalid
+    (4, 0x10, 0x10), (-1, 0x10, 0x10), (5, 0, 0),     # plane-invalid (coords ok)
+])
+def test_getmap_island_matches_asm(plane, x, y):
+    seed = 0x6C
+    asm = _run_getmap(False, plane, x, y, seed)
+    isl = _run_getmap(True, plane, x, y, seed)
+    assert isl == asm, f"(p={plane},{x:#x},{y:#x}): island {isl} != asm {asm}"
+    from simant.recovered.gameplay import map_cell_offset
+    expect = seed if map_cell_offset(plane, x, y) is not None else 0xFFFF
+    assert asm["ax"] == expect
+
+
 # ---- _CopyName (seg4:7438) — recovered/netbios.py --------------------------
 def _run_copyname(with_island, src_bytes):
     m = runtime.create_machine()
