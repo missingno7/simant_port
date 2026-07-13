@@ -1857,6 +1857,52 @@ def test_issameplane_island_matches_asm(plane, current):
     assert asm["ax"] == is_same_plane(plane, current)
 
 
+# ---- _IsItHole (seg6:2CC0) — map + world-state hole predicate ---------------
+# Seeds both the inside/outside flag and the plane-0 yard tile.
+def _run_isithole(with_island, x, y, inside, tile):
+    from simant.recovered.gameplay import map_cell_offset
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    m.mem.ww(DG, hooks.ISITFOOD_WORLD_SEG_G, DG)
+    m.mem.ww(DG, hooks.ISITFOOD_INSIDE_FLAG_OFF, 1 if inside else 0)
+    off = map_cell_offset(0, x, y)
+    if off is not None:
+        m.mem.wb(DG, off & 0xFFFF, tile)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISITHOLE_SEG_INDEX], hooks.ISITHOLE_OFF
+    sp = s.sp
+    for v in (y, x, SENT_CS, SENT_IP):               # x@[bp+6], y@[bp+8]
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsItHole")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("inside", [False, True])
+@pytest.mark.parametrize("x,y,tile", [
+    (0x10, 0x10, 0x50),      # outside hole / inside not-hole
+    (0x10, 0x10, 0x80),      # inside hole / outside not-hole
+    (0x10, 0x10, 0x8F),      # inside upper edge
+    (0x10, 0x10, 0x7F),      # below inside range
+    (0x10, 0x10, 0x90),      # above inside range
+    (0x00, 0x00, 0x50), (0x7F, 0x3F, 0x80),
+    (0x80, 0x10, 0x50),      # x out of range (dx = x residue)
+    (0x10, 0x40, 0x50),      # y out of range (dx = y residue)
+])
+def test_isithole_island_matches_asm(x, y, tile, inside):
+    asm = _run_isithole(False, x, y, inside, tile)
+    isl = _run_isithole(True, x, y, inside, tile)
+    assert isl == asm, f"({x:#x},{y:#x},t={tile:#x},in={inside}): {isl} != {asm}"
+
+
 # ---- _GetMap (seg5:60E2) — the map-cell accessor over the DGROUP planes ------
 # Seeds the three plane arrays in DGROUP so a valid read returns a known byte;
 # args are (plane, x, y) with plane@[bp+6].

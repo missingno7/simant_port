@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.51) — recovered _IsItHole (first map-query predicate)
+- RECOVERED `_IsItHole` (seg6:2CC0), the first STATEFUL map-query predicate — it
+  composes the pieces already recovered: is_valid_a bounds check + the plane-0
+  yard map at map_cell_offset(0,x,y) + the world inside/outside flag.  Hole =
+  0x80..0x8F inside, ==0x50 outside.  Pure recovered fn is_it_hole(tile, inside);
+  the island bridges the map + flag reads.
+- The tricky part (handled): _IsItHole CALLS _IsValidA, so the island replicates
+  that nested call's dx residue exactly (x_word if the x-check failed else
+  y_word) across all three ASM exits (invalid / valid-inside / valid-outside),
+  plus bx=x<<6 and es=world selector on the valid paths.  A/B oracle seeds both
+  the flag and the tile; 18 cases incl. both invalid-coord residues green.
+- Islands 56 -> 57.  Suite: simant 474.
+- NEXT map-query targets: the movement family _TileCanBeMovedOn / _IsNotBarrier /
+  _IsNotObstacle / _IsItDigable (5:9342..95C6).  And the WRITE side _SetMap
+  (5:617A) needs a partial island (it makes a redraw far-call lcall 0x18C0:0
+  after writing) — invoke the sub-call through the VM.
+
 ## 2026-07-13 (cont.50) — null-proc frontier RESOLVED: it was a snapshot-fidelity bug
 - DIAGNOSED the cont.49 null far-call (`lcall [bp-4]` at GR seg2:9DB1).  Both
   indirect calls come from GetProcAddress (thunk 0x1ec = KERNEL.50); the game

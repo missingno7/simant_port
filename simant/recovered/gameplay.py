@@ -186,3 +186,17 @@ def map_cell_offset(plane: int, x: int, y: int) -> int | None:
     if base is None:
         return None
     return base + (x << 6) + y
+
+
+def is_it_hole(tile: int, inside: bool) -> int:
+    """Whether a yard-plane map tile is a nest hole / entrance.
+
+    Recovered from `_IsItHole` (SIMANTW.SYM seg6:2CC0): the caller first bounds-
+    checks (x, y) with `is_valid_a` and reads the tile from the yard map (plane 0,
+    at `map_cell_offset(0, x, y)`); an out-of-bounds cell is never a hole.  The
+    world-state inside/outside flag then picks the hole encoding — inside the nest
+    a hole is 0x80..0x8F, in the outside yard it is exactly 0x50.  Returns 1 / 0.
+    """
+    if inside:
+        return 1 if 0x80 <= tile <= 0x8F else 0
+    return 1 if tile == 0x50 else 0

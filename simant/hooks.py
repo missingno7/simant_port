@@ -1081,6 +1081,51 @@ def _make_getmap_island(machine):
     return island
 
 
+# -- _IsItHole (seg6:2CC0) — is this yard cell a nest hole/entrance? -----------
+# Bounds-checks (x, y) via _IsValidA, then reads the plane-0 yard map and the
+# world inside/outside flag ([0xC320]:[0x9B6E]).  Hole = 0x80..0x8F inside,
+# ==0x50 outside.  Register residue mirrors the ASM's three exits:
+#   invalid  -> ax=0; dx = the _IsValidA residue (x_word if x out of range, else
+#               y_word); bx/es preserved (the flag/map are never read).
+#   valid    -> es = world selector; bx = x<<6 (the row base); ax = result;
+#               dx = the tile byte (inside path) or y_word (outside path).
+# si/di/cx/bp/ds preserved (si/di are push/pop'd).
+ISITHOLE_SEG_INDEX = 6
+ISITHOLE_OFF = 0x2CC0
+ISITHOLE_SIG = bytes.fromhex("558bec57568b7e088b760657569a029c992f83c4040bc074")
+
+
+def _make_isithole_island(machine):
+    from .recovered.gameplay import is_it_hole, is_valid_a, map_cell_offset
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        x_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        y_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        x, y = _sx(x_w), _sx(y_w)
+        if not is_valid_a(x, y):
+            s.ax = 0
+            # _IsValidA leaves dx = x_word if the x-check failed, else y_word.
+            s.dx = x_w if not 0 <= x <= 0x7F else y_w
+        else:
+            world_seg = m.rw(s.ds, ISITFOOD_WORLD_SEG_G)
+            inside = m.rw(world_seg, ISITFOOD_INSIDE_FLAG_OFF) != 0
+            tile = m.rb(s.ds, map_cell_offset(0, x, y) & 0xFFFF)
+            s.ax = is_it_hole(tile, inside)
+            s.es = world_seg
+            s.bx = (x << 6) & 0xFFFF
+            s.dx = tile if inside else y_w        # dl=tile (inside) / _IsValidA dx
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1939,6 +1984,8 @@ _ISLANDS = [
      lambda machine, off: _make_islessthanhole_island(machine), "_IsLessThanHole"),
     (ISSAMEPLANE_SEG_INDEX, ISSAMEPLANE_OFF, ISSAMEPLANE_SIG,
      lambda machine, off: _make_issameplane_island(machine), "_IsSamePlane"),
+    (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
+     lambda machine, off: _make_isithole_island(machine), "_IsItHole"),
     (GETMAP_SEG_INDEX, GETMAP_OFF, GETMAP_SIG,
      lambda machine, off: _make_getmap_island(machine), "_GetMap"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
@@ -1984,7 +2031,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 56
+EXPECTED_ISLAND_COUNT = 57
 
 
 def install(machine) -> int:
