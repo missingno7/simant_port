@@ -1,5 +1,21 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.46) — recovered _IsValidA/_IsValidB; centralized the island count
+- RECOVERED the two coordinate-validity predicates (islands + byte-exact A/B):
+    _IsValidA (seg5:9C02)  valid iff x in 0..0x7F and y in 0..0x3F (wide yard grid)
+    _IsValidB (seg5:9C26)  valid iff x in 0..0x3F and y in 0..0x3F (64x64 nest)
+  dx residue replicated (dx=x when the x-check fails, else reloaded to y).
+- REFACTOR: the island count now lives in one constant `hooks.EXPECTED_ISLAND_COUNT`
+  (= 53); the ~29 A/B-oracle install-count asserts reference it instead of a
+  literal, so adding an island updates one line, not every test.  install() still
+  returns the live count, so the dedicated count test catches _ISLANDS drift.
+- Islands 51 -> 53.  Suite: simant 419.
+- NEXT: the world-state-flag predicate seam — _IsLessThanHole (5:9784) and
+  _IsSamePlane (5:97AA) read the inside/outside flag (es:[0x9B6E] via a selector
+  global) and the current plane ([0xCE80]); recover them like _IsItFood using a
+  DGROUP-view seam, then the stateful map predicates (_IsItHole 6:2CC0, the
+  _TileCanBeMovedOn / _IsNotBarrier / _IsItDigable movement family).
+
 ## 2026-07-13 (cont.45) — recovered the seg5 tile-classification predicate family
 - Continued gameplay-core recovery (pivot to sim logic).  Profiled the `cold`
   hooks replay: dominated by pacing-spin (GR!_WaitedEnough/_TickCount), the ant

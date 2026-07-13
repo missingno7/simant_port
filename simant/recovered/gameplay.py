@@ -113,3 +113,26 @@ def is_this_pebble(plane: int, tile: int) -> int:
     if plane == 1:
         return 1 if 0x51 <= tile <= 0x53 else 0
     return 0
+
+
+def is_valid_a(x: int, y: int) -> int:
+    """Whether (x, y) is a valid cell on the wide (yard/overworld) grid.
+
+    Recovered from `_IsValidA` (SIMANTW.SYM seg5:9C02): x must be 0..0x7F and y
+    must be 0..0x3F (a 128-wide by 64-tall grid; signed compares).  Returns 1/0.
+    """
+    if not 0 <= x <= 0x7F:
+        return 0
+    return 1 if 0 <= y <= 0x3F else 0
+
+
+def is_valid_b(x: int, y: int) -> int:
+    """Whether (x, y) is a valid cell on the 64x64 nest grid.
+
+    Recovered from `_IsValidB` (SIMANTW.SYM seg5:9C26): both x and y must be
+    0..0x3F (signed compares).  Returns 1/0.  The nest-grid companion of
+    `is_valid_a`.
+    """
+    if not 0 <= x <= 0x3F:
+        return 0
+    return 1 if 0 <= y <= 0x3F else 0

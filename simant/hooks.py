@@ -920,6 +920,65 @@ def _make_isthispebble_island(machine):
     return island
 
 
+# -- _IsValidA (seg5:9C02) — coordinate validity on the wide yard grid ---------
+# Two word args (x, y).  x loaded into dx first; if x is out of 0..0x7F the
+# routine returns with dx=x, otherwise dx is reloaded to y for the y-check (so
+# dx=y on every path that passes the x-check).  ax=result; rest preserved.
+ISVALIDA_SEG_INDEX = 5
+ISVALIDA_OFF = 0x9C02
+ISVALIDA_SIG = bytes.fromhex("558bec8b56060bd27c1683fa7f7f118b5608")
+
+
+def _make_isvalida_island(machine):
+    from .recovered.gameplay import is_valid_a
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        x_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        y_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        x = _sx(x_w)
+        s.ax = is_valid_a(x, _sx(y_w))
+        s.dx = x_w if not 0 <= x <= 0x7F else y_w
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+# -- _IsValidB (seg5:9C26) — coordinate validity on the 64x64 nest grid --------
+# Two word args (x, y); x checked against 0..0x3F, y against 0..0x3F.  Same
+# dx residue shape as _IsValidA (dx=x if x fails, else y).
+ISVALIDB_SEG_INDEX = 5
+ISVALIDB_OFF = 0x9C26
+ISVALIDB_SIG = bytes.fromhex("558bec8b56060bd27c1683fa3f7f118b5608")
+
+
+def _make_isvalidb_island(machine):
+    from .recovered.gameplay import is_valid_b
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        x_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        y_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        x = _sx(x_w)
+        s.ax = is_valid_b(x, _sx(y_w))
+        s.dx = x_w if not 0 <= x <= 0x3F else y_w
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1770,6 +1829,10 @@ _ISLANDS = [
      lambda machine, off: _make_isthisgrass_island(machine), "_IsThisGrass"),
     (ISTHISPEBBLE_SEG_INDEX, ISTHISPEBBLE_OFF, ISTHISPEBBLE_SIG,
      lambda machine, off: _make_isthispebble_island(machine), "_IsThisPebble"),
+    (ISVALIDA_SEG_INDEX, ISVALIDA_OFF, ISVALIDA_SIG,
+     lambda machine, off: _make_isvalida_island(machine), "_IsValidA"),
+    (ISVALIDB_SEG_INDEX, ISVALIDB_OFF, ISVALIDB_SIG,
+     lambda machine, off: _make_isvalidb_island(machine), "_IsValidB"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
@@ -1807,6 +1870,13 @@ for _off, _name in SRAND_MASK_OFFS:
          SRAND_MASK_SIG_PREFIX + _mask.to_bytes(2, "little")
          + SRAND_MASK_SIG_SUFFIX,
          lambda machine, off: _make_srand_mask_island(machine, off), _name))
+
+
+# The number of islands install() is expected to place — the single source of
+# truth the A/B oracles assert against (so adding an island touches this line,
+# not every test).  install() returning a different count than this means the
+# _ISLANDS table drifted from expectation.
+EXPECTED_ISLAND_COUNT = 53
 
 
 def install(machine) -> int:
