@@ -212,3 +212,39 @@ def is_not_barrier(tile: int, inside: bool) -> int:
     """
     threshold = 0x5F if inside else 0x50
     return 1 if tile <= threshold else 0
+
+
+def get_dir(x1: int, y1: int, x2: int, y2: int) -> int:
+    """Compass direction (0..8) from point 1 to point 2.
+
+    Recovered from `_GetDir` (SIMANTW.SYM seg5:10CC): classifies the step by the
+    sign of dx = x2 - x1 and dy = y2 - y1 (signed).  0 = same cell; then, by
+    (sign dx, sign dy): (0,-)=1 (0,+)=5 (+,-)=2 (+,0)=3 (+,+)=4 (-,+)=6 (-,0)=7
+    (-,-)=8.  A pure leaf used all over the ant movement code.
+    """
+    dx = x2 - x1
+    dy = y2 - y1
+    if dx == 0:
+        if dy == 0:
+            return 0
+        return 1 if dy < 0 else 5
+    if dx > 0:
+        if dy < 0:
+            return 2
+        return 3 if dy == 0 else 4
+    if dy > 0:
+        return 6
+    return 7 if dy == 0 else 8
+
+
+def get_dis(x1: int, y1: int, x2: int, y2: int) -> int:
+    """Squared Euclidean distance between point 1 and point 2.
+
+    Recovered from `_GetDis` (SIMANTW.SYM seg5:1122): returns dx*dx + dy*dy where
+    dx = x2 - x1 and dy = y2 - y1 (the original squares each 16-bit delta via the
+    C runtime's 32-bit multiply and returns the sum as a long).  The sim uses the
+    squared distance directly — it never takes the root.
+    """
+    dx = x2 - x1
+    dy = y2 - y1
+    return dx * dx + dy * dy

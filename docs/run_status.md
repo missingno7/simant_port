@@ -1,5 +1,19 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.53) — recovered the geometry primitives _GetDir + _GetDis
+- RECOVERED the two load-bearing movement-geometry helpers the recovery map
+  flagged (17 and 15 callers): `_GetDir` (seg5:10CC) — 8-way compass direction by
+  the sign of (dx,dy), dirs 0..8, a pure leaf; and `_GetDis` (seg5:1122) — squared
+  Euclidean distance dx*dx+dy*dy (the sim never roots it).  Pure fns get_dir /
+  get_dis in gameplay.py.  20 A/B cases green.
+- _GetDis calls the C long-multiply helper (__aFlmul) twice; its DX:AX result is
+  byte-exact, and BX/CX are left holding __aFlmul's internal scratch — the same
+  caller-unobserved residue __aFuldiv's oracle already excludes.  The island
+  doesn't fabricate that scratch and the _GetDis oracle checks the contract
+  (DX:AX + preserved SI/DI/BP/DS/ES), not BX/CX.
+- Islands 58 -> 60.  Suite: simant 509.  README recovery map updated (seg5 29/169,
+  _GetDis now green in the diagram).
+
 ## 2026-07-13 (cont.52) — recovered _IsNotBarrier (movement passability leaf)
 - RECOVERED `_IsNotBarrier` (seg5:94A0), a clean world-flag leaf (same seam as
   _IsLessThanHole, selector [0xC4AC]): a tile is passable when <= 0x5F inside the

@@ -1859,6 +1859,40 @@ def test_isnotbarrier_island_matches_asm(tile, inside):
     assert asm["ax"] == is_not_barrier(sx, inside)
 
 
+@pytest.mark.parametrize("x1,y1,x2,y2,d", [
+    (5, 5, 5, 5, 0), (5, 5, 5, 3, 1), (5, 5, 5, 8, 5), (5, 5, 8, 3, 2),
+    (5, 5, 8, 5, 3), (5, 5, 8, 8, 4), (5, 5, 2, 8, 6), (5, 5, 2, 5, 7),
+    (5, 5, 2, 2, 8), (0, 0, 0, 0, 0), (-3, -3, -1, -5, 2),
+])
+def test_getdir_island_matches_asm(x1, y1, x2, y2, d):
+    asm = _run_predicate(hooks.GETDIR_SEG_INDEX, hooks.GETDIR_OFF,
+                         "_GetDir", False, (x1, y1, x2, y2))
+    isl = _run_predicate(hooks.GETDIR_SEG_INDEX, hooks.GETDIR_OFF,
+                         "_GetDir", True, (x1, y1, x2, y2))
+    assert isl == asm, f"({x1},{y1})->({x2},{y2}): island {isl} != asm {asm}"
+    from simant.recovered.gameplay import get_dir
+    assert asm["ax"] == d == get_dir(x1, y1, x2, y2)
+
+
+@pytest.mark.parametrize("x1,y1,x2,y2,dist", [
+    (0, 0, 3, 4, 25), (5, 5, 5, 5, 0), (5, 5, 8, 9, 25), (10, 10, 7, 6, 25),
+    (0, 0, 100, 0, 10000), (0, 0, 0, 120, 14400), (-5, -5, 5, 5, 200),
+    (0x7F, 0, 0, 0x3F, 0x7F * 0x7F + 0x3F * 0x3F),
+])
+def test_getdis_island_matches_asm(x1, y1, x2, y2, dist):
+    asm = _run_predicate(hooks.GETDIS_SEG_INDEX, hooks.GETDIS_OFF,
+                         "_GetDis", False, (x1, y1, x2, y2))
+    isl = _run_predicate(hooks.GETDIS_SEG_INDEX, hooks.GETDIS_OFF,
+                         "_GetDis", True, (x1, y1, x2, y2))
+    # bx/cx hold the long-multiply helper's internal scratch (no caller reads
+    # them; the contract is DX:AX + preserved SI/DI/BP/DS/ES) — as with __aFuldiv.
+    contract = lambda r: {k: v for k, v in r.items() if k not in ("bx", "cx")}
+    assert contract(isl) == contract(asm), f"({x1},{y1})->({x2},{y2}): {isl} != {asm}"
+    got = asm["ax"] | (asm["dx"] << 16)               # long result in DX:AX
+    from simant.recovered.gameplay import get_dis
+    assert got == dist == get_dis(x1, y1, x2, y2)
+
+
 def _run_issameplane(with_island, plane, current):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False

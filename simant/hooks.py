@@ -1081,6 +1081,72 @@ def _make_getmap_island(machine):
     return island
 
 
+# -- _GetDir (seg5:10CC) — 8-way compass direction from point 1 to point 2 -----
+# Pure leaf.  bx = dx = x2-x1 and dx(reg) = dy = y2-y1 are the loaded deltas
+# (clobbered); ax=result (0..8); cx/si/di/es/ds/bp preserved.
+GETDIR_SEG_INDEX = 5
+GETDIR_OFF = 0x10CC
+GETDIR_SIG = bytes.fromhex("558bec8b560c2b56088b5e0a2b5e0675190bd275")
+
+
+def _make_getdir_island(machine):
+    from .recovered.gameplay import get_dir
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        x1 = m.rw(ss, (sp + 4) & 0xFFFF)
+        y1 = m.rw(ss, (sp + 6) & 0xFFFF)
+        x2 = m.rw(ss, (sp + 8) & 0xFFFF)
+        y2 = m.rw(ss, (sp + 0x0A) & 0xFFFF)
+        ex = (x2 - x1) & 0xFFFF                       # 16-bit deltas (the ASM subs)
+        ey = (y2 - y1) & 0xFFFF
+        s.ax = get_dir(0, 0, _sx(ex), _sx(ey))        # classify by the signed delta
+        s.bx = ex                                     # reg residue: bx=dx, dx=dy
+        s.dx = ey
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+# -- _GetDis (seg5:1122) — squared distance between two points (returns DX:AX) --
+# The contract is the 32-bit result in DX:AX; SI/DI/BP/DS/ES are preserved.  BX
+# and CX are left holding the C long-multiply helper's internal scratch (the same
+# caller-unobserved residue __aFuldiv's oracle excludes), so the island doesn't
+# fabricate them — the A/B oracle checks the contract, not the scratch.
+GETDIS_SEG_INDEX = 5
+GETDIS_OFF = 0x1122
+GETDIS_SIG = bytes.fromhex("558bec57568b7e088b760c8bc62bc799525052509a6e")
+
+
+def _make_getdis_island(machine):
+    from .recovered.gameplay import get_dis
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        x1 = m.rw(ss, (sp + 4) & 0xFFFF)
+        y1 = m.rw(ss, (sp + 6) & 0xFFFF)
+        x2 = m.rw(ss, (sp + 8) & 0xFFFF)
+        y2 = m.rw(ss, (sp + 0x0A) & 0xFFFF)
+        ex, ey = _sx((x2 - x1) & 0xFFFF), _sx((y2 - y1) & 0xFFFF)
+        total = get_dis(0, 0, ex, ey) & 0xFFFFFFFF    # dx*dx + dy*dy
+        s.ax, s.dx = total & 0xFFFF, (total >> 16) & 0xFFFF
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsNotBarrier (seg5:94A0) — is this tile passable for ant movement? -------
 # Same world-flag seam as _IsLessThanHole (selector [0xC4AC], flag [0x9B6E]):
 # not-a-barrier when tile <= 0x5F inside, <= 0x50 outside.  Clobbers bx (=arg)
@@ -2015,6 +2081,10 @@ _ISLANDS = [
      lambda machine, off: _make_islessthanhole_island(machine), "_IsLessThanHole"),
     (ISSAMEPLANE_SEG_INDEX, ISSAMEPLANE_OFF, ISSAMEPLANE_SIG,
      lambda machine, off: _make_issameplane_island(machine), "_IsSamePlane"),
+    (GETDIR_SEG_INDEX, GETDIR_OFF, GETDIR_SIG,
+     lambda machine, off: _make_getdir_island(machine), "_GetDir"),
+    (GETDIS_SEG_INDEX, GETDIS_OFF, GETDIS_SIG,
+     lambda machine, off: _make_getdis_island(machine), "_GetDis"),
     (ISNOTBARRIER_SEG_INDEX, ISNOTBARRIER_OFF, ISNOTBARRIER_SIG,
      lambda machine, off: _make_isnotbarrier_island(machine), "_IsNotBarrier"),
     (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
@@ -2064,7 +2134,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 58
+EXPECTED_ISLAND_COUNT = 60
 
 
 def install(machine) -> int:
