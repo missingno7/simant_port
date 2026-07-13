@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.49) — implemented EnumChildWindows (USER.55); new null-proc frontier
+- FRONTIER (from `pypy scripts/play.py --record cold_nohooks2 --no-hooks`): a
+  Win16ApiGap `USER.55` at instr 427,756,629.  Identified it (via the crash
+  snapshot's stack + the thunk table) as EnumChildWindows(hWndParent=0x118,
+  lpEnumFunc=0100:1C38, lParam=0) — the pascal-order args put the FARPROC at the
+  2nd slot; the callback is EnumChildProc(hwnd, lParam) (retf 6).  SimAnt uses it
+  to walk its 7 leaf child windows and InvalidateRect(child, NULL, FALSE) each.
+- IMPLEMENTED in win16_re (482351f, submodule bumped): EnumChildWindows over
+  _z_children in top-to-bottom Z-order, callback via call_far, early-stop on a
+  FALSE return; +2 game-free tests.  win16_re 126.  Resuming the crash snapshot
+  now runs the callback for every child, returns, and advances ~926K instrs past
+  the gap.
+- NEW FRONTIER (deeper, journalled for next time): ~926K instrs later the game
+  does `lcall [bp-4]` at seg2(GR):9DB1 through a NULL far pointer -> executes
+  garbage in segment 0 -> INT3 at 0000:0601.  The local [bp-4] holds a proc
+  pointer that our framework left null.  NOTE: observed from a HEADLESS snapshot
+  RESUME (interactive=False), which the loader warns can differ from a live run
+  (clock/paint pacing) — reproduce fresh from `cold_nohooks2` before diagnosing;
+  it may be a different missing proc-pointer setup rather than a live crash.
+
 ## 2026-07-13 (cont.48) — recovered _GetMap: the keystone map-cell accessor
 - RECOVERED `_GetMap` (seg5:60E2), the map accessor the whole map-query family
   builds on.  This maps out the world storage: THREE plane arrays packed in
