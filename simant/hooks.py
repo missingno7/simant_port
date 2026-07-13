@@ -782,6 +782,144 @@ def _make_innestbounds_island(machine):
     return island
 
 
+# -- _RIsItDirt (seg5:26C4) — red-colony dirt test (wider than _IsItDirt) ------
+# AX=1 for 0x20..0x2F or >= 0x4F (signed), else 0.  dx = the loaded word arg;
+# bp/bx/cx/si/di/es/ds preserved.
+RISITDIRT_SEG_INDEX = 5
+RISITDIRT_OFF = 0x26C4
+RISITDIRT_SIG = bytes.fromhex("558bec8b560683fa207d0533c0c9cb9083fa")
+
+
+def _make_risitdirt_island(machine):
+    from .recovered.gameplay import r_is_it_dirt
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        s.ax = r_is_it_dirt(_sx(arg))
+        s.dx = arg                                    # dx = the loaded arg
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+# -- _IsItNFood (seg5:5F64) — is this the in-nest food band (0x10..0x13)? ------
+# AX=1/0; dx = the loaded word arg; bp/bx/cx/si/di/es/ds preserved.
+ISITNFOOD_SEG_INDEX = 5
+ISITNFOOD_OFF = 0x5F64
+ISITNFOOD_SIG = bytes.fromhex("558bec8b560683fa107c0b83fa137f06b801")
+
+
+def _make_isitnfood_island(machine):
+    from .recovered.gameplay import is_it_nfood
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        s.ax = is_it_nfood(_sx(arg))
+        s.dx = arg                                    # dx = the loaded arg
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+# -- _IsThisEgg (seg5:5EC8) — is this life-grid marker an egg/brood stage? -----
+# Masks the low byte to 7 bits (high bit 0x80 is a separate flag) and tests
+# 1..7.  dx = arg & 0x7F (dl loaded, then AND clears dh); ax=result; the rest
+# preserved.
+ISTHISEGG_SEG_INDEX = 5
+ISTHISEGG_OFF = 0x5EC8
+ISTHISEGG_SIG = bytes.fromhex("558bec8a560683e27f83fa017c0a83fa077f")
+
+
+def _make_isthisegg_island(machine):
+    from .recovered.gameplay import is_this_egg
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        s.ax = is_this_egg(arg & 0xFF)                # only the low byte is read
+        s.dx = arg & 0x7F                             # dl = arg_lo, then AND 0x7F
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+# -- _IsThisGrass (seg5:5EE4) — grass on the yard planes (plane>=2, 0x1C..0x1F) -
+# Two word args (plane, tile).  dx is loaded (= tile) ONLY when plane>=2; when
+# plane<2 the routine returns before touching dx, so dx is preserved.
+ISTHISGRASS_SEG_INDEX = 5
+ISTHISGRASS_OFF = 0x5EE4
+ISTHISGRASS_SIG = bytes.fromhex("558bec837e06027c138b560883fa1c7c0b83fa1f")
+
+
+def _make_isthisgrass_island(machine):
+    from .recovered.gameplay import is_this_grass
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        tile_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        plane = _sx(plane_w)
+        s.ax = is_this_grass(plane, _sx(tile_w))
+        if plane >= 2:                                # dx loaded only on this path
+            s.dx = tile_w
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+# -- _IsThisPebble (seg5:5F32) — pebble on yard (0x30..0x31) or nest (0x51..0x53) -
+# Two word args (plane, tile).  dx = plane on entry, then reloaded to tile on
+# both the plane>1 and plane==1 paths; on the plane<=0 path dx keeps plane-1
+# (the `dec dx` residue).  ax=result; the rest preserved.
+ISTHISPEBBLE_SEG_INDEX = 5
+ISTHISPEBBLE_OFF = 0x5F32
+ISTHISPEBBLE_SIG = bytes.fromhex("558bec8b560683fa017f154a751f8b560883fa51")
+
+
+def _make_isthispebble_island(machine):
+    from .recovered.gameplay import is_this_pebble
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        tile_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        plane = _sx(plane_w)
+        s.ax = is_this_pebble(plane, _sx(tile_w))
+        s.dx = tile_w if plane >= 1 else (plane_w - 1) & 0xFFFF
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1622,6 +1760,16 @@ _ISLANDS = [
      lambda machine, off: _make_innestbounds_island(machine), "_InNestBounds"),
     (ISITDIRT_SEG_INDEX, ISITDIRT_OFF, ISITDIRT_SIG,
      lambda machine, off: _make_isitdirt_island(machine), "_IsItDirt"),
+    (RISITDIRT_SEG_INDEX, RISITDIRT_OFF, RISITDIRT_SIG,
+     lambda machine, off: _make_risitdirt_island(machine), "_RIsItDirt"),
+    (ISITNFOOD_SEG_INDEX, ISITNFOOD_OFF, ISITNFOOD_SIG,
+     lambda machine, off: _make_isitnfood_island(machine), "_IsItNFood"),
+    (ISTHISEGG_SEG_INDEX, ISTHISEGG_OFF, ISTHISEGG_SIG,
+     lambda machine, off: _make_isthisegg_island(machine), "_IsThisEgg"),
+    (ISTHISGRASS_SEG_INDEX, ISTHISGRASS_OFF, ISTHISGRASS_SIG,
+     lambda machine, off: _make_isthisgrass_island(machine), "_IsThisGrass"),
+    (ISTHISPEBBLE_SEG_INDEX, ISTHISPEBBLE_OFF, ISTHISPEBBLE_SIG,
+     lambda machine, off: _make_isthispebble_island(machine), "_IsThisPebble"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,

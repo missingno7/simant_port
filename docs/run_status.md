@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.45) — recovered the seg5 tile-classification predicate family
+- Continued gameplay-core recovery (pivot to sim logic).  Profiled the `cold`
+  hooks replay: dominated by pacing-spin (GR!_WaitedEnough/_TickCount), the ant
+  editor (ANTEDIT seg3) and font rendering (SIMTWO seg7) — it doesn't exercise
+  the ant sim hot, so byte-exact recovery uses the A/B oracle over crafted inputs
+  rather than a hot-loop profile.
+- RECOVERED 5 pure tile-classification predicates in recovered/gameplay.py, each
+  an island + byte-exact A/B oracle (island vs ASM, and ASM vs recovered Python):
+    _RIsItDirt   (seg5:26C4)  dirt = 0x20..0x2F or >=0x4F  (red-colony; wider
+                              than _IsItDirt's 0x20..0x2E)
+    _IsItNFood   (seg5:5F64)  in-nest food band 0x10..0x13
+    _IsThisEgg   (seg5:5EC8)  low byte & 0x7F in 1..7 (high bit is a sim flag)
+    _IsThisGrass (seg5:5EE4)  plane>=2 and tile 0x1C..0x1F
+    _IsThisPebble(seg5:5F32)  plane>1 -> 0x30..0x31; plane==1 -> 0x51..0x53
+  The dx-clobber residue is replicated exactly per routine (e.g. _IsThisGrass
+  leaves dx untouched when plane<2 because the ASM returns before loading it;
+  _IsThisPebble keeps plane-1 on the plane<=0 path).  All compares signed.
+- Islands 46 -> 51; the 28 install-count asserts updated.  Suites: win16_re 124,
+  simant 401 (+45 oracle cases).
+- NEXT candidates (same seg5 leaf family): _IsThisFood (5F04, tail-calls
+  _IsItFood so needs the world-state seam), _TileCanBeMovedOn/_IsNotBarrier/
+  _IsItDigable/_IsLiftable (9342..97CA), and the stateful _IsItHole (6:2CC0,
+  reads the map array) once a map-backed A/B harness exists.
+
 ## 2026-07-13 (cont.44) — cache panic FIXED: GMEM_DISCARDABLE + lock counts (win16_re 4e91095)
 - FIXED the `'no memory over 0 in age!'` fatal panic (repro: the owner's 46-hook
   `cold` demo, deterministic at instr 193,254,862).  Root cause was a win16_re
