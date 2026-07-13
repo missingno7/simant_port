@@ -1,5 +1,26 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.50) — null-proc frontier RESOLVED: it was a snapshot-fidelity bug
+- DIAGNOSED the cont.49 null far-call (`lcall [bp-4]` at GR seg2:9DB1).  Both
+  indirect calls come from GetProcAddress (thunk 0x1ec = KERNEL.50); the game
+  looks up MMSYSTEM's digital-audio procs — `waveOutClose` (null-checked) then
+  `waveOutOpen` (NOT null-checked, called at 9DB1).  Our GetProcAddress returned
+  NULL for waveOutOpen because `hinst=0x0100`'s module wasn't in `libraries`.
+- ROOT CAUSE: not a live crash — a SNAPSHOT artifact.  load_snapshot rebuilds a
+  fresh API registry, dropping the `libraries` map (LoadLibrary name->HINSTANCE),
+  which GetProcAddress keys off.  The game's stored FARPROC then far-called NULL.
+  Proof: seeding `libraries={MMSYSTEM.DLL:0x0100}` in the resume makes
+  GetProcAddress('waveOutOpen') return the stub thunk (0x00600304) and the game
+  advances +5.8M instrs past 9DB1 (then only the known mid-callback-stack
+  OrphanReturnError, another resume-only artifact).  Live, waveOutOpen resolves
+  to the BADDEVICEID stub and the game backs off — no crash.  (So the frontier
+  the USER actually hit was USER.55, already fixed in cont.49.)
+- FIXED (win16_re 7d35282, submodule bumped): vmsnap persists+restores
+  `libraries` in state.json (backward compatible).  +1 simant round-trip test
+  (test_snapshot.py).  Suites: win16_re 126, simant 456.
+- The waveOut* digital-sound path itself remains a safe stub (BADDEVICEID); a
+  real PCM backend is a future phase only if a game path needs it.
+
 ## 2026-07-13 (cont.49) — implemented EnumChildWindows (USER.55); new null-proc frontier
 - FRONTIER (from `pypy scripts/play.py --record cold_nohooks2 --no-hooks`): a
   Win16ApiGap `USER.55` at instr 427,756,629.  Identified it (via the crash
