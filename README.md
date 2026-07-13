@@ -23,6 +23,75 @@ is only accepted when it reproduces the original's behaviour **byte-for-byte**.
 All SimAnt-specific knowledge lives in `simant/`; `win16_re/` never imports from
 it.
 
+## Recovery map
+
+SimAnt's simulation is a call tree: colony **orchestrators** drive per-ant
+**behaviors**, which lean on shared **helpers** and, at the bottom, small **leaf**
+predicates and RNG. Recovery proceeds bottom-up — the load-bearing foundation is
+byte-exact, and the frontier is now the behavior layer that sits on top of it.
+The graph below is a real slice of the `seg5`/`seg6`/`seg7` call graph (every edge
+is an actual call); green nodes are proven byte-exact against the original ASM, an
+amber ring marks the most-called routines, dashed nodes are not recovered yet.
+
+```mermaid
+flowchart TD
+  subgraph L1["orchestrators"]
+    das["_DoAntSim"]
+    dab["_DoAntSimB"]
+    daa["_DoAntSimA"]
+  end
+  subgraph L2["behaviors — the frontier"]
+    dnb["_DoNestAntB"]
+    dfor["_DoForageAnt"]
+    gbd["_GetBestDir"]
+    ddig["_DoDigInB"]
+  end
+  subgraph L3["helpers"]
+    gmap["_GetMap"]
+    ihole["_IsItHole"]
+    gdis["_GetDis"]
+    glife["_GetLife"]
+    inobs["_IsNotObstacle"]
+  end
+  subgraph L4["leaves — the foundation"]
+    iva["_IsValidA"]
+    idirt["_IsItDirt"]
+    iyel["_IsYellowAnt"]
+    ifood["_IsItFood"]
+    ipeb["_IsThisPebble"]
+    srand["_SRand*"]
+  end
+  das --> dab & daa
+  dab --> dnb
+  daa --> dfor & gbd
+  dnb --> ddig & iyel & srand
+  dfor --> iva & iyel & srand
+  gbd --> gmap & gdis & glife & inobs & ipeb
+  ddig --> idirt & iyel
+  gmap --> iva
+  ihole --> iva & ifood
+
+  classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
+  classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
+  classDef front fill:#5c564b,stroke:#a99e86,color:#f3ece0,stroke-dasharray:5 4;
+  class gmap,ihole,ifood,ipeb done;
+  class iva,idirt,iyel,srand load;
+  class das,dab,daa,dnb,dfor,gbd,ddig,gdis,glife,inobs front;
+```
+
+Coverage by segment — named routines proven byte-exact (an island + A/B oracle):
+
+| Segment | Module | Role | Recovered |
+|---------|--------|------|:---------:|
+| `seg5` | SIMONE | sim primitives — map, life-grid, RNG, predicates | 27 / 169 |
+| `seg6` | SIMANT1 | ant AI — forage, dig, nest, fight behaviors | 2 / 123 |
+| `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 |
+| `seg4` | `_TEXT` | C runtime + tile expanders (MakeTable / Xfer) | 23 / 248 |
+
+The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88
+callers, `_IsYellowAnt` 28, `_IsValidA` 26, `_IsItDirt` 15, `_GetMap` 10. Regenerate
+the underlying call-graph data with `python -m simant.probes.callgraph`.
+
 ## Setup
 
 ```
