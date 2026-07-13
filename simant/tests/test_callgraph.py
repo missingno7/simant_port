@@ -59,3 +59,21 @@ def test_near_calls_resolve_to_symbols_not_noise(routines):
 def test_every_code_segment_yields_routines(routines):
     segs = {seg for seg, _ in routines}
     assert segs == {1, 2, 3, 4, 5, 6, 7}
+
+
+def test_native_port_domain_classification(routines):
+    # The core/presentation/runtime split drives the honest native-port metric,
+    # so pin a representative routine of each — the simulation is core, the tile
+    # builders and window system are presentation, the C helpers are runtime.
+    from simant.probes.callgraph import classify_domain
+    assert routines[(5, 0x60E2)].domain == "core"          # _GetMap
+    assert routines[(6, 0x0000)].domain == "core"          # _DoAntSim
+    assert routines[(5, 0x158A)].domain == "core"          # _SRand1 (determinism)
+    assert routines[(4, 0x4674)].domain == "presentation"  # _Windows_MakeTable4x4
+    assert routines[(7, 0xC256)].domain == "presentation"  # _win_IsWinOpen
+    assert classify_domain(2, "_grBlt") == "presentation"  # GR is all render
+    assert classify_domain(4, "__aFuldiv") == "runtime"    # compiler helper
+    assert classify_domain(4, "_Unpack") == "runtime"      # codec
+    # every routine lands in exactly one of the three roles
+    assert all(r.domain in ("core", "presentation", "runtime")
+               for r in routines.values())

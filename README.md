@@ -92,6 +92,32 @@ The recovered routines are deliberately the load-bearing ones — `_SRand1` has 
 callers, `_IsYellowAnt` 28, `_IsValidA` 26, `_IsItDirt` 15, `_GetMap` 10. Regenerate
 the underlying call-graph data with `python -m simant.probes.callgraph`.
 
+### What gets lifted vs. what gets replaced
+
+The endgame is a **VM-less native port** (see [`docs/vmless_port.md`](docs/vmless_port.md)):
+the emulator becomes an oracle, and recovered source runs the game directly. That
+makes the game/backend boundary the thing that matters, and there are two:
+
+- **The Win16 OS layer** (`win16_re/` — KERNEL/USER/GDI/SOUND/MMSYSTEM, the VM,
+  windowing, audio) is the backend. A native port *replaces* it wholesale; nothing
+  here is "lifted".
+- **Inside the game**, each routine is either **core** (the deterministic
+  simulation a native backend must run byte-exact — ant AI, map/life grids, RNG),
+  **presentation** (tile expanders, the window system, the editor UI — a native
+  backend *reimplements* these), or **runtime** (C-runtime/codec helpers the
+  language provides). The litmus test: *simulation decides where the ants are and
+  what they choose; presentation decides how that looks.*
+
+So the honest native-port metric is **core routines recovered**, not the flat island
+count — presentation islands (recovered early because they were hot) are workbench
+scaffolding a native backend discards. `python -m simant.probes.callgraph` reports it:
+
+| Role | Recovered / total | In the native port |
+|------|:-----------------:|--------------------|
+| **core** | **33 / 583** | runs unchanged — *the denominator* |
+| presentation | 18 / 490 | reimplemented natively |
+| runtime | 9 / 240 | provided by Python |
+
 ## Setup
 
 ```

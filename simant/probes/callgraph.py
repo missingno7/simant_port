@@ -33,6 +33,40 @@ from win16.callgraph import Call, calls_in_range
 CODE_SEGS = (1, 2, 3, 4, 5, 6, 7)
 
 
+# -- native-port role -------------------------------------------------------
+# The eventual VM-less port RUNS the `core` simulation unchanged, REIMPLEMENTS
+# `presentation` (rendering / windowing / the editor UI), and gets `runtime`
+# (C-runtime / codec helpers) from Python.  So `core` is the real native-port
+# denominator; a recovered presentation island is workbench scaffolding that a
+# native backend discards.  Triage-grade, like `classification`: module default
+# + a name-prefix override.
+_PRESENTATION_PREFIXES = (
+    "_win", "_font", "_db_", "_ch_", "_gr", "_hanim", "_ms", "_snd", "_clip",
+    "_ed", "_Draw", "_Ribbon", "_Gauge", "_Balloon", "_Overlay", "_Mini",
+    "_Bitmap", "_Mask", "_Icon", "_Cursor", "_DIB", "_Blt", "_Blit",
+)
+_TEXT_PRESENTATION = ("_Windows", "_Xfer", "_Draw", "_Copy", "_MoveText",
+                      "_DoCalcTile", "_os_Clip", "_os_Blt")
+_RUNTIME_PREFIXES = ("_output", "_fp", "_exit", "_Prof", "_NMSG", "_LD",
+                     "_cintr", "_ctran", "_tran", "_str", "_mem")
+_RUNTIME_NAMES = ("_Unpack", "_exchange", "_FlipWord", "_FlipLong",
+                  "_XFlipLong", "bytecopy", "_CopyName")
+
+
+def classify_domain(seg: int, name: str) -> str:
+    """core | presentation | runtime — a routine's role in the native port."""
+    if seg in (2, 3):                       # GR (graphics), ANTEDIT (editor UI)
+        return "presentation"
+    if name.startswith("__") or name.startswith(_RUNTIME_PREFIXES) \
+            or name in _RUNTIME_NAMES:
+        return "runtime"
+    if seg == 4:                            # _TEXT: C runtime save its builders
+        return "presentation" if name.startswith(_TEXT_PRESENTATION) else "runtime"
+    if name.startswith(_PRESENTATION_PREFIXES):
+        return "presentation"
+    return "core"                           # the simulation (seg1/5/6/7)
+
+
 @dataclass(frozen=True)
 class Routine:
     seg: int
@@ -45,6 +79,11 @@ class Routine:
     @property
     def size(self) -> int:
         return self.end - self.off
+
+    @property
+    def domain(self) -> str:
+        """Native-port role: core | presentation | runtime."""
+        return classify_domain(self.seg, self.name)
 
     @property
     def classification(self) -> str:
@@ -119,10 +158,25 @@ def main(argv: list[str]) -> None:
               f"{counts['api']:>5} {counts['coupled']:>8} "
               f"{counts['indirect']:>9}")
 
+    # Native-port progress: recovered vs total, by role.  Only `core` counts
+    # toward the VM-less endgame; presentation islands are workbench scaffolding.
+    try:
+        from .. import hooks
+        recovered = {t[4] for t in hooks._ISLANDS}
+    except Exception:                       # noqa: BLE001 — probe still useful
+        recovered = set()
+    print("\nnative-port progress (recovered / total, by role):")
+    for dom in ("core", "presentation", "runtime"):
+        row = [r for r in routines if r.domain == dom]
+        rec = sum(1 for r in row if r.name in recovered)
+        note = "  <- the native-port denominator" if dom == "core" else ""
+        print(f"  {dom:12} {rec:3d} / {len(row):4d}{note}")
+
     print("\nleaf queue (smallest first — the next recoveries):")
     for r in sorted(by_class.get("leaf", []), key=lambda r: r.size)[:30]:
         noisy = f"  [{r.anomalies} anomalies]" if r.anomalies else ""
-        print(f"  {r.size:5d}B  seg{r.seg}:{r.off:04X}  "
+        dom = r.domain[0].upper()
+        print(f"  [{dom}] {r.size:5d}B  seg{r.seg}:{r.off:04X}  "
               f"{module_name(r.seg)}!{r.name}{noisy}")
 
 

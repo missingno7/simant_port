@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.56) — native-port role classifier: an honest progress metric
+- Clarified the game/backend boundary for the VM-less endgame.  TWO boundaries:
+  (1) win16_re (the Win16 OS layer) is the backend a native port REPLACES
+  wholesale; (2) inside the game each routine is core (the sim a native backend
+  RUNS byte-exact) / presentation (render/window/editor it REIMPLEMENTS) /
+  runtime (C-runtime the language provides).
+- Added `classify_domain(seg,name)` to simant/probes/callgraph.py + a `Routine.domain`
+  property; `python -m simant.probes.callgraph` now reports native-port progress by
+  role.  KEY INSIGHT: only `core` counts toward the endgame — the honest metric is
+  **core 33 / 583**, not the flat 62-island count (presentation 18/490 + runtime
+  9/240 are workbench scaffolding a native backend discards).  Rule = module default
+  (GR/ANTEDIT presentation, _TEXT runtime save its tile builders) + name-prefix
+  override (win/font/db/ch/... presentation).  +1 test pinning the split.
+- README "Recovery map" gained a "what gets lifted vs replaced" subsection + the
+  by-role table.  Suite: simant 527.
+- NEXT for the native goal: route the recovered SIM-CORE islands (map/life-grid,
+  predicates) through simant/bridge/dgroup_view.py so state ownership migrates, not
+  just logic — every core routine recovered THROUGH the view is native-runnable.
+
 ## 2026-07-14 (cont.55) — recovered _SGetDis (spider Manhattan distance)
 - RECOVERED `_SGetDis` (seg5:56BA), a clean geometry leaf: |x2-x1| + |y2-y1| (the
   cheap Manhattan metric the spider AI uses vs get_dis's squared-Euclidean).  Pure
