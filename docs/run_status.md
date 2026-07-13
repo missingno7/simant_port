@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.40) — synergy: win16.tick_demo seam over dos_re.tick_demo
+- Owner: "kick the can down the hill simant_port -> win16_re -> dos_re".  Bumped
+  dos_re e19bb1a -> 32c7f71 (+3, PM-only: sblaster dma_tc snapshot + pm demo
+  determinism; shared 16-bit modules byte-untouched); win16_re 6a54c23.
+- Built the REUSABLE win16-layer half of the tick-demo adoption (cont.38 synergy
+  #1): `win16/tick_demo.py` (win16_re ce43bd3) — re-exports dos_re.tick_demo's
+  engine (a win16 machine's `.cpu` IS the dos_re CPU8086, so `record_ticks(machine,
+  ...)` drives it with no shim) + `input_demo_drive`: the win16 recording drive
+  that replays a v4 input demo and turns DemoEnded into "drive done".  Game-free
+  unit tests (tests/test_tick_demo.py).  win16_re 115 green.
+- PROVEN end-to-end on SimAnt (scratch smoke, not committed — needs the EXE +
+  cold_nohooks): `record_ticks` captured **537 sim ticks** over the cold_nohooks
+  drive (seed = full 4MB image, 537 unique digests), save/load round-trips.
+- SEAM FOUND: the SimAnt sim tick = **`SIMANT!MYTIMERFUNC` (seg1:2440)** — the
+  WM_TIMER TimerProc body (dispatched via the 0100:2440 callback thunk, ~538×
+  over cold_nohooks).  This is the tick-demo adapter's seed_ip/commit_ip seam.
+- NEXT (task #17, the game-specific half — bigger): observe callbacks at input-
+  consumption sites, a GetTickCount sideband channel, and THE gameplay-owned
+  DGROUP region + exclusion mask (the real RE piece), plus a native tick() once
+  NativeGameState can advance one sim tick.  Then one tick-demo recording
+  verifies across every hook config AND the VM-less native core — the fix for the
+  v4 cross-config desync ([[demos-are-hook-config-specific]]) and the engine-flip
+  exit condition.
+
 ## 2026-07-13 (cont.39) — dos_re bumped +28 commits; no shared-module changes
 - Bumped dos_re af0db41 -> e19bb1a (28 commits).  ALL of it is the 32-bit PM
   stack (pm_player audio/demo bring-up, sblaster DMA, cpu386 REP fast paths,
