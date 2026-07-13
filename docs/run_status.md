@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.44) — cache panic FIXED: GMEM_DISCARDABLE + lock counts (win16_re 4e91095)
+- FIXED the `'no memory over 0 in age!'` fatal panic (repro: the owner's 46-hook
+  `cold` demo, deterministic at instr 193,254,862).  Root cause was a win16_re
+  memory-manager gap, not a hook bug: the global heap stubbed GlobalFlags -> 0 and
+  GlobalLock/Unlock as no-ops.
+- MECHANISM (traced in ASM): SimAnt's `_ch_` tile chunk-heap (150-entry cache)
+  evicts the oldest block that is BOTH discardable AND unlocked, gated on
+  GlobalFlags: seg2:5660 returns 3 iff `GlobalFlags & 0x0100` (GMEM_DISCARDABLE),
+  seg2:5492 returns 0 iff discardable AND lock-count (low byte) == 0.  With the
+  stubs every tile reported flags=0 -> non-discardable -> NO eviction candidate ->
+  panic on the 151st distinct tile.
+- KEY EVIDENCE: instrumented the live replay — GlobalAlloc is called 28,591x with
+  flags=0x0042 (MOVEABLE|ZEROINIT, never discardable), then **GlobalReAlloc is
+  called 2,419x with flags=0x0180 (GMEM_MODIFY|GMEM_DISCARDABLE)** to re-mark the
+  tiles discardable in place.  Our GlobalReAlloc GMEM_MODIFY path did `return
+  handle` and dropped the attribute change on the floor -> identical instr count
+  before/after a first (irrelevant) discardable-on-alloc attempt.
+- FIX (win16_re 4e91095, submodule bumped): HugeHeap tracks a per-handle lock
+  count (GlobalFlags low byte, saturating) + GMEM_DISCARDABLE set; GlobalAlloc
+  passes discardable; GlobalReAlloc(GMEM_MODIFY) toggles it in place;
+  GlobalLock/Unlock count; GlobalFlags reports count|discardable.  +2 game-free
+  hugeheap unit tests.  Stays game-agnostic (documented Win16 contract).
+- VERIFIED: replaying `cold` now runs CLEAN past 193.25M to 209.4M (DemoEnded,
+  demo exhausted) — panic gone.  Suites green: win16_re 124, simant 356.
+- RE-BASELINE (expected): cold_nohooks replay digest shifts 74bf3228... ->
+  2abf3ce5... (199,612,542 -> 199,612,993 instrs, +451).  Cause is the now-real
+  GlobalUnlock return (TRUE-while-locked vs the old constant 0) + GlobalFlags
+  reporting lock state; the no-hooks session runs clean to completion with sane
+  state.  No committed oracle asserted the old digest (suite green); the new
+  behaviour is faithful Win16 semantics, so this is a legitimate re-baseline, not
+  a weakened oracle.
+- STILL OPEN (unchanged): tick-demo clock-read misalignment at ~tick 91 (#17,
+  option (b) — advance the boundary to after MYTIMERFUNC's retf); the interactive
+  CallbackOverrun busy-wait (0100:2440) seen in the owner's other `cold` run is a
+  separate sim-tick catch-up spin, not this crash.
+
 ## 2026-07-13 (cont.43) — tick-demo clock sideband; structural blocker isolated
 - Continued #17: added the CLOCK SIDEBAND (win16_re 12164f8) — record every
   GetTickCount the game consumes (bucketed per tick, deltas off the boundary ms),
