@@ -273,3 +273,13 @@ def get_dis(x1: int, y1: int, x2: int, y2: int) -> int:
     dx = x2 - x1
     dy = y2 - y1
     return dx * dx + dy * dy
+
+
+def s_get_dis(x1: int, y1: int, x2: int, y2: int) -> int:
+    """Manhattan (taxicab) distance between point 1 and point 2.
+
+    Recovered from `_SGetDis` (SIMANTW.SYM seg5:56BA): |x2 - x1| + |y2 - y1| — the
+    cheap distance metric the spider AI uses instead of the squared-Euclidean
+    `get_dis` (the S prefix marks the spider routines).
+    """
+    return abs(x2 - x1) + abs(y2 - y1)

@@ -1874,6 +1874,20 @@ def test_getdir_island_matches_asm(x1, y1, x2, y2, d):
     assert asm["ax"] == d == get_dir(x1, y1, x2, y2)
 
 
+@pytest.mark.parametrize("x1,y1,x2,y2,d", [
+    (5, 5, 5, 5, 0), (0, 0, 3, 4, 7), (10, 10, 7, 6, 7), (0, 0, 100, 0, 100),
+    (-5, -5, 5, 5, 20), (0x7F, 0, 0, 0x3F, 0x7F + 0x3F), (3, 8, 3, 2, 6),
+])
+def test_sgetdis_island_matches_asm(x1, y1, x2, y2, d):
+    asm = _run_predicate(hooks.SGETDIS_SEG_INDEX, hooks.SGETDIS_OFF,
+                         "_SGetDis", False, (x1, y1, x2, y2))
+    isl = _run_predicate(hooks.SGETDIS_SEG_INDEX, hooks.SGETDIS_OFF,
+                         "_SGetDis", True, (x1, y1, x2, y2))
+    assert isl == asm, f"({x1},{y1})->({x2},{y2}): island {isl} != asm {asm}"
+    from simant.recovered.gameplay import s_get_dis
+    assert asm["ax"] == d == s_get_dis(x1, y1, x2, y2)
+
+
 @pytest.mark.parametrize("x1,y1,x2,y2,dist", [
     (0, 0, 3, 4, 25), (5, 5, 5, 5, 0), (5, 5, 8, 9, 25), (10, 10, 7, 6, 25),
     (0, 0, 100, 0, 10000), (0, 0, 0, 120, 14400), (-5, -5, 5, 5, 200),

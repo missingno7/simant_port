@@ -83,7 +83,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 
 | Segment | Module | Role | Recovered |
 |---------|--------|------|:---------:|
-| `seg5` | SIMONE | sim primitives — map, life-grid, RNG, predicates | 30 / 169 |
+| `seg5` | SIMONE | sim primitives — map, life-grid, RNG, predicates | 31 / 169 |
 | `seg6` | SIMANT1 | ant AI — forage, dig, nest, fight behaviors | 2 / 123 |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 |
 | `seg4` | `_TEXT` | C runtime + tile expanders (MakeTable / Xfer) | 23 / 248 |

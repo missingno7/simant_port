@@ -1,5 +1,16 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.55) — recovered _SGetDis (spider Manhattan distance)
+- RECOVERED `_SGetDis` (seg5:56BA), a clean geometry leaf: |x2-x1| + |y2-y1| (the
+  cheap Manhattan metric the spider AI uses vs get_dis's squared-Euclidean).  Pure
+  s_get_dis; island residue ax=result, bx=|dx|, dx=|dy| (each abs'd via 16-bit
+  neg).  8 A/B cases.  Islands 61 -> 62.  Suite: simant 526, seg5 31/169.
+- Used the callgraph leaf-queue (`python -m simant.probes.callgraph`) to pick it:
+  the remaining seg5/6/7 unrecovered LEAVES are now mostly trivial stubs (2-4B) or
+  specialized (spider/list/window accessors); the high-value un-recovered routines
+  are COMPOUND (map+flag+branch) — _IsNotObstacle (5:94C6), _IsClearTile (5:5B2C),
+  _RandTurn (6:2A22, calls RNG + a turn table via es:[0xc32e]) — or the behaviors.
+
 ## 2026-07-14 (cont.54) — recovered _GetLife (life-grid accessor, _GetMap's twin)
 - RECOVERED `_GetLife` (seg5:6040), structurally identical to _GetMap but over the
   life-grid planes (DGROUP 0x68E8 yard / 0x88E8 / 0x98E8) with one extra rule: an

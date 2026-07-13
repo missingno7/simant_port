@@ -1187,6 +1187,41 @@ def _make_getdis_island(machine):
     return island
 
 
+# -- _SGetDis (seg5:56BA) — Manhattan distance between two points --------------
+# Pure leaf: |x2-x1| + |y2-y1| (the spider AI's cheap distance).  Residue:
+# ax=result, bx=|dx|, dx(reg)=|dy| (each abs'd in place with a 16-bit neg);
+# cx/si/di/es/ds/bp preserved.
+SGETDIS_SEG_INDEX = 5
+SGETDIS_OFF = 0x56BA
+SGETDIS_SIG = bytes.fromhex("558bec8b560c2b56088b5e0a2b5e067902f7db0b")
+
+
+def _make_sgetdis_island(machine):
+    from .recovered.gameplay import s_get_dis
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def _abs16(w):
+        return w if w < 0x8000 else (-w) & 0xFFFF     # in-place 16-bit neg
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        x1 = m.rw(ss, (sp + 4) & 0xFFFF)
+        y1 = m.rw(ss, (sp + 6) & 0xFFFF)
+        x2 = m.rw(ss, (sp + 8) & 0xFFFF)
+        y2 = m.rw(ss, (sp + 0x0A) & 0xFFFF)
+        ex, ey = (x2 - x1) & 0xFFFF, (y2 - y1) & 0xFFFF
+        s.ax = s_get_dis(0, 0, _sx(ex), _sx(ey)) & 0xFFFF
+        s.bx, s.dx = _abs16(ex), _abs16(ey)           # bx=|dx|, dx(reg)=|dy|
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsNotBarrier (seg5:94A0) — is this tile passable for ant movement? -------
 # Same world-flag seam as _IsLessThanHole (selector [0xC4AC], flag [0x9B6E]):
 # not-a-barrier when tile <= 0x5F inside, <= 0x50 outside.  Clobbers bx (=arg)
@@ -2127,6 +2162,8 @@ _ISLANDS = [
      lambda machine, off: _make_getdir_island(machine), "_GetDir"),
     (GETDIS_SEG_INDEX, GETDIS_OFF, GETDIS_SIG,
      lambda machine, off: _make_getdis_island(machine), "_GetDis"),
+    (SGETDIS_SEG_INDEX, SGETDIS_OFF, SGETDIS_SIG,
+     lambda machine, off: _make_sgetdis_island(machine), "_SGetDis"),
     (ISNOTBARRIER_SEG_INDEX, ISNOTBARRIER_OFF, ISNOTBARRIER_SIG,
      lambda machine, off: _make_isnotbarrier_island(machine), "_IsNotBarrier"),
     (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
@@ -2176,7 +2213,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 61
+EXPECTED_ISLAND_COUNT = 62
 
 
 def install(machine) -> int:
