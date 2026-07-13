@@ -1,5 +1,28 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.39) — dos_re bumped +28 commits; no shared-module changes
+- Bumped dos_re af0db41 -> e19bb1a (28 commits).  ALL of it is the 32-bit PM
+  stack (pm_player audio/demo bring-up, sblaster DMA, cpu386 REP fast paths,
+  dos4gw fixes, cfg32/emit32) — verified the shared 16-bit/win16-relevant
+  modules (cpu.py, memory.py, verification.py, lift/cfg+emit, tick_demo,
+  coverage, input_demo, snapshot) are byte-untouched between the pins.  Zero
+  risk; suites green (dos_re 366, win16_re 112, simant 356).  win16_re ec9106f.
+- Synergy findings (patterns, not code we can import directly):
+  1. **`pm_composition` — observable-state verifier for NON-LEAF routines**:
+     diff every byte EXCEPT the transient stack window [min_sp, entry_sp) and
+     skip register diffs (install only where result regs are unused).  This is
+     the contract our win16 verifier will need when recovering SimAnt's composed
+     sim routines (_DoAntSim/_DoForageAnt call helpers; clean recovered source
+     cannot reproduce callee stack spills byte-for-byte).  PM-bound impl (clones
+     a PM runtime); a win16 analog would sit on win16.verify.clone_machine.
+  2. cfg32/emit32 indirect-jump lifting (switch dispatchers lift as tail jumps)
+     is 32-bit-only; the 16-bit lifter liftverify.py uses did not gain it.
+     Porting that refusal-killer to lift/cfg.py+emit.py is upstream work to
+     request if SimAnt auto-lifting starts hitting jmp-table refusals.
+  3. The input_demo determinism fix (wall-clock-fired IRQ during record vs
+     replay) is pm_input_demo-side; win16's v4 GetTickCount reproduction already
+     handles our analog of that lesson.
+
 ## 2026-07-12 (cont.38) — dos_re bumped +30 commits; synergy assessment
 - Owner asked to update dos_re and look for win16_re synergies.  Bumped the
   nested submodule 58a1a51 -> af0db41 (30 commits); all three suites green
