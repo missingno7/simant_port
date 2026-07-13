@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.42) — tick-demo record/replay pair (hook-config-invariant); 91 ticks
+- Built the win16 hook-config-INVARIANT demo model (win16_re cae3550): keys input
+  to the GAME TICK (the sim WM_TIMER consumption), not the instruction count, so
+  ONE recording verifies identical gameplay under any hook config — the
+  deterministic comparison v4 cannot give ([[demos-are-hook-config-specific]]).
+  * `TickDemoRecorder` — taps every CONSUMED input msg (`is_input_message`:
+    keyboard/mouse + WM_SIZE/COMMAND/HSCROLL/VSCROLL, minus machine-derived
+    WM_CHAR) into per-tick buckets; each WM_TIMER closes a bucket (the boundary).
+  * `TickDemoDriver` — replays ON DEMAND in consumption order (no pre-injection,
+    no fetch-API coupling — both historical traps avoided); delivers the boundary
+    WM_TIMER when the game asks, INCLUDING the (0,0) any-scan peek the cold-start
+    modal spins on; serves GetTickCount from the recording; check-mode names the
+    first divergent tick.
+  * System taps behind `sysobj.tick_recorder`/`tick_driver`, guarded so v4 +
+    interactive are untouched (v4 replay digest byte-identical 74bf3228...).
+  * `scripts/tickdemo.py` — convert (v4->tick) / canonize (record per-tick
+    digests, no hooks) / verify (--hooks = the cross-config proof).
+  * 6 game-free unit tests; win16_re 121, simant 356 green.
+- PROVEN: convert captured 1584 ticks from cold_nohooks; the tick DRIVER now
+  traverses the real session (0 -> 91 ticks before diverging).
+- BLOCKER (task #17): at ~tick 91 the no-hooks canonize replay DIVERGES from the
+  recording (a runaway in _font_PrintStr -> seg7:ADE0 on drifted state).  Cause:
+  GetTickCount faithfulness — the synthetic within-tick clock (base_ms + a
+  32-calls/ms stall escape) does NOT reproduce the exact per-call GetTickCount
+  values the recording saw, so clock-dependent state (animation/blink timers,
+  tick-seeded RNG) drifts.  This is exactly dos_re.tick_demo's SIDEBAND case:
+  record the clock the game consumed and inject it.  NEXT: add GetTickCount as a
+  recorded per-tick sideband channel (capture at the read site; likely a small
+  fixed set of reads/tick), then re-run canonize to convergence.
+- Also: dos_re has a generic `step_probe` (trapped per-instance step observers) —
+  our scratch probes hand-roll this; adopt when next touching them.
+
 ## 2026-07-13 (cont.41) — numpy-for-win16 assessed (measured); EndPaint 1.7x
 - Owner: dos_re added a fast numpy renderer (7a4f7d8, 21x; policy 2169ebb "numpy
   first-class where it MEASURABLY wins") — is numpy usable for win16_re speedup?
