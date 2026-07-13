@@ -136,3 +136,27 @@ def is_valid_b(x: int, y: int) -> int:
     if not 0 <= x <= 0x3F:
         return 0
     return 1 if 0 <= y <= 0x3F else 0
+
+
+def is_less_than_hole(tile: int, inside: bool) -> int:
+    """Whether a tile value sits below the hole-tile range.
+
+    Recovered from `_IsLessThanHole` (SIMANTW.SYM seg5:9784): the world-state
+    inside/outside flag (the same flag `is_it_food` reads, so inside == flag set)
+    picks the hole threshold — inside the nest a tile is "less than hole" when it
+    is < 0x59; in the outside yard when it is < 0x50 (signed compare).  Returns
+    1 / 0.
+    """
+    threshold = 0x59 if inside else 0x50
+    return 1 if tile < threshold else 0
+
+
+def is_same_plane(plane: int, current_plane: int) -> int:
+    """Whether `plane` selects the currently active map plane.
+
+    Recovered from `_IsSamePlane` (SIMANTW.SYM seg5:97AA): a `plane` argument of
+    0 is treated as plane 1 (the default), then compared for equality against the
+    world-state current plane.  Returns 1 when they match, 0 otherwise.
+    """
+    p = 1 if plane == 0 else plane
+    return 1 if current_plane == p else 0

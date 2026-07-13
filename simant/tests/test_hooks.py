@@ -1786,6 +1786,77 @@ def test_isvalidb_island_matches_asm(x, y):
     assert isl == asm, f"({x},{y}): island {isl} != asm {asm}"
 
 
+# ---- world-state predicates: _IsLessThanHole / _IsSamePlane (seg5) ----------
+# These read DGROUP globals, so the harness sets ds=DGROUP and seeds the
+# world-state words (mirroring the _IsItFood seam).
+def _run_islessthanhole(with_island, tile, inside):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    m.mem.ww(DG, hooks.ISLESSTHANHOLE_WORLD_SEG_G, DG)       # world selector -> DGROUP
+    m.mem.ww(DG, hooks.ISITFOOD_INSIDE_FLAG_OFF, 1 if inside else 0)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISLESSTHANHOLE_SEG_INDEX], hooks.ISLESSTHANHOLE_OFF
+    sp = s.sp
+    for v in (tile, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsLessThanHole")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("inside", [False, True])
+@pytest.mark.parametrize("tile", [0x00, 0x4F, 0x50, 0x51, 0x58, 0x59, 0x5A,
+                                  0xFFFF])
+def test_islessthanhole_island_matches_asm(tile, inside):
+    asm = _run_islessthanhole(False, tile, inside)
+    isl = _run_islessthanhole(True, tile, inside)
+    assert isl == asm, f"tile={tile:#06x} inside={inside}: island {isl} != asm {asm}"
+    from simant.recovered.gameplay import is_less_than_hole
+    sx = tile - 0x10000 if tile & 0x8000 else tile
+    assert asm["ax"] == is_less_than_hole(sx, inside)
+
+
+def _run_issameplane(with_island, plane, current):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    m.mem.ww(DG, hooks.ISSAMEPLANE_PLANE_G, current & 0xFFFF)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISSAMEPLANE_SEG_INDEX], hooks.ISSAMEPLANE_OFF
+    sp = s.sp
+    for v in (plane, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsSamePlane")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("plane,current", [
+    (0, 1), (0, 0), (0, 2), (1, 1), (1, 2), (2, 2), (3, 3), (2, 3),
+])
+def test_issameplane_island_matches_asm(plane, current):
+    asm = _run_issameplane(False, plane, current)
+    isl = _run_issameplane(True, plane, current)
+    assert isl == asm, f"plane={plane} current={current}: island {isl} != asm {asm}"
+    from simant.recovered.gameplay import is_same_plane
+    assert asm["ax"] == is_same_plane(plane, current)
+
+
 # ---- _CopyName (seg4:7438) — recovered/netbios.py --------------------------
 def _run_copyname(with_island, src_bytes):
     m = runtime.create_machine()

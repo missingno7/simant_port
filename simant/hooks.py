@@ -979,6 +979,68 @@ def _make_isvalidb_island(machine):
     return island
 
 
+# -- _IsLessThanHole (seg5:9784) — is a tile below the hole-tile range? --------
+# World-state variant like _IsItFood: the inside/outside flag (world selector at
+# DGROUP:[0xC4AC], flag at [0x9B6E]) picks the hole threshold — < 0x59 inside
+# (flag set), < 0x50 outside (signed).  Clobbers bx (=arg) and es (=world
+# selector); ax=result; dx/cx/si/di/bp/ds preserved.
+ISLESSTHANHOLE_SEG_INDEX = 5
+ISLESSTHANHOLE_OFF = 0x9784
+ISLESSTHANHOLE_WORLD_SEG_G = 0xC4AC              # DGROUP word: world-state selector
+ISLESSTHANHOLE_SIG = bytes.fromhex(
+    "558bec8b5e068e06acc426833e6e9b00750a83fb507d0ab80100")
+
+
+def _make_islessthanhole_island(machine):
+    from .recovered.gameplay import is_less_than_hole
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        world_seg = m.rw(s.ds, ISLESSTHANHOLE_WORLD_SEG_G)
+        inside = m.rw(world_seg, ISITFOOD_INSIDE_FLAG_OFF) != 0   # flag set => inside
+        s.ax = is_less_than_hole(_sx(arg), inside)
+        s.bx = arg                                    # clobbered = the loaded arg
+        s.es = world_seg                              # clobbered = the world selector
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+# -- _IsSamePlane (seg5:97AA) — does `plane` select the active map plane? -------
+# Normalizes a 0 argument to plane 1, then compares against the world-state
+# current plane (DGROUP word [0xCE80]).  Clobbers dx (= the normalized plane);
+# ax=result; bx/cx/si/di/bp/es/ds preserved.
+ISSAMEPLANE_SEG_INDEX = 5
+ISSAMEPLANE_OFF = 0x97AA
+ISSAMEPLANE_PLANE_G = 0xCE80                     # DGROUP word: current active plane
+ISSAMEPLANE_SIG = bytes.fromhex(
+    "558bec837e06007505ba0100eb038b5606391680ce7505b80100")
+
+
+def _make_issameplane_island(machine):
+    from .recovered.gameplay import is_same_plane
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        current = m.rw(s.ds, ISSAMEPLANE_PLANE_G)
+        s.ax = is_same_plane(arg, current)
+        s.dx = 1 if arg == 0 else arg                 # normalized plane (0 -> 1)
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _CopyName (seg4:7438) — the NetBIOS 16-byte name-field copy ---------------
 # Space-fill 16 bytes, copy min(strlen(src),16), force byte 15 to NUL.  di/si
 # preserved (push/pop); ax/bx/cx/dx clobbered (residue below); es = dst seg.
@@ -1833,6 +1895,10 @@ _ISLANDS = [
      lambda machine, off: _make_isvalida_island(machine), "_IsValidA"),
     (ISVALIDB_SEG_INDEX, ISVALIDB_OFF, ISVALIDB_SIG,
      lambda machine, off: _make_isvalidb_island(machine), "_IsValidB"),
+    (ISLESSTHANHOLE_SEG_INDEX, ISLESSTHANHOLE_OFF, ISLESSTHANHOLE_SIG,
+     lambda machine, off: _make_islessthanhole_island(machine), "_IsLessThanHole"),
+    (ISSAMEPLANE_SEG_INDEX, ISSAMEPLANE_OFF, ISSAMEPLANE_SIG,
+     lambda machine, off: _make_issameplane_island(machine), "_IsSamePlane"),
     (COPYNAME_SEG_INDEX, COPYNAME_OFF, COPYNAME_SIG,
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
@@ -1876,7 +1942,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 53
+EXPECTED_ISLAND_COUNT = 55
 
 
 def install(machine) -> int:

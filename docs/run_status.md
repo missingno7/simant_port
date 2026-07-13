@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.47) — recovered the world-state predicate seam (_IsLessThanHole/_IsSamePlane)
+- RECOVERED the first two STATEFUL leaf predicates, using the _IsItFood
+  world-state seam (island reads DGROUP globals, recovered fn stays pure):
+    _IsLessThanHole (seg5:9784)  tile < (0x59 inside / 0x50 outside); the
+        inside/outside flag is the same one is_it_food reads (world selector at
+        DGROUP:[0xC4AC], flag at [0x9B6E]).  Clobbers bx=arg, es=world selector.
+    _IsSamePlane    (seg5:97AA)  current-plane (DGROUP:[0xCE80]) == (plane==0 ? 1
+        : plane).  Clobbers dx = the normalized plane.
+  Kept the "inside == flag set" convention consistent with is_it_food (the ASM
+  flag test direction differs between the two routines, so is_less_than_hole's
+  thresholds are 0x59 inside / 0x50 outside — verified by the A/B oracle).
+- Islands 53 -> 55.  Suite: simant 443.  verifyislands over cold_nohooks: the
+  one new island it reaches (_IsValidA) is byte-exact in registers + memory,
+  FLAGS_ONLY residue (same accepted no-caller-reads category as every other
+  predicate island); the colony-sim predicates aren't reached by cold_nohooks.
+- NEXT: the stateful MAP predicates — _IsItHole (6:2CC0), _TileCanBeMovedOn /
+  _IsNotBarrier / _IsNotObstacle / _IsItDigable (5:9342..95C6) — which index the
+  live map array [bx+di+0x28E8]; needs a map-backed A/B harness (seed a small
+  map region + world selector), a natural next seam.
+
 ## 2026-07-13 (cont.46) — recovered _IsValidA/_IsValidB; centralized the island count
 - RECOVERED the two coordinate-validity predicates (islands + byte-exact A/B):
     _IsValidA (seg5:9C02)  valid iff x in 0..0x7F and y in 0..0x3F (wide yard grid)
