@@ -1824,6 +1824,41 @@ def test_islessthanhole_island_matches_asm(tile, inside):
     assert asm["ax"] == is_less_than_hole(sx, inside)
 
 
+def _run_isnotbarrier(with_island, tile, inside):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    m.mem.ww(DG, hooks.ISLESSTHANHOLE_WORLD_SEG_G, DG)
+    m.mem.ww(DG, hooks.ISITFOOD_INSIDE_FLAG_OFF, 1 if inside else 0)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISNOTBARRIER_SEG_INDEX], hooks.ISNOTBARRIER_OFF
+    sp = s.sp
+    for v in (tile, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsNotBarrier")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("inside", [False, True])
+@pytest.mark.parametrize("tile", [0x00, 0x4F, 0x50, 0x51, 0x5E, 0x5F, 0x60,
+                                  0xFFFF])
+def test_isnotbarrier_island_matches_asm(tile, inside):
+    asm = _run_isnotbarrier(False, tile, inside)
+    isl = _run_isnotbarrier(True, tile, inside)
+    assert isl == asm, f"tile={tile:#06x} inside={inside}: island {isl} != asm {asm}"
+    from simant.recovered.gameplay import is_not_barrier
+    sx = tile - 0x10000 if tile & 0x8000 else tile
+    assert asm["ax"] == is_not_barrier(sx, inside)
+
+
 def _run_issameplane(with_island, plane, current):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False

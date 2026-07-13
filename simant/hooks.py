@@ -1081,6 +1081,37 @@ def _make_getmap_island(machine):
     return island
 
 
+# -- _IsNotBarrier (seg5:94A0) — is this tile passable for ant movement? -------
+# Same world-flag seam as _IsLessThanHole (selector [0xC4AC], flag [0x9B6E]):
+# not-a-barrier when tile <= 0x5F inside, <= 0x50 outside.  Clobbers bx (=arg)
+# and es (=world selector); ax=result; dx/cx/si/di/bp/ds preserved.
+ISNOTBARRIER_SEG_INDEX = 5
+ISNOTBARRIER_OFF = 0x94A0
+ISNOTBARRIER_SIG = bytes.fromhex("558bec8b5e068e06acc426833e6e9b00750a83fb507f0ab8")
+
+
+def _make_isnotbarrier_island(machine):
+    from .recovered.gameplay import is_not_barrier
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = m.rw(ss, (sp + 4) & 0xFFFF)
+        world_seg = m.rw(s.ds, ISLESSTHANHOLE_WORLD_SEG_G)
+        inside = m.rw(world_seg, ISITFOOD_INSIDE_FLAG_OFF) != 0
+        s.ax = is_not_barrier(_sx(arg), inside)
+        s.bx = arg                                    # clobbered = the loaded arg
+        s.es = world_seg                              # clobbered = the world selector
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsItHole (seg6:2CC0) — is this yard cell a nest hole/entrance? -----------
 # Bounds-checks (x, y) via _IsValidA, then reads the plane-0 yard map and the
 # world inside/outside flag ([0xC320]:[0x9B6E]).  Hole = 0x80..0x8F inside,
@@ -1984,6 +2015,8 @@ _ISLANDS = [
      lambda machine, off: _make_islessthanhole_island(machine), "_IsLessThanHole"),
     (ISSAMEPLANE_SEG_INDEX, ISSAMEPLANE_OFF, ISSAMEPLANE_SIG,
      lambda machine, off: _make_issameplane_island(machine), "_IsSamePlane"),
+    (ISNOTBARRIER_SEG_INDEX, ISNOTBARRIER_OFF, ISNOTBARRIER_SIG,
+     lambda machine, off: _make_isnotbarrier_island(machine), "_IsNotBarrier"),
     (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
      lambda machine, off: _make_isithole_island(machine), "_IsItHole"),
     (GETMAP_SEG_INDEX, GETMAP_OFF, GETMAP_SIG,
@@ -2031,7 +2064,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 57
+EXPECTED_ISLAND_COUNT = 58
 
 
 def install(machine) -> int:

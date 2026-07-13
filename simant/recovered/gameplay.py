@@ -200,3 +200,15 @@ def is_it_hole(tile: int, inside: bool) -> int:
     if inside:
         return 1 if 0x80 <= tile <= 0x8F else 0
     return 1 if tile == 0x50 else 0
+
+
+def is_not_barrier(tile: int, inside: bool) -> int:
+    """Whether a tile is passable (not a barrier) for ant movement.
+
+    Recovered from `_IsNotBarrier` (SIMANTW.SYM seg5:94A0): reads the same
+    inside/outside world flag `is_less_than_hole` does (selector [0xC4AC]), and a
+    tile is "not a barrier" when it is <= 0x5F inside the nest, <= 0x50 in the
+    outside yard (signed compares).  Returns 1 / 0.
+    """
+    threshold = 0x5F if inside else 0x50
+    return 1 if tile <= threshold else 0

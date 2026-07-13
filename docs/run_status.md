@@ -1,5 +1,17 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.52) — recovered _IsNotBarrier (movement passability leaf)
+- RECOVERED `_IsNotBarrier` (seg5:94A0), a clean world-flag leaf (same seam as
+  _IsLessThanHole, selector [0xC4AC]): a tile is passable when <= 0x5F inside the
+  nest, <= 0x50 in the outside yard.  Pure is_not_barrier(tile, inside); island
+  clobbers bx=arg, es=world selector.  17 A/B cases green.
+- Islands 57 -> 58.  Suite: simant 490.
+- Surveyed the rest of the movement family: _IsNotObstacle (5:94C6),
+  _TileCanBeMovedOn (5:9342), _IsItDigable (5:95C6) are all COMPOUND — multi-plane
+  validity + map reads (enter N,0 with locals, like _GetMap but larger).  Next
+  focused slice: recover those as map-reading islands (they compose _GetMap's
+  plane layout + tile predicates), and _SetMap's redraw-far-call partial island.
+
 ## 2026-07-13 (cont.51) — recovered _IsItHole (first map-query predicate)
 - RECOVERED `_IsItHole` (seg6:2CC0), the first STATEFUL map-query predicate — it
   composes the pieces already recovered: is_valid_a bounds check + the plane-0
