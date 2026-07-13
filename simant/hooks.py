@@ -1081,6 +1081,46 @@ def _make_getmap_island(machine):
     return island
 
 
+# -- _GetLife (seg5:6040) — read a life-grid cell (plane, x, y) from DGROUP ------
+# Structural twin of _GetMap over the life-grid planes, with one extra rule: an
+# empty cell (byte 0) reads as 0xFFFF.  Returns AX=DX=the life byte (or 0xFFFF
+# when the cell is empty or out of range).  bx residue matches _GetMap: y on the
+# valid path, 0xFFFF coord-invalid, 0 plane-invalid.  si/di/cx/bp/es/ds preserved.
+GETLIFE_SEG_INDEX = 5
+GETLIFE_OFF = 0x6040
+GETLIFE_SIG = bytes.fromhex(
+    "c802000057568b5606c746feffff83fa017f1d8b7608")
+
+
+def _make_getlife_island(machine):
+    from .recovered.gameplay import (get_life_value, is_valid_a, is_valid_b,
+                                     life_cell_offset)
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane = _sx(m.rw(ss, (sp + 4) & 0xFFFF))
+        x = _sx(m.rw(ss, (sp + 6) & 0xFFFF))
+        y_w = m.rw(ss, (sp + 8) & 0xFFFF)
+        y = _sx(y_w)
+        off = life_cell_offset(plane, x, y)
+        if off is not None:
+            s.ax = s.dx = get_life_value(m.rb(s.ds, off & 0xFFFF))
+            s.bx = y_w
+        else:
+            s.ax = s.dx = 0xFFFF
+            coords_ok = is_valid_a(x, y) if plane <= 1 else is_valid_b(x, y)
+            s.bx = 0 if coords_ok else 0xFFFF
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _GetDir (seg5:10CC) — 8-way compass direction from point 1 to point 2 -----
 # Pure leaf.  bx = dx = x2-x1 and dx(reg) = dy = y2-y1 are the loaded deltas
 # (clobbered); ax=result (0..8); cx/si/di/es/ds/bp preserved.
@@ -2081,6 +2121,8 @@ _ISLANDS = [
      lambda machine, off: _make_islessthanhole_island(machine), "_IsLessThanHole"),
     (ISSAMEPLANE_SEG_INDEX, ISSAMEPLANE_OFF, ISSAMEPLANE_SIG,
      lambda machine, off: _make_issameplane_island(machine), "_IsSamePlane"),
+    (GETLIFE_SEG_INDEX, GETLIFE_OFF, GETLIFE_SIG,
+     lambda machine, off: _make_getlife_island(machine), "_GetLife"),
     (GETDIR_SEG_INDEX, GETDIR_OFF, GETDIR_SIG,
      lambda machine, off: _make_getdir_island(machine), "_GetDir"),
     (GETDIS_SEG_INDEX, GETDIS_OFF, GETDIS_SIG,
@@ -2134,7 +2176,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 60
+EXPECTED_ISLAND_COUNT = 61
 
 
 def install(machine) -> int:

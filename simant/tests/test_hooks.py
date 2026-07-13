@@ -1972,6 +1972,49 @@ def test_isithole_island_matches_asm(x, y, tile, inside):
     assert isl == asm, f"({x:#x},{y:#x},t={tile:#x},in={inside}): {isl} != {asm}"
 
 
+# ---- _GetLife (seg5:6040) — life-grid accessor (empty cell -> 0xFFFF) --------
+def _run_getlife(with_island, plane, x, y, seed):
+    from simant.recovered.gameplay import life_cell_offset
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    off = life_cell_offset(plane, x, y)
+    if off is not None:
+        m.mem.wb(DG, off & 0xFFFF, seed)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.GETLIFE_SEG_INDEX], hooks.GETLIFE_OFF
+    sp = s.sp
+    for v in (y, x, plane, SENT_CS, SENT_IP):        # plane@[bp+6], x@[bp+8], y@[bp+0xa]
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_GetLife")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("plane,x,y,seed", [
+    (0, 0x10, 0x20, 0x42), (1, 0x7F, 0x3F, 0x01), (2, 0, 0, 0xFE),
+    (3, 0x20, 0x10, 0x80),
+    (0, 0x10, 0x20, 0x00),                            # empty cell -> 0xFFFF
+    (2, 0x3F, 0x3F, 0x00),                            # empty nest cell
+    (0, 0x80, 0x00, 0x42), (2, 0x40, 0, 0x42),        # coord-invalid
+    (4, 0x10, 0x10, 0x42), (-1, 0x10, 0x10, 0x42),    # plane-invalid
+])
+def test_getlife_island_matches_asm(plane, x, y, seed):
+    asm = _run_getlife(False, plane, x, y, seed)
+    isl = _run_getlife(True, plane, x, y, seed)
+    assert isl == asm, f"(p={plane},{x:#x},{y:#x},s={seed:#x}): {isl} != {asm}"
+    from simant.recovered.gameplay import life_cell_offset, get_life_value
+    expect = get_life_value(seed) if life_cell_offset(plane, x, y) is not None else 0xFFFF
+    assert asm["ax"] == expect
+
+
 # ---- _GetMap (seg5:60E2) — the map-cell accessor over the DGROUP planes ------
 # Seeds the three plane arrays in DGROUP so a valid read returns a known byte;
 # args are (plane, x, y) with plane@[bp+6].

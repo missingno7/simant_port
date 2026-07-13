@@ -162,30 +162,55 @@ def is_same_plane(plane: int, current_plane: int) -> int:
     return 1 if current_plane == p else 0
 
 
-# The map is three plane arrays packed in DGROUP, addressed column-major with an
-# x-stride of 64 (offset = base + (x << 6) + y).
+# Both the map and the life grid are three plane arrays packed in DGROUP,
+# addressed column-major with an x-stride of 64 (offset = base + (x << 6) + y).
+# Planes 0 and 1 share the wide "yard" array (128x64); planes 2 and 3 are the
+# 64x64 nest planes.
 MAP_PLANE_BASE = {0: 0x28E8, 1: 0x28E8, 2: 0x48E8, 3: 0x58E8}
+LIFE_PLANE_BASE = {0: 0x68E8, 1: 0x68E8, 2: 0x88E8, 3: 0x98E8}
 
 
-def map_cell_offset(plane: int, x: int, y: int) -> int | None:
-    """DGROUP byte offset of map cell (plane, x, y), or None if out of range.
-
-    Recovered from `_GetMap` (SIMANTW.SYM seg5:60E2).  Coordinate validity is
-    exactly `is_valid_a` on the yard planes (plane <= 1: x 0..0x7F, y 0..0x3F)
-    and `is_valid_b` on the nest planes (plane > 1: x,y 0..0x3F).  Planes 0 and 1
-    share the yard array at 0x28E8; plane 2 is at 0x48E8, plane 3 at 0x58E8;
-    every other plane (including negative) is out of range.  The caller reads the
-    byte at DS:offset; the ASM returns 0xFFFF for the None case.
-    """
+def _cell_offset(plane: int, x: int, y: int, bases: dict) -> int | None:
+    """Shared addressing for the plane arrays: coordinate validity is exactly
+    `is_valid_a` on the yard planes (plane <= 1: x 0..0x7F, y 0..0x3F) and
+    `is_valid_b` on the nest planes (plane > 1: x,y 0..0x3F); planes 0-3 select a
+    base, every other plane (including negative) is out of range."""
     if plane <= 1:
         if not (0 <= x <= 0x7F and 0 <= y <= 0x3F):
             return None
     elif not (0 <= x <= 0x3F and 0 <= y <= 0x3F):
         return None
-    base = MAP_PLANE_BASE.get(plane) if plane >= 0 else None
+    base = bases.get(plane) if plane >= 0 else None
     if base is None:
         return None
     return base + (x << 6) + y
+
+
+def map_cell_offset(plane: int, x: int, y: int) -> int | None:
+    """DGROUP byte offset of map cell (plane, x, y), or None if out of range.
+
+    Recovered from `_GetMap` (SIMANTW.SYM seg5:60E2): the yard array is at 0x28E8,
+    the nest planes at 0x48E8 / 0x58E8.  The caller reads the byte at DS:offset;
+    the ASM returns 0xFFFF for the None case.
+    """
+    return _cell_offset(plane, x, y, MAP_PLANE_BASE)
+
+
+def life_cell_offset(plane: int, x: int, y: int) -> int | None:
+    """DGROUP byte offset of life-grid cell (plane, x, y), or None if out of range.
+
+    Recovered from `_GetLife` (SIMANTW.SYM seg5:6040): same validity and plane
+    layout as `map_cell_offset` but over the life-grid arrays — yard at 0x68E8,
+    nest planes at 0x88E8 / 0x98E8.
+    """
+    return _cell_offset(plane, x, y, LIFE_PLANE_BASE)
+
+
+def get_life_value(byte: int) -> int:
+    """`_GetLife`'s post-read rule: an empty life cell (byte 0) reads as 0xFFFF;
+    any other byte is the life value itself.  (An out-of-range cell also reads as
+    0xFFFF — handled by `life_cell_offset` returning None.)"""
+    return 0xFFFF if byte == 0 else byte
 
 
 def is_it_hole(tile: int, inside: bool) -> int:

@@ -1,5 +1,14 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.54) — recovered _GetLife (life-grid accessor, _GetMap's twin)
+- RECOVERED `_GetLife` (seg5:6040), structurally identical to _GetMap but over the
+  life-grid planes (DGROUP 0x68E8 yard / 0x88E8 / 0x98E8) with one extra rule: an
+  empty cell (byte 0) reads as 0xFFFF.  Refactored the shared plane addressing into
+  `_cell_offset(plane,x,y,bases)`; added `life_cell_offset` + `get_life_value`.
+  Island mirrors _GetMap's three-exit bx residue (y / 0xFFFF / 0).  23 A/B cases.
+- Islands 60 -> 61.  Suite: simant 519.  README map: _GetLife now green, seg5 30/169.
+  `_GetBestDir` is now down to two unrecovered callees (_IsNotObstacle, _IsClearTile).
+
 ## 2026-07-14 (cont.53) — recovered the geometry primitives _GetDir + _GetDis
 - RECOVERED the two load-bearing movement-geometry helpers the recovery map
   flagged (17 and 15 callers): `_GetDir` (seg5:10CC) — 8-way compass direction by
