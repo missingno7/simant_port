@@ -1,5 +1,30 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.41) — numpy-for-win16 assessed (measured); EndPaint 1.7x
+- Owner: dos_re added a fast numpy renderer (7a4f7d8, 21x; policy 2169ebb "numpy
+  first-class where it MEASURABLY wins") — is numpy usable for win16_re speedup?
+- MEASURED the render share over the full cold_nohooks replay under PyPy (the
+  live-play host, 199.6M instrs, 50.9s): SetDIBitsToDevice 4.2% (already numpy),
+  EndPaint clip-restore 3.3%, FillRect 1.2%, everything else ~0 (BitBlt/
+  StretchBlt/Polygon/TextOut are COLD on SimAnt: 0-105 calls).  Render is ~10%
+  of wall; the other ~90% is the interpreter — dos_re's documented numpy
+  ANTI-WIN (the real win16 speedup path stays island/native recovery).
+- win16 had already adopted numpy in the big blits (SetDIBitsToDevice, Scroll-
+  Window, compositor) before the dos_re policy.  The one measured improvement:
+  `_apply_paint_clip` (win16_re bc5c4aa).  Three shapes measured on the same
+  workload: original numpy with bytes()/tobytes() round-trips = 4 full-frame
+  copies (2.0 ms/call); pure-bytearray row loop (1.46 ms — ~2us/row-slice on
+  PyPy); writable np.frombuffer VIEWS + one 2D copy per rect + 2 memcpys =
+  1.19 ms/call — the residue is cpyext crossing cost (~50 np calls/paint), the
+  PyPy floor.  Replay digest byte-identical (74bf3228...), suites green.
+- PyPy LESSON (recorded for future perf work): numpy-on-PyPy pays ~20us per
+  call boundary (cpyext) — whole-frame ops win, per-rect/per-row numpy is
+  bounded by crossings; always measure per-interpreter.
+- Also bumped dos_re 32c7f71 -> 121f9e0 (+3, PM-only; NOTE: new generic
+  `dos_re.step_probe` — trapped per-instance step observers, exactly what our
+  scratch probes hand-roll by monkey-patching CPU8086.step; future cleanup can
+  adopt it).  dos_re 375 / win16_re 115 / simant 356 green.
+
 ## 2026-07-13 (cont.40) — synergy: win16.tick_demo seam over dos_re.tick_demo
 - Owner: "kick the can down the hill simant_port -> win16_re -> dos_re".  Bumped
   dos_re e19bb1a -> 32c7f71 (+3, PM-only: sblaster dma_tc snapshot + pm demo
