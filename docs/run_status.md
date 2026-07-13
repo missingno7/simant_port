@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.58) — FIXED the recurring sim-tick CallbackOverrun (false positive)
+- FIXED the `CallbackOverrun: callback 0100:2440 ... 20000000 steps` crash the
+  owner keeps hitting in interactive `--record` runs.  Diagnosed from the crash
+  snapshot: the return addr is GR!_TickCount (0E99:18B5) — MYTIMERFUNC's pacing
+  loop (_WaitedEnough/_WaitHundredths) busy-polling GetTickCount + GetAsyncKeyState(32).
+  check_pause DOES advance the wall clock during the callback, so the wait was
+  progressing — the game was just in a long, legitimate, input-driven wait (a
+  paused game / "press a key"), and the fixed 20M-step cap killed it.
+- FIX (win16_re d9517f4, submodule bumped): call_far accepts max_steps=None (no
+  cap; still chunked + yield_check'd, so pausable).  system.callback_max_steps
+  defaults to 20M (headless/replay keeps the runaway cap) but the interactive
+  driver sets None — interactive is user-interruptible.  DispatchMessage passes
+  it.  +2 game-free callback tests.  Suites: win16_re 128, simant 529.
+- Note: the crash SNAPSHOT still can't resume past this (it froze interactive=False
+  with a stuck clock — a separate resume-fidelity limit), but LIVE play/record is
+  fixed: the sim-tick wait now runs uncapped, paced by real time and real input.
+
 ## 2026-07-14 (cont.57) — map/life grids named in the bridge; state ownership proven
 - Native-port step 2 (state ownership, per vmless_port.md): moved the map/life
   plane BASES (0x28E8/0x48E8/0x58E8, 0x68E8/...) into bridge/dgroup_view.py — they
