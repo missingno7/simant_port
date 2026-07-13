@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-13 (cont.43) — tick-demo clock sideband; structural blocker isolated
+- Continued #17: added the CLOCK SIDEBAND (win16_re 12164f8) — record every
+  GetTickCount the game consumes (bucketed per tick, deltas off the boundary ms),
+  replay by index (gameplay reads come first each tick -> align despite the
+  shorter replay pacing spin).  Tap at USER.13 only; v4 replay byte-identical
+  (74bf3228...).  Fallback past the recorded reads: a hybrid ramp-to-next-boundary
+  + escape (handles BOTH the within-tick render-clock wait AND the long pre-tick
+  init, which a pure ramp starved).  7 unit tests green (win16_re 122).
+- MEASURED: the sideband makes replay markedly more faithful (reaches the tick-91
+  divergence in 43.7M instrs vs 35.6M with the synthetic clock — closer to the
+  real ~40M).  But it STILL diverges at ~tick 91 (the same _font_PrintStr ->
+  seg7:ADE0 runaway on a WM_MOUSEMOVE to window 328).
+- ROOT of the residual, now isolated: the clock-read SEQUENCE misaligns, not the
+  values.  During recording the sim paces by SPINNING (100-250 GetTickCount reads
+  through GR!_TickCount per tick), and WM_PAINTs (font blink) interleave into
+  that long spin reading the clock; on replay the boundary is delivered on the
+  FIRST ask so the spin is short and the paints interleave at different points,
+  so the by-index clock stream drifts once a paint's reads land mid-bucket.  The
+  gameplay (MYTIMERFUNC) reads DO align (they're first); the misalignment is the
+  render/paint-side reads bleeding into the index.
+- NEXT (design options, not yet chosen): (a) tag clock reads by CALLER site so
+  render-side reads (masked from the gameplay digest anyway) use a separate
+  channel/fallback and never consume the gameplay index; (b) advance the tick
+  boundary to AFTER MYTIMERFUNC returns (so a bucket = exactly one sim tick's
+  reads, no trailing pacing spin); (c) record the pacing-spin read COUNT and
+  reproduce it.  (b) looks cleanest — the seam is MYTIMERFUNC's retf.
+- Framework is landed + tested; SimAnt end-to-end faithfulness is genuine
+  multi-pass RE.  Suites: win16_re 122, simant 356.
+
 ## 2026-07-13 (cont.42) — tick-demo record/replay pair (hook-config-invariant); 91 ticks
 - Built the win16 hook-config-INVARIANT demo model (win16_re cae3550): keys input
   to the GAME TICK (the sim WM_TIMER consumption), not the instruction count, so
