@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.59) — FIXED OrphanReturnError: crash snapshots dropped the callback frame
+- The owner resumed crash_003251 (the prior CallbackOverrun crash snapshot),
+  played through game-over -> Quick Start, and hit `OrphanReturnError` at 455M.
+  ROOT CAUSE: crash_003251's `callback_frames` is [] even though the CPU is parked
+  INSIDE the sim-tick callback (0060:005C) — call_far's `finally: frames.pop()`
+  unwound the frame during the CallbackOverrun exception BEFORE play.py saved the
+  crash snapshot.  So the snapshot recorded an in-flight callback with no frame;
+  when it later far-returned to the sentinel, no frame matched -> OrphanReturnError.
+- Not a Quick-Start bug and not a fresh-play bug — purely resuming a poisoned
+  mid-callback-abort crash snapshot.
+- FIX (win16_re c4ad261, bumped): call_far pops the frame ONLY on the clean
+  _CallbackReturn path; on any other exception (VM gap/halt/overrun) it leaves the
+  frame on win16_callback_frames, so a crash snapshot captures the in-flight
+  callback and resumes via the orphan path.  Nothing catches these and continues,
+  so no leak.  +1 test.  Suites: win16_re 129, simant 529.
+- crash_003251 itself stays poisoned (empty frames, can't retro-fix).  Guidance:
+  play FRESH (the cont.58 CallbackOverrun fix removes the mid-session death) and
+  use F12 for clean save points; future crash snapshots are now resumable.
+
 ## 2026-07-14 (cont.58) — FIXED the recurring sim-tick CallbackOverrun (false positive)
 - FIXED the `CallbackOverrun: callback 0100:2440 ... 20000000 steps` crash the
   owner keeps hitting in interactive `--record` runs.  Diagnosed from the crash
