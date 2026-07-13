@@ -7,6 +7,11 @@ the original ASM by the A/B oracle in simant/tests/test_hooks.py.
 """
 from __future__ import annotations
 
+# The map/life plane layout (the DGROUP bases) is the state view's concern; this
+# pure logic imports the "WHERE" from the bridge (recovered -> bridge is the
+# sanctioned dependency) and owns only the "WHAT": validity + the (x<<6)+y index.
+from ..bridge.dgroup_view import LIFE_PLANE_BASE, MAP_PLANE_BASE
+
 
 def is_it_food(tile: int, inside_nest: bool) -> int:
     """Whether a map tile value denotes food.
@@ -160,14 +165,6 @@ def is_same_plane(plane: int, current_plane: int) -> int:
     """
     p = 1 if plane == 0 else plane
     return 1 if current_plane == p else 0
-
-
-# Both the map and the life grid are three plane arrays packed in DGROUP,
-# addressed column-major with an x-stride of 64 (offset = base + (x << 6) + y).
-# Planes 0 and 1 share the wide "yard" array (128x64); planes 2 and 3 are the
-# 64x64 nest planes.
-MAP_PLANE_BASE = {0: 0x28E8, 1: 0x28E8, 2: 0x48E8, 3: 0x58E8}
-LIFE_PLANE_BASE = {0: 0x68E8, 1: 0x68E8, 2: 0x88E8, 3: 0x98E8}
 
 
 def _cell_offset(plane: int, x: int, y: int, bases: dict) -> int | None:

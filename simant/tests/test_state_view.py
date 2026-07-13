@@ -57,6 +57,38 @@ def test_native_state_mirrors_the_vm_image():
     assert vm.rng_seed == 0xBEEF
 
 
+def test_map_planes_read_the_same_cells_the_asm_addresses():
+    # The named map-plane views must index the exact bytes _GetMap's
+    # map_cell_offset points at — the layout bridge is a faithful re-addressing
+    # of the tile grid, for every plane.
+    from simant.recovered.gameplay import map_cell_offset
+    m = _machine()
+    s = SimAntState(m.mem, _dg_base(m))
+    seg = m.seg_bases[DG]
+    for plane, x, y, val in [(0, 0x10, 0x20, 0x42), (1, 0x7F, 0x3F, 0x9A),
+                             (2, 0, 0, 0x55), (3, 0x20, 0x10, 0xC3)]:
+        off = map_cell_offset(plane, x, y)
+        m.mem.wb(seg, off, val)                        # poke via the raw selector
+        assert s.map_planes[plane][(x << 6) + y] == val   # the view sees it
+
+
+def test_world_grids_migrate_to_an_owned_native_state():
+    # Write a tile + a life value through the VM view, bootstrap the owned image,
+    # and read them back natively — the biggest game structure (the map) is
+    # ownable with no VM, and the owned copy is independent.
+    m = _machine()
+    vm = SimAntState(m.mem, _dg_base(m))
+    vm.map_nest[5] = 0x77                              # plane 2, index 5
+    vm.life_yard[0x100] = 0x21
+
+    native = NativeGameState.from_machine(m)
+    assert native.view.map_nest[5] == 0x77
+    assert native.view.life_yard[0x100] == 0x21
+
+    native.view.map_nest[5] = 0x00                     # owned image is independent
+    assert vm.map_nest[5] == 0x77
+
+
 @pytest.mark.parametrize("seed", [0x0001, 0x8000, 0xBEEF, 0xFFFF, 0x1BF5])
 def test_recovered_prng_runs_over_both_backends(seed):
     # The recovered srand_step is the shared centre; drive it through the view on

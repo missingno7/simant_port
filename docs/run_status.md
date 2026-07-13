@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.57) — map/life grids named in the bridge; state ownership proven
+- Native-port step 2 (state ownership, per vmless_port.md): moved the map/life
+  plane BASES (0x28E8/0x48E8/0x58E8, 0x68E8/...) into bridge/dgroup_view.py — they
+  are layout ("WHERE"), so they belong in the state view, not recovered.  Added a
+  `_Bytes` byte-grid field descriptor + `map_planes`/`life_planes` accessors on
+  SimAntState; recovered/gameplay.py now IMPORTS the bases from the bridge
+  (recovered -> bridge, the sanctioned direction; no cycle — bridge imports no
+  recovered).
+- PROVEN (test_state_view.py, +2): the named map-plane views index the exact bytes
+  _GetMap's map_cell_offset addresses, for every plane; and the whole map/life grid
+  migrates to an owned NativeGameState (write via VM view -> bootstrap -> read back
+  natively, owned copy independent).  So SimAnt's biggest structure is now ownable
+  with no VM.  Suite: simant 529.
+- NEXT: route the _GetMap/_GetLife/_IsItHole islands to READ through map_planes/
+  life_planes (currently raw m.rb) — then those core reads run over the owned image
+  unchanged, the last step before a native map tick.
+
 ## 2026-07-14 (cont.56) — native-port role classifier: an honest progress metric
 - Clarified the game/backend boundary for the VM-less endgame.  TWO boundaries:
   (1) win16_re (the Win16 OS layer) is the backend a native port REPLACES

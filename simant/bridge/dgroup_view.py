@@ -201,6 +201,35 @@ class _U16ArrayView:
         return self.length
 
 
+class _Bytes:
+    """A raw byte grid (a map / life plane); ``view.field[i]`` reads/writes a
+    byte at ``base + i``.  ``length`` is optional (informational — the plane's
+    addressable span); indexing is not bounds-checked, matching the ASM."""
+    def __init__(self, off: int, length: int | None = None):
+        self.off = off
+        self.length = length
+
+    def __get__(self, o, owner=None):
+        if o is None:
+            return self
+        return _BytesView(o._backend, o._base + self.off, self.length)
+
+
+class _BytesView:
+    __slots__ = ("_backend", "_base", "length")
+
+    def __init__(self, backend, base: int, length):
+        self._backend = backend
+        self._base = base
+        self.length = length
+
+    def __getitem__(self, i: int) -> int:
+        return self._backend.rb(self._base + i)
+
+    def __setitem__(self, i: int, v: int) -> None:
+        self._backend.wb(self._base + i, v)
+
+
 # ---- views ------------------------------------------------------------------
 
 def _coerce_backend(source, base: int):
@@ -314,6 +343,17 @@ class FarPtr(StructView):
     seg = _U16(0x02)
 
 
+# The world is stored as three map planes and three life planes packed in
+# DGROUP, each a byte grid addressed column-major with an x-stride of 64
+# (index = (x << 6) + y).  Planes 0 and 1 share the wide "yard" grid (128x64);
+# planes 2 and 3 are the 64x64 nest grids.  These bases are the layout ("WHERE")
+# for _GetMap / _GetLife and their callers; recovered logic imports them.
+MAP_PLANE_BASE = {0: 0x28E8, 1: 0x28E8, 2: 0x48E8, 3: 0x58E8}
+LIFE_PLANE_BASE = {0: 0x68E8, 1: 0x68E8, 2: 0x88E8, 3: 0x98E8}
+_YARD_SPAN = 0x80 * 0x40                     # 128x64 bytes
+_NEST_SPAN = 0x40 * 0x40                     # 64x64 bytes
+
+
 class SimAntState(DgroupView):
     """SimAnt's DGROUP as named source-level fields — the human-readable state
     the recovered logic reads/writes.  Grows one verified field at a time as
@@ -339,3 +379,21 @@ class SimAntState(DgroupView):
     window_records = StructArray(0xCE9A, 4, 256, FarPtr)
     #: nonzero => stored object rects are inclusive (bump right/bottom by one).
     obj_rect_inclusive = _U16(0xBD0A)
+
+    # -- the world grids (SIMONE_MODULE) --  the tile map and the life grid, as
+    # named byte planes.  `map_planes[p]` / `life_planes[p]` index by plane; the
+    # recovered map/life accessors compute (x<<6)+y and read through these.
+    map_yard = _Bytes(MAP_PLANE_BASE[0], _YARD_SPAN)     # planes 0, 1
+    map_nest = _Bytes(MAP_PLANE_BASE[2], _NEST_SPAN)     # plane 2
+    map_plane3 = _Bytes(MAP_PLANE_BASE[3], _NEST_SPAN)   # plane 3
+    life_yard = _Bytes(LIFE_PLANE_BASE[0], _YARD_SPAN)
+    life_nest = _Bytes(LIFE_PLANE_BASE[2], _NEST_SPAN)
+    life_plane3 = _Bytes(LIFE_PLANE_BASE[3], _NEST_SPAN)
+
+    @property
+    def map_planes(self):
+        return (self.map_yard, self.map_yard, self.map_nest, self.map_plane3)
+
+    @property
+    def life_planes(self):
+        return (self.life_yard, self.life_yard, self.life_nest, self.life_plane3)
