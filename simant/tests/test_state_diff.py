@@ -620,6 +620,61 @@ def test_placeredqueen_state_diff_matches_asm(seed_val, count_r):
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _AddBlackAnts/_AddRedAnts (seg7:6C5A/6CFE) — scenario-init yard ants --
+_ADDANTS_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map + yard life plane + SRand seed
+    (_SDG, 0x2300, 0x3800),                 # covers 0x23A4/278E/2B78/2F62/334C+slot
+    (_PACK, 0x80E0, 0x8100),                # covers [0x80F0] (A-list count)
+]
+
+
+def _addants_seed(seed_val, alist_count, x_lo, x_hi):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        for x in range(x_lo, x_hi):
+            for y in range(0x10, 0x30):
+                off = (x << 6) + y
+                m.mem.wb(dg, 0x28E8 + off, 0)   # map: walkable everywhere in-band
+                m.mem.wb(dg, 0x68E8 + off, 0)   # life: unoccupied everywhere in-band
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x80F0, alist_count)
+    return seed
+
+
+@pytest.mark.parametrize("count,seed_val,alist_count", [
+    (1, 0x1234, 0),
+    (5, 0x0001, 0),
+    (5, 0xBEEF, 0x3E7),   # near the global 0x3E8 A-list cap -> exits after 1 ant
+])
+def test_addblackants_state_diff_matches_asm(count, seed_val, alist_count):
+    from simant.recovered.gameplay import add_black_ants
+    results = _run_and_diff_segs(
+        7, 0x6C5A, (count,),
+        lambda d, s, p: add_black_ants(d, s, p, count),
+        _ADDANTS_REGIONS, seed_fn=_addants_seed(seed_val, alist_count, 0, 0x40))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTS_REGIONS):
+        assert asm_after == rec_after, (
+            f"count={count} seed={seed_val:#x} alist={alist_count:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+@pytest.mark.parametrize("count,seed_val,alist_count", [
+    (1, 0x1234, 0),
+    (5, 0x0001, 0),
+    (5, 0xBEEF, 0x3E7),
+])
+def test_addredants_state_diff_matches_asm(count, seed_val, alist_count):
+    from simant.recovered.gameplay import add_red_ants
+    results = _run_and_diff_segs(
+        7, 0x6CFE, (count,),
+        lambda d, s, p: add_red_ants(d, s, p, count),
+        _ADDANTS_REGIONS, seed_fn=_addants_seed(seed_val, alist_count, 0x40, 0x80))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTS_REGIONS):
+        assert asm_after == rec_after, (
+            f"count={count} seed={seed_val:#x} alist={alist_count:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _MakeNewHoleB (seg5:1B06) — search + carve a new above-ground hole ---
 _MAKENEWHOLEB_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed

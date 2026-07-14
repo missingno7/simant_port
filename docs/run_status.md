@@ -1,5 +1,30 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.136) — /goal grind: _AddBlackAnts/_AddRedAnts — scenario-init yard population
+- RECOVERED `add_black_ants`/`add_red_ants` (`_AddBlackAnts`/`_AddRedAnts`,
+  seg7:6C5A/6CFE, arg count=[bp+6], FAR return) via a shared `_add_ants`
+  helper — scans the yard for empty walkable cells in a fixed
+  `y=0x10..0x2F` band, placing up to `count` scenario-init ants with a
+  random caste (`_SRand1(10)<=3` picks base `0x30`/`field_c=2`, else base
+  `0x10`/`field_c=4`, plus `_SRand8()`), stopping at `count` placements or
+  the A-list's `0x3E8` global cap. Both colonies' initial ants land in the
+  SAME yard A-list (`_AddAntToAList`), distinguished only by `caste_bonus`
+  (`0x80` for red). Confirmed a genuine twin by independent disassembly:
+  black scans the LEFT half (`x=0..0x3F` ascending), red the RIGHT half
+  (`x=0x7F..0x40` descending) — a coordinate-role realization caught by
+  re-deriving the map-offset formula against the established `(x<<6)+y`
+  convention rather than trusting the ASM's raw "row"/"col" register
+  naming from a first read (the outer-loop 0x40-step variable is `x`, the
+  inner 1-step variable is `y`, per `build_ant_list_a`'s established
+  layout — not "row"/"col" as a naive read of the loop shape suggests).
+- Test seeding fully zeroed the map+life planes across the scanned band
+  so every candidate cell is deterministically valid — avoids depending
+  on whatever terrain happens to be in the default boot state, and makes
+  the RNG-threading sequence fully predictable.
+- 6 cases (3 per colony, including a near-global-cap case) — ALL GREEN
+  ON THE FIRST RUN, no re-derivation needed this time.
+- Suite: simant 1431 (+6), full suite green.
+
 ## 2026-07-14 (cont.135) — /goal grind: _PlaceRedQueen — scenario-init red queen founding
 - RECOVERED `place_red_queen` (`_PlaceRedQueen`, seg7:67DA, NO args, FAR
   return) — the scenario-init/no-args sibling of `make_red_queen`: rolls

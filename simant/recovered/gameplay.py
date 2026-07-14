@@ -2434,6 +2434,81 @@ def place_red_queen(dgroup, simant_data_group, pack) -> None:
     pack.ww(0x79DC, (pack.rw(0x79DC) + 1) & 0xFFFF)
 
 
+def _add_ants(dgroup, simant_data_group, pack, count: int, x_range, caste_bonus: int) -> None:
+    """Shared body of `add_black_ants`/`add_red_ants`: scan the yard for
+    empty walkable cells in a fixed `y=0x10..0x2F` middle band, and for
+    each one found, roll a random caste and drop a scenario-init yard ant
+    there via `add_ant_to_a_list` — both colonies' initial ants go into
+    the SAME yard A-list, distinguished only by `caste_bonus`'s `0x80`
+    colony bit.  Stops after `count` ants are placed or the A-list hits
+    its `0x3E8` (1000) global cap, whichever comes first.
+
+    A cell qualifies when the yard map tile is `< 0x50` (walkable) AND
+    the yard life-plane cell is `0` (unoccupied).  The caste roll: a
+    `_SRand1(10)` pick of `<=3` (4-in-10) uses base `0x30`/`field_c=2`,
+    otherwise (6-in-10) base `0x10`/`field_c=4`; either way a `_SRand8()`
+    (0..7) is added, plus `caste_bonus`.  Also directly stamps the caste
+    onto the yard life plane before calling `add_ant_to_a_list` — the
+    same "redundant but faithful" re-stamp `sim_egg_a`/`sim_queen_a` do
+    (that call re-stamps the identical cell internally).
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    for x in x_range:
+        for y in range(0x10, 0x30):
+            offset = (x << 6) + y
+            if dgroup.rb(MAP_PLANE_BASE[0] + offset) >= 0x50:
+                continue
+            if dgroup.rb(LIFE_PLANE_BASE[0] + offset) != 0:
+                continue
+
+            seed, roll10 = srand1(seed, 10)
+            if roll10 <= 3:
+                base, field_c = 0x30, 2
+            else:
+                base, field_c = 0x10, 4
+            seed, roll8 = srand_pow2(seed, 7)
+            caste = (roll8 + base + caste_bonus) & 0xFF
+
+            dgroup.wb(LIFE_PLANE_BASE[0] + offset, caste)
+            add_ant_to_a_list(pack, simant_data_group, dgroup, x, y, caste, field_c, 0)
+
+            count -= 1
+            if count <= 0 or pack.rw(0x80F0) >= 0x3E8:
+                dgroup.ww(SRAND_SEED_OFF, seed)
+                return
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+
+def add_black_ants(dgroup, simant_data_group, pack, count: int) -> None:
+    """Populate the yard with up to `count` scenario-init black ants,
+    scanning the LEFT half (`x=0..0x3F`) of the yard.
+
+    Recovered from `_AddBlackAnts` (SIMANTW.SYM seg7:6C5A, arg count=[bp+6]
+    (decremented in place, not returned); FAR return).  Composes the
+    shared `_add_ants` helper with `caste_bonus=0` — geographically the
+    black-colony (left-side-nest) half of the yard, `_AddRedAnts`'s twin
+    scanning the right half.
+    """
+    _add_ants(dgroup, simant_data_group, pack, count, range(0, 0x40), 0)
+
+
+def add_red_ants(dgroup, simant_data_group, pack, count: int) -> None:
+    """Populate the yard with up to `count` scenario-init red ants,
+    scanning the RIGHT half (`x=0x7F..0x40`, descending) of the yard.
+
+    Recovered from `_AddRedAnts` (SIMANTW.SYM seg7:6CFE, arg count=[bp+6];
+    FAR return).  Confirmed a genuine twin by independent disassembly:
+    identical cell-qualify/caste-roll logic and the SAME shared
+    `_SRand1(10)`/`_SRand8()` thresholds as `_AddBlackAnts`, but scans
+    `x` from `0x7F` DOWN to `0x40` (the yard's other half) and adds
+    `0x80` to every caste (the colony bit) — both colonies' ants land in
+    the SAME yard A-list (`_AddAntToAList`), not a B/R list.
+    """
+    _add_ants(dgroup, simant_data_group, pack, count, range(0x7F, 0x3F, -1), 0x80)
+
+
 HOLE_EDGE_TILES = (0x19, 0x1A, 0x1C, 0x1F, 0x1E, 0x1D, 0x1B, 0x18)  # dgroup[0x230C..)
 
 
