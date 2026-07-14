@@ -696,6 +696,47 @@ def drop_food_r(dgroup, pack, simant_data_group, x: int, y: int) -> int:
     return _drop_food(dgroup, pack, simant_data_group, 3, 0x72DE, 0x46E6, x, y)
 
 
+def _drown_list(pack, simant_data_group, count_off: int, x_off: int,
+                caste_off: int, mark_off: int, x: int) -> None:
+    """Shared body of drown_b_list/r_list: iterate the list BACKWARD (last
+    slot to first), and for every alive ant (caste != 0) standing at X=`x`
+    whose caste's bits [6:3] (extracted via `(caste & 0x78) >> 3`) fall in
+    1..11 inclusive, mark it drowning (write 0x11 to its `mark_off` field).
+    """
+    count = pack.rw(count_off)
+    for slot in range(count - 1, -1, -1):
+        if simant_data_group.rb(x_off + slot) != x:
+            continue
+        caste = simant_data_group.rb(caste_off + slot)
+        if caste == 0:
+            continue
+        sub = (caste & 0x78) >> 3
+        if 1 <= sub <= 0x0B:
+            simant_data_group.wb(mark_off + slot, 0x11)
+
+
+def drown_b_list(pack, simant_data_group, x: int) -> None:
+    """Mark black-colony ants standing at X=`x` as drowning (see `_drown_list`
+    for the exact caste-subfield gate).  Uses the same per-slot arrays as
+    `find_in_b_list`/`kill_tail_b` (0x392C x-field, 0x3D18 caste); the
+    "drowning" mark is written to 0x3B22 (also written by
+    `add_ant_to_b_list`/`set_ant_index`, meaning not yet given clearer
+    semantics there).
+
+    Recovered from `_DrownBList` (SIMANTW.SYM seg5:2D16, arg x=[bp+6]).
+    """
+    _drown_list(pack, simant_data_group, 0x99D4, 0x392C, 0x3D18, 0x3B22, x)
+
+
+def drown_r_list(pack, simant_data_group, x: int) -> None:
+    """The red-colony twin of `drown_b_list` (x-field 0x42FA, caste 0x46E6,
+    mark 0x44F0).
+
+    Recovered from `_DrownRList` (SIMANTW.SYM seg5:2D66, arg x=[bp+6]).
+    """
+    _drown_list(pack, simant_data_group, 0x72CC, 0x42FA, 0x46E6, 0x44F0, x)
+
+
 def clear_list_b(pack) -> None:
     """Empty the black colony's ant list (just resets the count to 0 — the
     per-slot arrays are left as-is, matching `compact_list_b`'s "the count is

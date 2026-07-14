@@ -1,6 +1,18 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.80) — /goal grind: _CompactListA/B/R — the bulk-delete twin
+## 2026-07-14 (cont.81) — /goal grind: _DrownBList/RList, _ClearListB/R, _KillSpider
+- RECOVERED `drown_b_list`/`r_list` (seg5:2D16/2D66): sweep a colony's list
+  BACKWARD for ants standing at a given X column, marking them "drowning"
+  (field 0x3B22/0x44F0 <- 0x11) when their caste's bits [6:3] (a 4-bit
+  sub-field, `(caste & 0x78) >> 3`) fall in 1..11.  Pinned the exact boundary
+  behavior (sub=0xB included, sub=0xC excluded, sub=0 excluded, dead
+  caste=0 always skipped) — flood-response logic for the water/drop-water
+  system recovered earlier.  10 cases green.
+- RECOVERED `clear_list_b`/`r` (trivial count resets) and `kill_spider` (reset
+  3 PACK fields: mode->5, health/timer->500, a third field->0).  7 cases green.
+- Suite: simant 910.  ~20 gameplay routines recovered so far this /goal
+  session across 12 commits, all pushed.  Continuing per /goal.
+
 - RECOVERED `compact_list_a`/`b`/`r` (seg5:2A16/2A7A/2ADE, no args): a SECOND,
   DIFFERENT deletion strategy from `remove_from_a_list` — a single-pass sweep
   that removes EVERY entry whose caste field is 0 (dead/empty) at once, using a

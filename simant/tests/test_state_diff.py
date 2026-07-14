@@ -679,6 +679,41 @@ def test_removefromalist_state_diff_matches_asm(slot, count):
             f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _DrownBList / _DrownRList (seg5:2D16 / 2D66) — mark drowning ants ----
+@pytest.mark.parametrize("routine,off,count_off,x_off,caste_off,mark_off,fn_name", [
+    ("_DrownBList", 0x2D16, 0x99D4, 0x392C, 0x3D18, 0x3B22, "drown_b_list"),
+    ("_DrownRList", 0x2D66, 0x72CC, 0x42FA, 0x46E6, 0x44F0, "drown_r_list"),
+])
+@pytest.mark.parametrize("x,slots", [
+    # (slot_x, caste) pairs; x is the flood column being tested
+    (5, [(5, 0x08), (5, 0x00), (6, 0x08)]),      # match+markable, dead, no-x-match
+    (5, [(5, 0x60)]),                              # sub=0xC -> excluded (>=0xC)
+    (5, [(5, 0x58)]),                              # sub=0xB -> included (boundary)
+    (5, [(5, 0x80)]),                              # sub=0 -> excluded (<=0)
+    (5, []),                                        # empty list
+])
+def test_drownlist_state_diff_matches_asm(routine, off, count_off, x_off,
+                                          caste_off, mark_off, fn_name, x, slots):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    m = runtime.create_machine()
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    m.mem.ww(pack, count_off, len(slots))
+    for i, (sx, caste) in enumerate(slots):
+        m.mem.wb(sdg, x_off + i, sx)
+        m.mem.wb(sdg, caste_off + i, caste)
+        m.mem.wb(sdg, mark_off + i, 0xAA)     # poison the mark field
+
+    lo, hi = min(x_off, caste_off, mark_off), max(x_off, caste_off, mark_off) + 0x10
+    pack_lo, pack_hi = count_off & ~0xFF, (count_off & ~0xFF) + 0x100
+    regions = [(_SDG, lo, hi), (_PACK, pack_lo, pack_hi)]
+
+    results = _run_and_diff_segs(5, off, (x,), lambda s, p: fn(p, s, x), regions)
+    for (label, asm_after, rec_after), (_si, rlo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, (
+            f"{routine} x={x} slots={slots} {label}: {_first_diff(asm_after, rec_after, rlo)}")
+
+
 # ---- _ClearListB/R (seg5:30E8/30F4), _KillSpider (5:53D4) — trivial resets -
 @pytest.mark.parametrize("routine,off,count_off,fn_name", [
     ("_ClearListB", 0x30E8, 0x99D4, "clear_list_b"),
