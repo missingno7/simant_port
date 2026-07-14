@@ -696,6 +696,60 @@ def drop_food_r(dgroup, pack, simant_data_group, x: int, y: int) -> int:
     return _drop_food(dgroup, pack, simant_data_group, 3, 0x72DE, 0x46E6, x, y)
 
 
+def _compact_list(pack, simant_data_group, count_off: int, caste_off: int,
+                  f0: int, f1: int, fc: int, fe: int) -> None:
+    """Shared body of compact_list_[abr]: sweep the list, removing every
+    entry whose caste field is 0 (dead/empty) by shifting subsequent entries
+    into the gaps in one stable pass, using a running (<=0) hole counter; then
+    subtract the total hole count from the list's count.  Does NOT touch the
+    life grid — the caller is expected to have already cleared it when marking
+    an entry dead (unlike `remove_from_a_list`, which clears it itself).
+    """
+    count = pack.rw(count_off)
+    holes = 0
+    slot = 0
+    while slot < count:
+        if simant_data_group.rb(caste_off + slot) == 0:
+            holes -= 1
+        elif holes != 0:
+            dst = slot + holes
+            for base in (caste_off, f0, f1, fc, fe):
+                simant_data_group.wb(base + dst, simant_data_group.rb(base + slot))
+        slot += 1
+    pack.ww(count_off, (count + holes) & 0xFFFF)
+
+
+def compact_list_a(pack, simant_data_group) -> None:
+    """Sweep the yard ("A") ant list, closing every dead-entry (caste==0) gap.
+
+    Recovered from `_CompactListA` (SIMANTW.SYM seg5:2A16, no args).  Uses the
+    same per-slot fields as `find_in_a_list`/`add_ant_to_a_list` (count
+    0x80F0; caste 0x2F62; fields 0x23A4/0x278E/0x2B78/0x334C).
+    """
+    _compact_list(pack, simant_data_group, 0x80F0, 0x2F62, 0x23A4, 0x278E,
+                 0x2B78, 0x334C)
+
+
+def compact_list_b(pack, simant_data_group) -> None:
+    """The black-colony twin of `compact_list_a` (count 0x99D4; caste 0x3D18;
+    fields 0x3736/0x392C/0x3B22/0x3F0E).
+
+    Recovered from `_CompactListB` (SIMANTW.SYM seg5:2A7A, no args).
+    """
+    _compact_list(pack, simant_data_group, 0x99D4, 0x3D18, 0x3736, 0x392C,
+                 0x3B22, 0x3F0E)
+
+
+def compact_list_r(pack, simant_data_group) -> None:
+    """The red-colony twin of `compact_list_a` (count 0x72CC; caste 0x46E6;
+    fields 0x4104/0x42FA/0x44F0/0x48DC).
+
+    Recovered from `_CompactListR` (SIMANTW.SYM seg5:2ADE, no args).
+    """
+    _compact_list(pack, simant_data_group, 0x72CC, 0x46E6, 0x4104, 0x42FA,
+                 0x44F0, 0x48DC)
+
+
 def remove_from_a_list(pack, simant_data_group, dgroup, slot: int) -> None:
     """Remove the yard ("A") ant at `slot`, closing the gap.
 

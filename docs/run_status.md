@@ -1,6 +1,29 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.79) — /goal grind: _RemoveFromAList — ant-list CRUD complete
+## 2026-07-14 (cont.80) — /goal grind: _CompactListA/B/R — the bulk-delete twin
+- RECOVERED `compact_list_a`/`b`/`r` (seg5:2A16/2A7A/2ADE, no args): a SECOND,
+  DIFFERENT deletion strategy from `remove_from_a_list` — a single-pass sweep
+  that removes EVERY entry whose caste field is 0 (dead/empty) at once, using a
+  running (<=0) hole-counter to shift surviving entries into the gaps, then
+  subtracts the total hole count from the list's count.  Unlike
+  `remove_from_a_list`, this does NOT touch the life grid (the caller is
+  expected to have already cleared it when marking an entry dead by zeroing its
+  caste — a different removal PROTOCOL: mark-then-sweep vs remove-in-place).
+  All three list flavors confirmed byte-identical in structure (just different
+  field bases), matching the established A/B/R symmetry throughout this
+  recovery.  15 state-diff cases green (scattered holes / all-dead / no-dead /
+  empty / edge-first).
+- MILESTONE: the ant-list subsystem is now comprehensively recovered — both
+  deletion strategies (single-slot remove-in-place, bulk mark-and-sweep),
+  Create/Read/Update, plus the whole scent/alarm pheromone system and colony
+  hunger clocks.  16 new gameplay routines recovered this /goal session (on top
+  of the pre-existing map/predicate/pathfinding foundation).
+- Suite: simant 893.  Continuing per /goal — next: reassess the leaf queue for
+  remaining self-contained candidates, or consider moving up a tier now that
+  the ant-record data structure and its full CRUD are understood (a real
+  `_Do*Ant*` behavior routine is now much more tractable, since its list/scent
+  dependencies are largely in place).
+
 - RECOVERED `remove_from_a_list` (seg5:2B42): remove the ant at `slot`, closing
   the gap.  Clears the removed ant's life-grid cell FIRST (using its recorded
   position before the fields are overwritten), decrements the count (floored

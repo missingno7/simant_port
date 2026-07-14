@@ -679,6 +679,45 @@ def test_removefromalist_state_diff_matches_asm(slot, count):
             f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _CompactListA/B/R (seg5:2A16/2A7A/2ADE) — bulk dead-entry sweep ------
+@pytest.mark.parametrize("routine,off,count_off,caste_off,f0,f1,fc,fe,fn_name", [
+    ("_CompactListA", 0x2A16, 0x80F0, 0x2F62, 0x23A4, 0x278E, 0x2B78, 0x334C,
+     "compact_list_a"),
+    ("_CompactListB", 0x2A7A, 0x99D4, 0x3D18, 0x3736, 0x392C, 0x3B22, 0x3F0E,
+     "compact_list_b"),
+    ("_CompactListR", 0x2ADE, 0x72CC, 0x46E6, 0x4104, 0x42FA, 0x44F0, 0x48DC,
+     "compact_list_r"),
+])
+@pytest.mark.parametrize("castes", [
+    [1, 0, 2, 0, 0, 3],       # holes scattered through the middle/end
+    [0, 0, 0],                # all dead
+    [1, 2, 3],                # none dead -> no-op
+    [],                       # empty list
+    [0, 1],                   # dead first, alive second
+])
+def test_compactlist_state_diff_matches_asm(routine, off, count_off, caste_off,
+                                            f0, f1, fc, fe, fn_name, castes):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    count = len(castes)
+    m = runtime.create_machine()
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    m.mem.ww(pack, count_off, count)
+    for i, caste in enumerate(castes):
+        m.mem.wb(sdg, caste_off + i, caste)
+        m.mem.wb(sdg, f0 + i, (i * 3 + 1) & 0xFF)
+        m.mem.wb(sdg, f1 + i, (i * 5 + 2) & 0xFF)
+        m.mem.wb(sdg, fc + i, (i * 7 + 3) & 0xFF)
+        m.mem.wb(sdg, fe + i, (i * 11 + 4) & 0xFF)
+
+    regions = [(_SDG, min(caste_off, f0, f1, fc, fe), max(caste_off, f0, f1, fc, fe) + 0x10),
+              (_PACK, count_off & ~0xFF, (count_off & ~0xFF) + 0x100)]
+    results = _run_and_diff_segs(5, off, (), lambda s, p: fn(p, s), regions)
+    for (label, asm_after, rec_after), (_si, rlo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, (
+            f"{routine} castes={castes} {label}: {_first_diff(asm_after, rec_after, rlo)}")
+
+
 # ---- _SetAntIndex (seg5:584A) — overwrite an existing ant record's fields --
 @pytest.mark.parametrize("list_type,which", [(0, "a"), (1, "a"), (2, "b"),
                                              (3, "r"), (99, "r")])
