@@ -1,5 +1,21 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.70) — state-diff oracle threads RNG; recover _DropWater
+- RECOVERED `_DropWater` (seg5:0C54), the third mutator and a new axis: RNG
+  threading.  It flows/evaporates the water column at Y=x across nest planes 2/3
+  — for each of 64 rows, a source tile (0x4E) becomes _SRand1(8) (advancing the
+  shared LFSR seed at 0xCBF2), any other tile drops by 0x2F.
+- The oracle now proves RNG determinism THROUGH a mutator: the ASM calls the real
+  _SRand1 (which mutates the seed = sim state, so it is NOT stubbed — only the
+  redraw is), and the recovered drop_water advances the recovered LFSR (simone.
+  srand1) identically.  Seed + 128 map cells match byte-exact across seeds.
+- Harness gained a seed_fn callback (arbitrary byte/region seeding) and a bigger
+  step budget for loop mutators.  5 cases green.  Suite: simant 718.
+- Oracle coverage now: ds-direct + selector-indirect, single + multi-field, and
+  RNG-threaded.  Next: the dig chain (_DigTileB -> _MakeNewHoleB -> _DigMyTile),
+  recovered bottom-up, toward a real ant behavior.
+
+
 ## 2026-07-14 (cont.69) — state-diff oracle generalized; recover _SetMyHealth
 - Generalized the state-diff harness to the correct design: run the ASM mutator
   over the REAL DGROUP (side calls stubbed), then apply the recovered Python

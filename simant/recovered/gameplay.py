@@ -242,6 +242,29 @@ def set_my_health(view, new_health: int) -> int:
     return h
 
 
+def drop_water(view, x: int) -> None:
+    """Flow / evaporate the water column at Y=x across the two nest planes.
+
+    Recovered from `_DropWater` (SIMANTW.SYM seg5:0C54).  For each row si
+    (0..0x3F), on plane 2 then plane 3, a water-source tile (0x4E) becomes a
+    random 0..7 via `_SRand1(8)` (advancing the shared LFSR seed at 0xCBF2); any
+    other tile drops by 0x2F (as a byte).  Mutates only the map bytes and the
+    RNG seed; the original also redraws each changed tile (a side effect).
+    `view` is a DGROUP byte/word view.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+    for si in range(0x40):
+        for base in (MAP_PLANE_BASE[2], MAP_PLANE_BASE[3]):
+            off = base + (si << 6) + x
+            tile = view.rb(off)
+            if tile == 0x4E:
+                seed, val = srand1(view.rw(SRAND_SEED_OFF), 8)
+                view.ww(SRAND_SEED_OFF, seed)
+            else:
+                val = tile - 0x2F
+            view.wb(off, val & 0xFF)
+
+
 def life_cell_offset(plane: int, x: int, y: int) -> int | None:
     """DGROUP byte offset of life-grid cell (plane, x, y), or None if out of range.
 

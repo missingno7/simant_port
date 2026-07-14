@@ -41,13 +41,15 @@ def _far_return_stub(cpu):
     s.cs, s.ip = ret_cs, ret_ip
 
 
-def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, stubs=()):
+def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, seed_fn=None,
+                  stubs=()):
     """Run ASM `seg:off`(args) over the real DGROUP with `stubs` far routines
     neutralized, then apply `apply_recovered(view)` to a copy of the same DGROUP.
-    Returns (asm_after, recovered_after) as bytes of the whole DGROUP.
+    Returns (asm_after, recovered_after) as bytes of the sim region.
 
     `seed` is {dgroup_offset: word} written before the run (e.g. pointing the
-    world-state selector globals at DGROUP itself, and setting read-only inputs).
+    world-state selector globals at DGROUP itself, and setting read-only inputs);
+    `seed_fn(mem, dg)` seeds arbitrary bytes/regions (map cells, the RNG seed).
     """
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
@@ -56,6 +58,8 @@ def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, stubs=()):
     s.ds = dg
     for o, v in (seed or {}).items():
         m.mem.ww(dg, o, v & 0xFFFF)
+    if seed_fn is not None:
+        seed_fn(m.mem, dg)
 
     before = bytes(m.mem.block(dg, 0, DGROUP_SIZE))     # pre-state (real data + seed)
 
@@ -69,7 +73,7 @@ def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, stubs=()):
         sp = (sp - 2) & 0xFFFF
         m.mem.ww(s.ss, sp, v & 0xFFFF)
     s.sp = sp
-    for _ in range(400):
+    for _ in range(50_000):                             # loop mutators need headroom
         m.cpu.step()
         if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
             break
@@ -131,6 +135,40 @@ def test_setmyhealth_state_diff_matches_asm(new_health, current, god):
     asm_after, rec_after = _run_and_diff(
         5, 0x8C70, (new_health,),
         lambda v: set_my_health(v, _sx(new_health)), seed=seed)
+    assert asm_after == rec_after, _first_diff(asm_after, rec_after)
+
+
+# ---- _DropWater (seg5:0C54) — RNG-threaded map column update ---------------
+# Proves the oracle threads RNG state: _DropWater calls the real _SRand1 (which
+# advances the DGROUP seed at 0xCBF2), and the recovered drop_water must advance
+# the recovered LFSR identically.  Only the redraw is stubbed; _SRand1 runs.
+_NEST2, _NEST3 = 0x48E8, 0x58E8
+_SEED_OFF = 0xCBF2
+
+
+def _water_seed(x, seed_val):
+    """Seed the column at Y=x on planes 2/3 with a mix that includes water
+    sources (0x4E, which fire the RNG) and other tiles, plus the LFSR seed."""
+    def seed(mem, dg):
+        mem.ww(dg, _SEED_OFF, seed_val)
+        for si in range(0x40):
+            # every 5th row is a water source; others cycle through tile values
+            t2 = 0x4E if si % 5 == 0 else (0x30 + (si % 0x20))
+            t3 = 0x4E if si % 7 == 0 else (0x10 + (si % 0x30))
+            mem.wb(dg, _NEST2 + (si << 6) + x, t2)
+            mem.wb(dg, _NEST3 + (si << 6) + x, t3)
+    return seed
+
+
+@pytest.mark.parametrize("x,seed_val", [
+    (0x10, 0x1234), (0x00, 0xABCD), (0x3F, 0x0001), (0x20, 0x8000),
+    (0x05, 0xFFFF),
+])
+def test_dropwater_state_diff_matches_asm(x, seed_val):
+    from simant.recovered.gameplay import drop_water
+    asm_after, rec_after = _run_and_diff(
+        5, 0x0C54, (x,), lambda v: drop_water(v, x),
+        seed_fn=_water_seed(x, seed_val), stubs=_ZAP_STUB)
     assert asm_after == rec_after, _first_diff(asm_after, rec_after)
 
 

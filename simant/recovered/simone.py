@@ -17,6 +17,7 @@ is the readable source; the islands in ../hooks.py are its adapters.
 from __future__ import annotations
 
 SRAND_TAP = 0x1BF5
+SRAND_SEED_OFF = 0xCBF2                  # DGROUP word holding the SRand LFSR seed
 
 
 def srand_step(seed: int) -> int:
