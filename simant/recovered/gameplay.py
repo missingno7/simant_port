@@ -1048,6 +1048,42 @@ def find_ant_index(pack, simant_data_group, colony: int, field0: int,
     return 0xFFFF
 
 
+def find_life_index(pack, simant_data_group, list_type: int, field0: int,
+                    field1: int, lo: int, hi: int, mask: int) -> int:
+    """A `find_ant_index` variant: matches `field0`/`field1` exactly, but
+    instead of an exact caste match, requires `lo <= (caste & mask) <=
+    hi` — a RANGE check on a masked caste sub-field (e.g. the same kind
+    of `(caste & 0x78) >> 3` "mode" extraction `recruit_red` uses, here
+    left as a caller-supplied mask/range rather than a fixed shift).
+
+    Recovered from `_FindLifeIndex` (SIMANTW.SYM seg5:5922, args
+    list_type=[bp+6], field0=[bp+8], field1=[bp+10], lo=[bp+12],
+    hi=[bp+14], mask=[bp+16]; FAR return).  Same list dispatch and
+    per-slot field bases as `find_ant_index`.  Searches backward from the
+    last slot; returns the matching slot, or 0xFFFF if the list is empty
+    or exhausted without a match.
+    """
+    if list_type <= 1:
+        count = pack.rw(0x80F0)
+        f0_base, f1_base, c_base = 0x23A4, 0x278E, 0x2F62
+    elif list_type == 2:
+        count = pack.rw(0x99D4)
+        f0_base, f1_base, c_base = 0x3736, 0x392C, 0x3D18
+    else:
+        count = pack.rw(0x72CC)
+        f0_base, f1_base, c_base = 0x4104, 0x42FA, 0x46E6
+
+    for slot in range(count - 1, -1, -1):
+        if simant_data_group.rb(f0_base + slot) != field0:
+            continue
+        if simant_data_group.rb(f1_base + slot) != field1:
+            continue
+        masked = simant_data_group.rb(c_base + slot) & mask
+        if lo <= masked <= hi:
+            return slot
+    return 0xFFFF
+
+
 def s_found_ant(dgroup, simant_data_group, pack) -> int:
     """Locate an ant near the current attack-marker target
     (`dgroup[0xAC7C]`/`[0xAC7E]`, the SAME fixed-point `>>4` target
@@ -1672,6 +1708,39 @@ def set_ant_index(pack, simant_data_group, list_type: int, slot: int,
     simant_data_group.wb(caste_off + slot, caste & 0xFF)
     simant_data_group.wb(fc_off + slot, field_c & 0xFF)
     simant_data_group.wb(fe_off + slot, field_e & 0xFF)
+
+
+def get_ant_index(pack, simant_data_group, list_type: int, slot: int):
+    """Read an EXISTING ant record's fields at `slot` — the read
+    counterpart of `set_ant_index`.
+
+    Recovered from `_GetAntIndex` (SIMANTW.SYM seg5:573C, args
+    list_type=[bp+6], slot=[bp+8], plus 5 far-pointer OUT params at
+    `[bp+0xa..0x1a]` the real ASM writes target0/target1/caste/field_c/
+    field_e through one at a time — ported as a returned tuple instead
+    of output pointers, since Python has no equivalent calling
+    convention).  Same list dispatch and field layout as `set_ant_index`.
+    Returns `(target0, target1, caste, field_c, field_e)` on success, or
+    `None` when `slot` is out of range (`0 <= slot < count`, signed).
+    """
+    if list_type <= 1:
+        count_off, f0, f1, caste_off, fc_off, fe_off = (
+            0x80F0, 0x23A4, 0x278E, 0x2F62, 0x2B78, 0x334C)
+    elif list_type == 2:
+        count_off, f0, f1, caste_off, fc_off, fe_off = (
+            0x99D4, 0x3736, 0x392C, 0x3D18, 0x3B22, 0x3F0E)
+    else:
+        count_off, f0, f1, caste_off, fc_off, fe_off = (
+            0x72CC, 0x4104, 0x42FA, 0x46E6, 0x44F0, 0x48DC)
+    if not (0 <= slot < pack.rw(count_off)):
+        return None
+    return (
+        simant_data_group.rb(f0 + slot),
+        simant_data_group.rb(f1 + slot),
+        simant_data_group.rb(caste_off + slot),
+        simant_data_group.rb(fc_off + slot),
+        simant_data_group.rb(fe_off + slot),
+    )
 
 
 def get_smell_t(simant_data_group, p: int, q: int, direction: int,

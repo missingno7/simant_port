@@ -1,5 +1,31 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.141) — /goal grind: _GetAntIndex/_FindLifeIndex — list-search siblings
+- Dispatched a 5th research survey. It flagged `_SetAntIndex` and
+  `_BlockMove` as candidates; both turned out to be non-issues once
+  checked — `_SetAntIndex` is ALREADY recovered (`set_ant_index`), and
+  `_BlockMove` is a generic memcpy already accounted for inline in
+  `remove_from_a_list`'s own docstring. Caught before wasting effort
+  re-deriving either.
+- RECOVERED `get_ant_index` (`_GetAntIndex`, seg5:573C) — the read
+  counterpart of `set_ant_index`. The real ASM writes through 5 far-
+  pointer OUT params; ported as a function returning `(target0, target1,
+  caste, field_c, field_e)` on success or `None` on an out-of-range
+  slot, since Python has no equivalent calling convention. Test needed a
+  genuinely new harness shape: pointed all 5 OUT pointers into unused
+  DGROUP scratch (`0xF000+`) and read the words back after the real ASM
+  run — reused `_run_and_get_ax`'s existing push-arg mechanism by
+  passing the far pointers as (offset, selector) word pairs in natural
+  declaration order, no new harness code needed.
+- RECOVERED `find_life_index` (`_FindLifeIndex`, seg5:5922) — a
+  `find_ant_index` variant: exact match on two fields, but a RANGE check
+  (`lo <= (caste & mask) <= hi`) on a masked caste sub-field instead of
+  an exact caste match.
+- 20 cases (5 for `get_ant_index` across all three list dispatches plus
+  2 failure modes; 15 for `find_life_index` — 5 scenarios x 3 list
+  dispatches) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1503 (+20), full suite green.
+
 ## 2026-07-14 (cont.140) — /goal grind: _SFoundAnt — locate an ant near the attack marker
 - RECOVERED `s_found_ant` (`_SFoundAnt`, seg5:53F6, NO args, FAR return) —
   the routine `_FindAntIndex` unblocked. Locates an ant near the current

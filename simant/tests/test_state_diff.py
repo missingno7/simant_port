@@ -3414,6 +3414,105 @@ def test_sfoundant_walk_matches_asm(target_x, target_y, dir_idx, life_cells,
     assert ax == (expect & 0xFFFF), f"{label}: asm={ax:#06x} rec={expect:#06x}"
 
 
+# ---- _GetAntIndex (seg5:573C) — read counterpart of _SetAntIndex, 5 far ---
+# pointer OUT params.  Point every OUT pointer into DGROUP scratch (0xF000+)
+# well away from any real field, and read the words back afterward.
+_GETANTINDEX_OUT_OFFSETS = [0xF000, 0xF002, 0xF004, 0xF006, 0xF008]
+_DG_SELECTOR = runtime.create_machine().seg_bases[hooks.DG_SEG_INDEX]
+
+
+def _getantindex_seed(list_type, slot, count, fields):
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        count_off = 0x80F0 if list_type <= 1 else (0x99D4 if list_type == 2 else 0x72CC)
+        f0, f1, c, fc, fe = (
+            (0x23A4, 0x278E, 0x2F62, 0x2B78, 0x334C) if list_type <= 1 else
+            (0x3736, 0x392C, 0x3D18, 0x3B22, 0x3F0E) if list_type == 2 else
+            (0x4104, 0x42FA, 0x46E6, 0x44F0, 0x48DC))
+        m.mem.ww(pack, count_off, count)
+        if fields is not None:
+            t0, t1, caste, field_c, field_e = fields
+            m.mem.wb(sdg, f0 + slot, t0)
+            m.mem.wb(sdg, f1 + slot, t1)
+            m.mem.wb(sdg, c + slot, caste)
+            m.mem.wb(sdg, fc + slot, field_c)
+            m.mem.wb(sdg, fe + slot, field_e)
+        for off in _GETANTINDEX_OUT_OFFSETS:
+            m.mem.ww(dg, off, 0xDEAD)
+    return seed
+
+
+@pytest.mark.parametrize("list_type,slot,count,fields", [
+    (0, 2, 5, (10, 20, 0x50, 3, 7)),    # A-list valid slot
+    (2, 1, 3, (15, 25, 0x88, 1, 2)),    # B-list valid slot
+    (5, 0, 2, (30, 40, 0x99, 4, 5)),    # R-list (list_type>2) valid slot
+    (0, 5, 5, None),                     # slot == count -> out of range
+    (0, -1, 5, None),                    # negative slot -> out of range
+])
+def test_getantindex_matches_asm(list_type, slot, count, fields):
+    from simant.recovered.gameplay import get_ant_index
+    args = (list_type, slot & 0xFFFF)
+    for off in _GETANTINDEX_OUT_OFFSETS:
+        args += (off, _DG_SELECTOR)
+    ax, m = _run_and_get_ax(5, 0x573C, args,
+                            seed_fn=_getantindex_seed(list_type, slot, count, fields))
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    asm_out = [m.mem.rw(dg, off) for off in _GETANTINDEX_OUT_OFFSETS]
+
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    expect = get_ant_index(pack_view, sdg_view, list_type, slot)
+
+    if expect is None:
+        assert ax == 0, f"list_type={list_type} slot={slot}: expected failure, asm ax={ax:#06x}"
+        assert asm_out == [0xDEAD] * 5, "OUT pointers must be untouched on failure"
+    else:
+        assert ax == 1, f"list_type={list_type} slot={slot}: expected success, asm ax={ax:#06x}"
+        assert asm_out == list(expect), (
+            f"list_type={list_type} slot={slot}: asm={asm_out} rec={list(expect)}")
+
+
+# ---- _FindLifeIndex (seg5:5922) — find_ant_index variant, masked caste ----
+# range instead of an exact match.
+@pytest.mark.parametrize("list_type,count_off,f0_off,f1_off,c_off", [
+    (0, 0x80F0, 0x23A4, 0x278E, 0x2F62),
+    (2, 0x99D4, 0x3736, 0x392C, 0x3D18),
+    (5, 0x72CC, 0x4104, 0x42FA, 0x46E6),
+])
+@pytest.mark.parametrize("count,slots,f0,f1,lo,hi,mask", [
+    # caste 0x35 & 0x0F = 5, in [2,6] -> match
+    (3, [(0, 5, 6, 0x35)], 5, 6, 2, 6, 0x0F),
+    # 2 slots both match field0/field1 -> last (highest) slot wins
+    (5, [(0, 5, 6, 0x32), (1, 5, 6, 0x35)], 5, 6, 2, 6, 0x0F),
+    # masked value out of [lo,hi] -> no match
+    (3, [(0, 5, 6, 0x38)], 5, 6, 2, 6, 0x0F),
+    # field0/field1 mismatch -> no match despite masked caste in range
+    (3, [(0, 1, 1, 0x35)], 5, 6, 2, 6, 0x0F),
+    # empty list -> 0xFFFF
+    (0, [], 5, 5, 0, 0xFF, 0xFF),
+])
+def test_findlifeindex_matches_asm(list_type, count_off, f0_off, f1_off, c_off,
+                                   count, slots, f0, f1, lo, hi, mask):
+    from simant.recovered.gameplay import find_life_index
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, count_off, count)
+        for slot, sf0, sf1, sc in slots:
+            m.mem.wb(sdg, f0_off + slot, sf0)
+            m.mem.wb(sdg, f1_off + slot, sf1)
+            m.mem.wb(sdg, c_off + slot, sc)
+
+    ax, m = _run_and_get_ax(5, 0x5922, (list_type, f0, f1, lo, hi, mask), seed_fn=seed)
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    expect = find_life_index(pack_view, sdg_view, list_type, f0, f1, lo, hi, mask)
+    assert ax == (expect & 0xFFFF), f"list_type={list_type}: asm={ax:#06x} rec={expect:#06x}"
+
+
 # ---- _AddAntToAList/BList/RList (seg5:2EF0/2F4A/2FA4) — list insert --------
 _YARD_SPAN = 0x2000
 _ADDANTA_REGIONS = [
