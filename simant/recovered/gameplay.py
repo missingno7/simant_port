@@ -321,6 +321,59 @@ def is_it_a_hole(plane: int, x: int, y: int, tile: int, inside: bool) -> int:
     return 1 if tile == 0x18 else 0
 
 
+# The 8-way step offsets _GetBestDir scans (the DGROUP direction tables at
+# [0xC364]/[0xC366]) — the same compass order as CLEAR_3X3_DX/DY.
+GET_BEST_DIR_DX = (0, 1, 1, 1, 0, -1, -1, -1)
+GET_BEST_DIR_DY = (-1, -1, 0, 1, 1, 1, 0, -1)
+
+
+def get_best_dir(plane, cur_x, cur_y, tgt_x, tgt_y, read_map, read_life, inside):
+    """The best 8-way step from (cur_x, cur_y) toward (tgt_x, tgt_y) — ant
+    pathfinding.
+
+    Recovered from `_GetBestDir` (SIMANTW.SYM seg6:405E), the routine that
+    composes the recovered movement predicates.  It scans the eight neighbours
+    and keeps the one that most reduces the squared distance to the target
+    (`get_dis`) while being passable (`is_not_obstacle`), not a pebble
+    (`is_this_pebble`), and strictly closer than any kept so far; it prefers a
+    genuinely clear cell (`is_clear_tile`) but falls back to an occupied/blocked
+    one if that is the only improvement.
+
+    `read_map(plane, x, y)` returns the map tile (0..0xFF) or None out of range;
+    `read_life(plane, x, y)` returns the life byte (>= 0) or None; `inside` is the
+    world inside/outside flag.  Returns the chosen direction 0..7, -1 when already
+    at the target (distance 0), or -2 (0xFFFE) when no neighbour improves.
+
+    NOTE: this is a behaviour routine reconstructed as source and verified against
+    the original ASM's RETURN VALUE (its callers read only that); its full
+    register residue is not modelled as a lifted island.
+    """
+    best_dist = get_dis(cur_x, cur_y, tgt_x, tgt_y)
+    if best_dist <= 0:
+        return -1
+    best_clear, best_any = -1, -2
+    for si in range(8):
+        nx = cur_x + GET_BEST_DIR_DX[si]
+        ny = cur_y + GET_BEST_DIR_DY[si]
+        tile = read_map(plane, nx, ny)
+        if tile is None or not is_not_obstacle(plane, tile, inside):
+            continue
+        if is_this_pebble(plane, tile):
+            continue
+        dist = get_dis(nx, ny, tgt_x, tgt_y)
+        if dist >= best_dist:
+            continue
+        best_dist = dist
+        life = read_life(plane, nx, ny)
+        if life is not None and life > 0:               # occupied -> fallback
+            best_any = si
+        elif is_clear_tile(plane, tile, life if life is not None else 0):
+            best_clear = si
+        else:
+            best_any = si
+    return best_clear if best_clear >= 0 else best_any
+
+
 # The 3x3 neighbour offsets _IsClear3x3 walks (a DGROUP direction table): the 8
 # compass directions around the centre, in the order N, NE, E, SE, S, SW, W, NW.
 CLEAR_3X3_DX = (0, 1, 1, 1, 0, -1, -1, -1)

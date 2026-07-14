@@ -2229,6 +2229,73 @@ def test_isitahole_island_matches_asm(plane, x, y, tile, inside):
     assert isl == asm, f"(p={plane},{x:#x},{y},t={tile:#x},in={inside}): {isl} != {asm}"
 
 
+# ---- _GetBestDir (seg6:405E) — ant pathfinding, verified by RETURN VALUE ------
+# A behaviour routine (7 interleaved sub-calls per iteration): reconstructed as
+# source and checked against the ASM's return value, not as a full-residue island.
+def _drive_getbestdir(plane, cur, tgt, inside, overrides):
+    from simant.recovered.gameplay import (GET_BEST_DIR_DX, GET_BEST_DIR_DY,
+        get_best_dir, life_cell_offset, map_cell_offset)
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    world = m.mem.rw(DG, hooks.ISITFOOD_WORLD_SEG_G)
+    m.mem.ww(world, hooks.ISITFOOD_INSIDE_FLAG_OFF, 1 if inside else 0)
+    cx, cy = cur
+    # seed the 8 neighbours clear (map 0 / life 0), then apply overrides
+    cells = {(cx + dx, cy + dy): (0, 0)
+             for dx, dy in zip(GET_BEST_DIR_DX, GET_BEST_DIR_DY)}
+    cells.update(overrides)
+    for (px, py), (mt, lf) in cells.items():
+        mo = map_cell_offset(plane, px, py)
+        if mo is not None:
+            m.mem.wb(DG, mo & 0xFFFF, mt & 0xFF)
+            m.mem.wb(DG, life_cell_offset(plane, px, py) & 0xFFFF, lf & 0xFF)
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[6], 0x405E                # _GetBestDir @ seg6:405E
+    sp = s.sp
+    for v in (tgt[1], tgt[0], cy, cx, plane, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(60000):                            # 8 dirs x up to 7 sub-calls
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError("ASM _GetBestDir did not return")
+    asm = s.ax & 0xFFFF
+
+    def read_map(pl, x, y):
+        o = map_cell_offset(pl, x, y)
+        return m.mem.rb(DG, o & 0xFFFF) if o is not None else None
+
+    def read_life(pl, x, y):
+        o = life_cell_offset(pl, x, y)
+        return m.mem.rb(DG, o & 0xFFFF) if o is not None else None
+
+    py = get_best_dir(plane, cx, cy, tgt[0], tgt[1], read_map, read_life,
+                      inside) & 0xFFFF
+    return asm, py
+
+
+@pytest.mark.parametrize("inside", [False, True])
+@pytest.mark.parametrize("plane,cur,tgt,overrides", [
+    (2, (0x10, 0x10), (0x10, 0x10), {}),                     # already there -> -1
+    (2, (0x10, 0x10), (0x18, 0x10), {}),                     # clear path east
+    (2, (0x10, 0x10), (0x10, 0x04), {}),                     # clear path north
+    (2, (0x10, 0x10), (0x18, 0x10), {(0x11, 0x10): (0x40, 0)}),  # direct dir is an obstacle
+    (2, (0x10, 0x10), (0x18, 0x10), {(0x11, 0x10): (0x00, 5)}),  # direct dir occupied -> fallback
+    (2, (0x10, 0x10), (0x18, 0x10), {(0x11, 0x10): (0x30, 0)}),  # direct dir is a pebble
+    (0, (0x10, 0x10), (0x18, 0x10), {}),                     # nest plane, clear east
+    (2, (0x01, 0x10), (0x00, 0x10), {}),                     # near the grid edge
+])
+def test_getbestdir_matches_asm_return(plane, cur, tgt, overrides, inside):
+    asm, py = _drive_getbestdir(plane, cur, tgt, inside, overrides)
+    assert asm == py, f"p={plane} cur={cur} tgt={tgt} ov={overrides} in={inside}: asm={asm:#x} py={py:#x}"
+
+
 # ---- _IsClear3x3 (seg5:5AD2) — 3x3 block clear (9x _IsClearTile) --------------
 def _run_isclear3x3(with_island, plane, x, y, blocked):
     from simant.recovered.gameplay import (CLEAR_3X3_DX, CLEAR_3X3_DY,
