@@ -983,6 +983,50 @@ def test_leavenestb_no_hole_tracked_state_diff_matches_asm():
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _DigOutBNest/_DigOutRNest (seg7:62DE/63B8) — wander a nest tunnel up -
+# from (32,1).  Composes dig_tile_b/r + dig_tile_them_b/r + make_new_hole_b/r,
+# so reuses _MAKENEWHOLEB_REGIONS (identical bounds to _MAKENEWHOLER_REGIONS).
+def _digoutnest_seed(seed_val, map_base, hole_track_off, dirt_tile, hole_tracked):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        for x in range(0, 64):
+            for y in range(0, 40):
+                m.mem.wb(dg, map_base + (x << 6) + y, dirt_tile)
+            m.mem.wb(sdg, hole_track_off + x, 1 if hole_tracked else 0)
+        m.mem.wb(pack, 0x9B6E, 1)
+        for off in (0x8104, 0x8106, 0x811A, 0x811C, 0x72C8, 0x9DDC, 0x9DDE,
+                   0x9DE2, 0x9DE4, 0x7A56, 0x9FBA, 0x9FD2):
+            m.mem.ww(pack, off, 0)
+    return seed
+
+
+@pytest.mark.parametrize("which,off,map_base,hole_track_off", [
+    ("b", 0x62DE, 0x48E8, 0x82D2),
+    ("r", 0x63B8, 0x58E8, 0x8312),
+])
+@pytest.mark.parametrize("count,seed_val,hole_tracked", [
+    (0, 0x1234, True),    # count=0 -> only the up-front dig at (32,1)
+    (3, 0x1234, True),    # a few wander steps, holes already tracked
+    (5, 0xBEEF, False),   # more steps, holes NOT tracked -> can trigger make_new_hole
+])
+def test_digoutnest_state_diff_matches_asm(which, off, map_base, hole_track_off,
+                                           count, seed_val, hole_tracked):
+    import simant.recovered.gameplay as G
+    fn = G.dig_out_b_nest if which == "b" else G.dig_out_r_nest
+    results = _run_and_diff_segs(
+        7, off, (count,),
+        lambda d, s, p: fn(d, s, p, count),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_digoutnest_seed(seed_val, map_base, hole_track_off, 0x25,
+                                 hole_tracked))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, (
+            f"{which} count={count} seed={seed_val:#x} tracked={hole_tracked} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _MakeNewHoleR (seg5:1D02) — search on the SAME yard map, red closing --
 _MAKENEWHOLER_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed

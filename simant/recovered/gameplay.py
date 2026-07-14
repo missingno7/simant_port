@@ -3356,6 +3356,106 @@ def dig_tile_them_r(dgroup, simant_data_group, pack, x: int, y: int) -> int:
     return 1
 
 
+def _dig_out_nest(dgroup, simant_data_group, pack, count: int, dig_tile_fn,
+                  dig_tile_them_fn, make_new_hole_fn, hole_track_off: int) -> None:
+    """Shared body of `dig_out_b_nest`/`dig_out_r_nest`: carve a wandering
+    tunnel up from a fixed starting cell, one `count`-bounded step at a
+    time, occasionally triggering a fresh above-ground hole once the
+    tunnel reaches the surface row.
+
+    Digs `(32, 1)` once up front via `dig_tile_fn` (unconditionally, even
+    if `count == 0`, in which case that's the routine's entire effect).
+    Each step: rerolls the wander direction (`_SRand1(5) + direction - 3`,
+    masked to `0..7`, seeded from `direction=4` on the very first step),
+    steps by the compass delta at that direction (the SAME
+    `simant_data_group` tables `sim_queen_a`/`make_blk_queen` use),
+    clamping `x` to `1..0x3E` (forcing `direction` to `2`/`6` on a clamp)
+    and `y` to `1..0x3E` (separately staging the NEXT step's starting
+    direction: `4` if `y` clamped low, `0` if it clamped high, else
+    whatever `direction` ended up as after the `x` clamp) — the direction
+    used for the NEXT loop iteration is this staged value, not
+    necessarily the one just used for this step's compass lookup.  Then
+    calls `dig_tile_them_fn` at the (possibly clamped) candidate cell;
+    only on success does the tunnel actually advance there, and only
+    then — and only if the new `y == 1` (back at the surface row) and
+    `_FillHolesBN`/`RN`'s per-column tracking array
+    (`simant_data_group[hole_track_off+x]`) has nothing recorded yet —
+    calls `make_new_hole_fn(x)`.  Runs until `count` reaches `0`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    dig_tile_fn(dgroup, simant_data_group, pack, 32, 1)
+    if count == 0:
+        return
+
+    x, y = 32, 1
+    direction = 4
+
+    while True:
+        seed = dgroup.rw(SRAND_SEED_OFF)
+        seed, roll5 = srand1(seed, 5)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        direction = (roll5 + direction - 3) & 7
+
+        cand_x = x + sx8(simant_data_group.rb(direction))
+        cand_y = y + sx8(simant_data_group.rb(8 + direction))
+
+        if cand_x < 1:
+            cand_x = 1
+            direction = 2
+        elif cand_x > 0x3E:
+            cand_x = 0x3E
+            direction = 6
+
+        if cand_y < 2:
+            cand_y = 1
+            next_direction = 4
+        else:
+            next_direction = direction
+            if cand_y > 0x3E:
+                cand_y = 0x3E
+                next_direction = 0
+
+        if dig_tile_them_fn(dgroup, simant_data_group, pack, cand_x, cand_y) == 1:
+            x, y = cand_x, cand_y
+            if y == 1 and simant_data_group.rb(hole_track_off + x) == 0:
+                make_new_hole_fn(dgroup, simant_data_group, pack, x)
+
+        count -= 1
+        if count == 0:
+            return
+        direction = next_direction
+
+
+def dig_out_b_nest(dgroup, simant_data_group, pack, count: int) -> None:
+    """Carve a wandering black-nest tunnel up from `(32, 1)`.
+
+    Recovered from `_DigOutBNest` (SIMANTW.SYM seg7:62DE, arg
+    count=[bp+6]; FAR return).  See `_dig_out_nest` for the shared
+    shape; uses `dig_tile_b`, `dig_tile_them_b`, `make_new_hole_b`, and
+    `_FillHolesBN`'s tracking array (`simant_data_group[0x82D2+x]`).
+    """
+    _dig_out_nest(dgroup, simant_data_group, pack, count, dig_tile_b,
+                 dig_tile_them_b, make_new_hole_b, 0x82D2)
+
+
+def dig_out_r_nest(dgroup, simant_data_group, pack, count: int) -> None:
+    """Carve a wandering red-nest tunnel up from `(32, 1)`.
+
+    Recovered from `_DigOutRNest` (SIMANTW.SYM seg7:63B8, arg
+    count=[bp+6]; FAR return).  Confirmed a genuine twin of
+    `dig_out_b_nest` by independent disassembly — identical shape, only
+    `dig_tile_r`/`dig_tile_them_r`/`make_new_hole_r` and `_FillHolesRN`'s
+    OWN tracking array (`simant_data_group[0x8312+x]`) differ.
+    """
+    _dig_out_nest(dgroup, simant_data_group, pack, count, dig_tile_r,
+                 dig_tile_them_r, make_new_hole_r, 0x8312)
+
+
 def try_move_dir_r(dgroup, simant_data_group, pack, x: int, y: int,
                    direction: int) -> int:
     """Attempt to move the acting red ant one step in `direction` from

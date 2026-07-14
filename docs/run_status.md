@@ -1,5 +1,30 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.148) — /goal grind: _DigOutBNest/_DigOutRNest — wander a nest tunnel up
+- RECOVERED `dig_out_b_nest`/`dig_out_r_nest` (`_DigOutBNest`/
+  `_DigOutRNest`, seg7:62DE/63B8, arg count=[bp+6], FAR return) via a
+  shared `_dig_out_nest` helper — carves a wandering tunnel up from a
+  fixed `(32, 1)` starting cell, one `count`-bounded step at a time.
+  Each step rerolls the wander direction, steps by the compass delta,
+  clamps `x`/`y` into range (each clamp forcing a specific direction for
+  the CURRENT step, `y`'s clamp separately staging the direction for the
+  NEXT step), then calls the already-recovered `dig_tile_them_b`/`r`;
+  only on success does the tunnel advance, and only then — back at the
+  surface row with no hole already tracked for that column — calls
+  `make_new_hole_b`/`r`. Composes 3 already-recovered routines per
+  colony (`dig_tile_b`/`r`, `dig_tile_them_b`/`r`, `make_new_hole_b`/`r`).
+- The trickiest part was the direction-staging interplay: the register
+  holding "current direction" gets reused across iterations in a way
+  where the x-clamp and y-clamp both independently override it, and the
+  y-clamp's override captures whatever the x-clamp left behind — traced
+  both colonies' disassembly independently line-by-line before writing
+  any Python, rather than porting incrementally and debugging failures.
+- 6 cases (3 scenarios × both colonies: count=0 up-front-dig-only, a
+  few wander steps with holes pre-tracked, more steps with holes NOT
+  tracked to exercise the `make_new_hole` trigger) — ALL GREEN ON THE
+  FIRST RUN, confirming the careful upfront tracing paid off.
+- Suite: simant 1559 (+6), full suite green.
+
 ## 2026-07-14 (cont.147) — /goal grind: _GetNewRedTask — reassign the red recruit task
 - RECOVERED `get_new_red_task` (`_GetNewRedTask`, seg6:9940, NO args,
   FAR return) — the routine that unblocked `_UnRecruitRed`/`_RecruitRed`
