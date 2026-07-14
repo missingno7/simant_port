@@ -6154,3 +6154,74 @@ def test_dorandr_yellowfight_gate_raises():
     with pytest.raises(NotImplementedError):
         do_rand_r(dgv, ByteBackend(bytearray(0x10000), 0),
                  ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08, 1)
+
+
+# ---- _ForceModeA/B (seg7:0550/0622) — force a mode-transition state ------
+_FORCEMODE_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCE82),
+    (_SDG, 0x2300, 0x4000),
+]
+
+
+def _forcemode_seed(slot, x, y, tile, ce7e, ce80, cd88, counter_off,
+                    field_c_off, field_e_off, x_off=None, y_off=None):
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        if x_off is not None:
+            m.mem.wb(sdg, x_off + slot, x)
+            m.mem.wb(sdg, y_off + slot, y)
+            m.mem.wb(dg, 0x28E8 + (x << 6) + y, tile)
+        m.mem.wb(dg, 0xCE7E, ce7e)
+        m.mem.ww(dg, 0xCE80, ce80)
+        m.mem.ww(dg, 0xCD88, cd88 & 0xFFFF)
+        m.mem.wb(sdg, counter_off + slot, 0x10)
+        m.mem.wb(sdg, field_c_off + slot, 0x99)
+        m.mem.wb(sdg, field_e_off + slot, 0x99)
+    return seed
+
+
+@pytest.mark.parametrize("mode,label", [
+    (1, "mode1-bump-plus8"),
+    (2, "mode2-noop-bump"),
+    (3, "mode3-bump-minus8-and-maptile"),
+    (4, "mode4-full-noop"),
+    (5, "mode5-bump-minus18"),
+    (7, "mode7-alias-of-3"),
+    (9, "mode9-alias-of-5"),
+    (10, "mode10-out-of-range-default"),
+])
+def test_forcemodea_state_diff_matches_asm(mode, label):
+    from simant.recovered.gameplay import force_mode_a
+    slot, x, y, arg3 = 3, 20, 20, 6
+    results = _run_and_diff_segs(
+        7, 0x0550, (slot, mode, arg3),
+        lambda d, s: force_mode_a(d, s, slot, mode, arg3),
+        _FORCEMODE_REGIONS,
+        seed_fn=_forcemode_seed(slot, x, y, 0x10, 0x0F, 1, 0x28,
+                                0x2F62, 0x2B78, 0x334C,
+                                x_off=0x23A4, y_off=0x278E))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _FORCEMODE_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("mode,label", [
+    (1, "mode1-caste-plus8"),
+    (2, "mode2-noop-bump"),
+    (3, "mode3-caste-minus8"),
+    (4, "mode4-full-noop"),
+    (5, "mode5-caste-minus18"),
+    (10, "mode10-out-of-range-default"),
+])
+def test_forcemodeb_state_diff_matches_asm(mode, label):
+    from simant.recovered.gameplay import force_mode_b
+    slot, arg3 = 3, 6
+    results = _run_and_diff_segs(
+        7, 0x0622, (slot, mode, arg3),
+        lambda d, s: force_mode_b(d, s, slot, mode, arg3),
+        _FORCEMODE_REGIONS,
+        seed_fn=_forcemode_seed(slot, 0, 0, 0, 0x0F, 1, 0x28,
+                                0x3D18, 0x3B22, 0x3F0E))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _FORCEMODE_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

@@ -1,5 +1,44 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.170) — /goal grind: _ForceModeA/B — force mode-transition state
+- RECOVERED `force_mode_a`/`force_mode_b` (`_ForceModeA`/`_ForceModeB`,
+  SIMANTW.SYM seg7:0550/0622, args slot=[bp+6], mode=[bp+8], arg3=
+  [bp+10]; FAR return, 210/176 bytes) — self-contained (no unrecovered
+  dependencies), a 9-way jump-table dispatcher (several `mode` values
+  sharing one handler) that force-stamps an ant's `field_c`/`field_e`
+  (A) or `caste`/`field_e` (B) mode-transition fields. `lindis_win16.py`
+  can't follow indirect jumps (it single-steps linearly and decodes the
+  jump table's own DATA bytes as garbage instructions), so the table
+  itself was read directly as raw words from a live machine, then each
+  of the 5 distinct handler blocks it points into was disassembled by
+  address.
+  - Confirmed via independent disassembly that B is NOT a mechanical
+    twin of A: B's `mode in (3, 7)` handler is a PLAIN caste bump with
+    no further effect, where A's SAME modes ALSO force-set the slot's
+    own yard map tile to `0x48` if it's below that.
+  - `mode in (4, 8)` (or any out-of-`1..9` value): a genuine no-op
+    past a SHARED tail (both routines): if `arg3 == 6` AND
+    `dgroup[0xCE80] == 1` (read directly, no pointer-global
+    indirection — like `get_winner`'s own strength tables), overwrites
+    `field_e` with a small fixed bit-packed status byte built from
+    `dgroup[0xCE7E]`/`[0xCD88]`.
+  - Caught and fixed a genuine transcription slip BEFORE it ever
+    reached the real-ASM oracle's first failing assertion (a plain
+    decimal-to-hex miscopy, `12130 → 0x2F6A` instead of the correct
+    `0x2F62`, plus a byte-vs-word size mismatch on the same field — the
+    real opcode is `ADD r/m8,imm8`, not the word-sized form); caught
+    when the ASSERTION diff pointed at a shifted-by-8 byte offset,
+    fixed by re-decoding the exact opcode bytes.
+  - Also fixed two instances of the SAME region-window bug this
+    session has now hit three times (`_FoodFall` cont.163,
+    `_CheckNestFightB/R` cont.165): the SDG test region excluded first
+    the caste/field_e fields (B, above the window's upper bound) and
+    then the x/y fields (A, below the window's lower bound) —
+    widened both bounds to cover everything the recovered code reads.
+- 14 cases (8 A covering every distinct mode-family branch, 6 B) — all
+  green after the transcription and harness fixes.
+- Suite: simant 1725 (+14), full suite green.
+
 ## 2026-07-15 (cont.169) — /goal grind: _DoRandB/R — random wander tick
 - RECOVERED `do_rand_b`/`do_rand_r` (`_DoRandB`/`_DoRandR`, SIMANTW.SYM
   seg6:3876/5F7A, args x=[bp+6], y=[bp+8], attacker=[bp+10], sub=

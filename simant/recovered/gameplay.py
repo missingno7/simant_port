@@ -7433,3 +7433,111 @@ def not_mowed(pack, index: int, bit: int) -> int:
         pack.ww(0xA0B6 + off, (word - mask) & 0xFFFF)
         return 1
     return 0
+
+
+def force_mode_a(dgroup, simant_data_group, slot: int, mode: int,
+                 arg3: int) -> None:
+    """Force a yard ("A") ant's mode-transition fields to a specific
+    state, dispatching on `mode` (1..9; anything else is a no-op past
+    the tail below) via a 9-entry jump table with several modes
+    sharing one handler.
+
+    Recovered from `_ForceModeA` (SIMANTW.SYM seg7:0550, args slot=[bp+6],
+    mode=[bp+8], arg3=[bp+10]; FAR return, 210 bytes). Uses the
+    already-recovered `field_c`/`field_e` A-list slots (`[0x2B78+slot]`/
+    `[0x334C+slot]`, same fields `sim_egg_a`-family stamps) plus a
+    third per-slot BYTE counter at `[0x2F62+slot]`.
+
+    `mode == 1`: bumps the counter `+8`. `mode in (2, 6)`: no extra
+    effect. `mode in (3, 7)`: bumps the counter `-8`, AND — a step none
+    of the other modes have — if the slot's own yard map tile
+    (`simant_data_group[0x23A4+slot]`/`[0x278E+slot]`) is `< 0x48`,
+    force-sets it to `0x48`. `mode in (5, 9)`: bumps the counter
+    `-0x18`. Every one of THOSE modes then stamps `field_c = arg3`,
+    `field_e = 0`. `mode in (4, 8)` (or any other value, INCLUDING an
+    out-of-1..9-range one): skips the counter bump AND the stamp
+    entirely — the routine only does the ONE thing below.
+
+    Finally, regardless of `mode`: if `arg3 == 6` AND `dgroup[0xCE80]
+    == 1` (both read directly, no pointer-global indirection), OVERWRITES
+    `field_e` again with `((dgroup[0xCE7E] & 0xFC) << 2) | ((dgroup[0xCD88]
+    signed >> 3) & 0xFF)` — a small fixed bit-packed status byte.
+    """
+    stamp = True
+    if mode == 1:
+        simant_data_group.wb(
+            0x2F62 + slot, (simant_data_group.rb(0x2F62 + slot) + 8) & 0xFF)
+    elif mode in (2, 6):
+        pass
+    elif mode in (3, 7):
+        simant_data_group.wb(
+            0x2F62 + slot, (simant_data_group.rb(0x2F62 + slot) - 8) & 0xFF)
+        x = simant_data_group.rb(0x23A4 + slot)
+        y = simant_data_group.rb(0x278E + slot)
+        cell = MAP_PLANE_BASE[0] + (x << 6) + y
+        if dgroup.rb(cell) < 0x48:
+            dgroup.wb(cell, 0x48)
+    elif mode in (5, 9):
+        simant_data_group.wb(
+            0x2F62 + slot, (simant_data_group.rb(0x2F62 + slot) - 0x18) & 0xFF)
+    else:
+        stamp = False
+
+    if stamp:
+        simant_data_group.wb(0x2B78 + slot, arg3 & 0xFF)
+        simant_data_group.wb(0x334C + slot, 0)
+
+    if arg3 == 6 and dgroup.rw(0xCE80) == 1:
+        al = ((dgroup.rb(0xCE7E) & 0xFC) << 2) & 0xFF
+        cx = _sx16(dgroup.rw(0xCD88)) >> 3
+        al |= cx & 0xFF
+        simant_data_group.wb(0x334C + slot, al & 0xFF)
+
+
+def force_mode_b(dgroup, simant_data_group, slot: int, mode: int,
+                 arg3: int) -> None:
+    """The black-colony twin of `force_mode_a` — NOT a mechanical twin
+    (independently confirmed via the raw disassembly): it stamps a
+    DIFFERENT field pair (`caste`/`field_e`, not `field_c`/`field_e`),
+    and its `mode in (3, 7)` handler does NOT have the map-tile check
+    `force_mode_a`'s does — it's a plain caste bump, nothing else.
+
+    Recovered from `_ForceModeB` (SIMANTW.SYM seg7:0622, args slot=[bp+6],
+    mode=[bp+8], arg3=[bp+10]; FAR return, 176 bytes).
+
+    `mode == 1`: bumps `simant_data_group[0x3D18+slot]` (caste) `+8`.
+    `mode in (2, 6)`: no extra effect. `mode in (3, 7)`: bumps caste
+    `-8`. `mode in (5, 9)`: bumps caste `-0x18`. Every one of THOSE
+    modes then stamps `field_c = arg3` (`[0x3B22+slot]`), `field_e = 0`
+    (`[0x3F0E+slot]`). `mode in (4, 8)` (or any other value): skips
+    both the caste bump and the stamp.
+
+    Finally, the SAME `arg3 == 6` / `dgroup[0xCE80] == 1` tail
+    `force_mode_a` has, but overwriting `field_e` (`[0x3F0E+slot]`)
+    instead of `force_mode_a`'s `field_e` offset (they happen to be
+    the SAME semantic field — just B's own offset, not a divergence).
+    """
+    stamp = True
+    if mode == 1:
+        simant_data_group.wb(
+            0x3D18 + slot, (simant_data_group.rb(0x3D18 + slot) + 8) & 0xFF)
+    elif mode in (2, 6):
+        pass
+    elif mode in (3, 7):
+        simant_data_group.wb(
+            0x3D18 + slot, (simant_data_group.rb(0x3D18 + slot) - 8) & 0xFF)
+    elif mode in (5, 9):
+        simant_data_group.wb(
+            0x3D18 + slot, (simant_data_group.rb(0x3D18 + slot) - 0x18) & 0xFF)
+    else:
+        stamp = False
+
+    if stamp:
+        simant_data_group.wb(0x3B22 + slot, arg3 & 0xFF)
+        simant_data_group.wb(0x3F0E + slot, 0)
+
+    if arg3 == 6 and dgroup.rw(0xCE80) == 1:
+        al = ((dgroup.rb(0xCE7E) & 0xFC) << 2) & 0xFF
+        cx = _sx16(dgroup.rw(0xCD88)) >> 3
+        al |= cx & 0xFF
+        simant_data_group.wb(0x3F0E + slot, al & 0xFF)
