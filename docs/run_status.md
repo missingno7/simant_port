@@ -1,5 +1,43 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.184) — /goal grind: _Recruit/_UnRecruit
+- RECOVERED `recruit` (`_Recruit`, SIMANTW.SYM seg7:06D2, arg count=
+  [bp+6]; FAR return, 184 bytes, NO calls). Converts up to `count` idle
+  A-list then B-list ants (mode `2` or `6`, via the standard
+  `(v & 0x78) >> 3` extraction, and not already recruited) into
+  "recruited" mode `6` (`field_c=6`, `field_e=0`), scanning each list
+  backward, stopping once the budget is exhausted. Never touches the
+  R-list.
+- RECOVERED `un_recruit` (`_UnRecruit`, SIMANTW.SYM seg7:078A, arg
+  flag=[bp+6]; FAR return, 220 bytes, NO calls). The inverse: clears
+  `field_c==6` across A-list, B-list, AND (unlike `recruit`) the
+  R-list, up to a budget of `pack[0x7876]//2` (C-style truncating
+  division, `flag==0`) or `pack[0x7876]+0x64` (`flag!=0`). A/B hits
+  reset `field_c` to `0`; the R-list's OWN hits reset it to `7`, not
+  `0` — independently confirmed via the raw disassembly (`mov
+  ds:[si+17648],07h` vs the A/B passes' `mov ds:[si+N],ch` where
+  `ch` was zeroed).
+- Caught a genuine SEGMENT bug on the first real-ASM run, not a
+  region-window bug this time: every per-slot field (`0x2F62`,
+  `0x2B78`, `0x334C`, `0x3D18`, `0x3B22`, `0x3F0E`, `0x46E6`, `0x44F0`)
+  is reached through an explicit `mov ax,5294h; mov ds,ax` segment
+  override — i.e. SIMANT_DATA_GROUP, not PACK — while the counts
+  (`0x80F0`/`0x99D4`/`0x72CC`) and the `un_recruit` baseline
+  (`0x7876`) stay on PACK (`es=ds:[C4D2]`/`[C4D4]`/`[C4D8]`/`[C4D6]`).
+  First-draft code used `pack` for everything, which the real ASM
+  showed leaving every per-slot field untouched (asm stayed at its
+  seeded value while the recovered side mutated it) — fixed by adding
+  a second `simant_data_group` parameter to both functions and a
+  second SDG region to the test harness, matching the same
+  SDG-for-per-slot-fields convention already established by
+  `find_in_a_list`/`find_in_b_list`/`force_mode_a`/`force_mode_b`
+  elsewhere in this file.
+- 8 cases (4 recruit + 4 un_recruit, covering both lists, budget
+  exhaustion, already-recruited/wrong-mode skips, both `flag` values,
+  and the R-list `field_c=7` asymmetry) — all green after the segment
+  fix.
+- Suite: simant 1816 (+8), full suite green.
+
 ## 2026-07-15 (cont.183) — /goal grind: _InitGrassMap/_InitSimVars
 - Ran a fresh Explore survey now that the pillar-family batch is
   exhausted. It flagged `_SRand4` as an unrecovered blocker for several

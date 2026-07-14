@@ -8240,3 +8240,126 @@ def init_sim_vars(dgroup, simant_data_group, pack) -> None:
     pack.ww(0x807A, 0)
     dgroup.ww(0xAC8E, 0)
     dgroup.ww(0xAC8C, 0)
+
+
+def recruit(pack, simant_data_group, count: int) -> None:
+    """Convert up to `count` idle A-list (yard) then B-list (black
+    nest) ants — whichever are in mode `2` or `6` (via the SAME
+    `(v & 0x78) >> 3` extraction used throughout this session) and
+    not already recruited — into "recruited" mode `6`
+    (`field_c = 6`, `field_e = 0`), scanning each list backward and
+    stopping once `count` conversions have happened or the list is
+    exhausted.
+
+    Recovered from `_Recruit` (SIMANTW.SYM seg7:06D2, arg count=
+    [bp+6]; FAR return, 184 bytes, NO calls at all). Counts come from
+    `pack[0x80F0]`/`pack[0x99D4]`; every per-slot field is on
+    SIMANT_DATA_GROUP (`ds=5294h` in the raw disassembly, not PACK) —
+    the A-list's `[0x2F62]` (a per-slot mode/counter byte, the SAME
+    field `force_mode_a` bumps) and `[0x2B78]`/`[0x334C]` (`field_c`/
+    `field_e`, matching `force_mode_a`'s own pair); the B-list's
+    `[0x3D18]` (caste), `[0x3B22]`/`[0x3F0E]` (`field_c`/`field_e`).
+    Never touches the R-list at all (confirmed via the raw
+    disassembly — `un_recruit`'s own R-list pass is NOT mirrored
+    here).
+    """
+    budget = count
+    a_count = pack.rw(0x80F0)
+    if budget > 0:
+        for si in range(a_count - 1, -1, -1):
+            if budget <= 0:
+                break
+            cx = simant_data_group.rb(0x2F62 + si)
+            if cx == 0 or (cx & 0x80):
+                continue
+            mode = (cx & 0x78) >> 3
+            if mode not in (2, 6):
+                continue
+            if simant_data_group.rb(0x2B78 + si) == 6:
+                continue
+            simant_data_group.wb(0x2B78 + si, 6)
+            simant_data_group.wb(0x334C + si, 0)
+            budget -= 1
+
+    b_count = pack.rw(0x99D4)
+    if budget > 0:
+        for si in range(b_count - 1, -1, -1):
+            if budget <= 0:
+                break
+            cx = simant_data_group.rb(0x3D18 + si)
+            if cx == 0 or (cx & 0x80):
+                continue
+            mode = (cx & 0x78) >> 3
+            if mode not in (2, 6):
+                continue
+            if simant_data_group.rb(0x3B22 + si) == 6:
+                continue
+            simant_data_group.wb(0x3B22 + si, 6)
+            simant_data_group.wb(0x3F0E + si, 0)
+            budget -= 1
+
+
+def un_recruit(pack, simant_data_group, flag: int) -> None:
+    """The inverse of `recruit` — clears "recruited" (`field_c == 6`)
+    status across the A-list, B-list, AND (unlike `recruit`, which
+    never touches it) the R-list, up to a computed budget.
+
+    Recovered from `_UnRecruit` (SIMANTW.SYM seg7:078A, arg flag=
+    [bp+6]; FAR return, 220 bytes, NO calls at all). The budget is
+    `pack[0x7876] // 2` (C-style truncating division) when `flag == 0`,
+    else `pack[0x7876] + 0x64`. Each list's gate is simpler than
+    `recruit`'s (no mode-2-or-6 check — just `field_c == 6` directly);
+    A/B-list hits reset `field_c` to `0`, but the R-list's OWN hits
+    reset it to `7`, NOT `0` (independently confirmed via the raw
+    disassembly, not a transcription slip). Counts/baseline are PACK
+    (`[0x80F0]`/`[0x99D4]`/`[0x72CC]`/`[0x7876]`); every per-slot field
+    is SIMANT_DATA_GROUP (same `ds=5294h` override as `recruit`): A-list
+    `[0x2F62]`/`[0x2B78]`; B-list `[0x3D18]`/`[0x3B22]`; R-list
+    `[0x46E6]`/`[0x44F0]` (caste/field_c, matching `find_in_r_list`'s
+    own R-list fields).
+    """
+    def tdiv(v, d):
+        q = abs(v) // d
+        return -q if v < 0 else q
+
+    baseline = _sx16(pack.rw(0x7876))
+    budget = tdiv(baseline, 2) if flag == 0 else baseline + 0x64
+
+    a_count = pack.rw(0x80F0)
+    if budget > 0:
+        for si in range(a_count - 1, -1, -1):
+            if budget <= 0:
+                break
+            cx = simant_data_group.rb(0x2F62 + si)
+            if cx == 0 or (cx & 0x80):
+                continue
+            if simant_data_group.rb(0x2B78 + si) != 6:
+                continue
+            simant_data_group.wb(0x2B78 + si, 0)
+            budget -= 1
+
+    b_count = pack.rw(0x99D4)
+    if budget > 0:
+        for si in range(b_count - 1, -1, -1):
+            if budget <= 0:
+                break
+            cx = simant_data_group.rb(0x3D18 + si)
+            if cx == 0 or (cx & 0x80):
+                continue
+            if simant_data_group.rb(0x3B22 + si) != 6:
+                continue
+            simant_data_group.wb(0x3B22 + si, 0)
+            budget -= 1
+
+    r_count = pack.rw(0x72CC)
+    if budget > 0:
+        for si in range(r_count - 1, -1, -1):
+            if budget <= 0:
+                break
+            cx = simant_data_group.rb(0x46E6 + si)
+            if cx == 0 or (cx & 0x80):
+                continue
+            if simant_data_group.rb(0x44F0 + si) != 6:
+                continue
+            simant_data_group.wb(0x44F0 + si, 7)
+            budget -= 1

@@ -6846,3 +6846,85 @@ def test_initsimvars_state_diff_matches_asm():
                                  regions, seed_fn=seed)
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
         assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _Recruit/_UnRecruit (seg7:06D2/078A) — A/B(/R)-list mode toggling ----
+# Counts/baseline live on PACK; every per-slot field lives on SIMANT_DATA_GROUP
+# (ds=5294h in the raw disassembly) -- confirmed by re-disassembly after the
+# first test run showed the real ASM leaving PACK-seeded fields untouched.
+_RECRUIT_REGIONS = [(_PACK, 0x2B00, 0x9E00), (_SDG, 0x2B00, 0x9E00)]
+
+
+def _recruit_seed(a_slots, b_slots, r_slots):
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x80F0, len(a_slots))
+        for i, (counter, field_c) in enumerate(a_slots):
+            m.mem.wb(sdg, 0x2F62 + i, counter)
+            m.mem.wb(sdg, 0x2B78 + i, field_c)
+            m.mem.wb(sdg, 0x334C + i, 0x99)
+        m.mem.ww(pack, 0x99D4, len(b_slots))
+        for i, (caste, field_c) in enumerate(b_slots):
+            m.mem.wb(sdg, 0x3D18 + i, caste)
+            m.mem.wb(sdg, 0x3B22 + i, field_c)
+            m.mem.wb(sdg, 0x3F0E + i, 0x99)
+        m.mem.ww(pack, 0x72CC, len(r_slots))
+        for i, (caste, field_c) in enumerate(r_slots):
+            m.mem.wb(sdg, 0x46E6 + i, caste)
+            m.mem.wb(sdg, 0x44F0 + i, field_c)
+    return seed
+
+
+@pytest.mark.parametrize("count,a_slots,b_slots,label", [
+    (5, [(0x10, 0), (0x11, 0), (0x30, 0)], [], "a-list-mode2-recruits"),
+    (5, [], [(0x30, 0), (0x31, 0)], "b-list-mode6-recruits"),
+    (1, [(0x10, 0), (0x11, 0), (0x30, 0)], [(0x30, 0)],
+     "budget-exhausted-after-first-hit"),
+    (5, [(0x10, 6), (0x08, 0)], [], "already-recruited-and-wrong-mode-skip"),
+])
+def test_recruit_state_diff_matches_asm(count, a_slots, b_slots, label):
+    from simant.recovered.gameplay import recruit
+    results = _run_and_diff_segs(
+        7, 0x06D2, (count,), lambda p, s: recruit(p, s, count), _RECRUIT_REGIONS,
+        seed_fn=_recruit_seed(a_slots, b_slots, []))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _RECRUIT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def _unrecruit_seed(baseline, a_slots, b_slots, r_slots):
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x7876, baseline & 0xFFFF)
+        m.mem.ww(pack, 0x80F0, len(a_slots))
+        for i, (counter, field_c) in enumerate(a_slots):
+            m.mem.wb(sdg, 0x2F62 + i, counter)
+            m.mem.wb(sdg, 0x2B78 + i, field_c)
+        m.mem.ww(pack, 0x99D4, len(b_slots))
+        for i, (caste, field_c) in enumerate(b_slots):
+            m.mem.wb(sdg, 0x3D18 + i, caste)
+            m.mem.wb(sdg, 0x3B22 + i, field_c)
+        m.mem.ww(pack, 0x72CC, len(r_slots))
+        for i, (caste, field_c) in enumerate(r_slots):
+            m.mem.wb(sdg, 0x46E6 + i, caste)
+            m.mem.wb(sdg, 0x44F0 + i, field_c)
+    return seed
+
+
+@pytest.mark.parametrize("baseline,flag,a_slots,b_slots,r_slots,label", [
+    (10, 0, [(0x10, 6), (0x11, 6)], [], [], "flag0-halves-budget-a-list"),
+    (10, 1, [], [(0x10, 6)], [(0x10, 6)], "flag1-adds100-b-and-r-list"),
+    (10, 1, [], [], [(0x10, 6), (0x11, 6)], "r-list-resets-to-7-not-0"),
+    (10, 0, [(0x10, 3), (0x00, 6)], [], [], "wrong-fieldc-and-zero-counter-skip"),
+])
+def test_unrecruit_state_diff_matches_asm(baseline, flag, a_slots, b_slots,
+                                          r_slots, label):
+    from simant.recovered.gameplay import un_recruit
+    results = _run_and_diff_segs(
+        7, 0x078A, (flag,), lambda p, s: un_recruit(p, s, flag), _RECRUIT_REGIONS,
+        seed_fn=_unrecruit_seed(baseline, a_slots, b_slots, r_slots))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _RECRUIT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
