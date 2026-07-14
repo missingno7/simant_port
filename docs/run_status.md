@@ -1,5 +1,18 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.127) — /goal grind: _PickupFoodB/R — NEST-map food pickup
+- RECOVERED `pickup_food_b`/`r` (`_PickupFoodB`/`R`, seg5:0F40/0FA2, FAR
+  return, args x/y) — the NEST-map siblings of `pickup_food_a` (which
+  operates on the YARD map). Only callee `_SRand8`. Shape is exactly
+  `_try_eat_food`'s gate-and-reroll-or-decrement step (tile must be in
+  `[0x10, 0x13]` or the whole call is a no-op) with NO colony-growth
+  trigger tail at all — confirmed by tracing the full 98-byte body of
+  both, not assumed from the name pairing with `_try_eat_food_b`/`r`.
+- 10 cases (2 in-range scenarios + 2 out-of-range no-ops + the count-floor
+  guard, x2 colonies) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1392 (+10). Remaining from this round's batch:
+  `_PlaceEggB/R`, `_MakeNewTailB/R`, `_ScanForAnts`, `_RaidInB/R`.
+
 ## 2026-07-14 (cont.126) — /goal grind: _GetFromAlist — find + remove by colony
 - RECOVERED `get_from_a_list` (`_GetFromAlist`, seg5:2FFE, FAR return,
   arg: colony_bit) — searches the yard A-list backward for the last ant

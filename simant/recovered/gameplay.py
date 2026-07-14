@@ -1886,6 +1886,40 @@ def pickup_food_a(dgroup, pack, x: int, y: int) -> None:
         pack.ww(0x9E84, (pack.rw(0x9E84) - 1) & 0xFFFF)
 
 
+def _pickup_food_br(dgroup, pack, map_base: int, food_count_off: int, x: int,
+                    y: int) -> None:
+    """Shared body of `pickup_food_b`/`r`: like `_try_eat_food` (gated on
+    the tile being in `[0x10, 0x13]`, same reroll-or-decrement step), but
+    with no colony-growth trigger tail at all.
+    """
+    idx = map_base + (x << 6) + y
+    tile = dgroup.rb(idx)
+    if not (0x10 <= tile <= 0x13):
+        return
+    _reroll_or_decrement_food_tile(dgroup, idx)
+    if _sx16(pack.rw(food_count_off)) > 0:
+        pack.ww(food_count_off, (pack.rw(food_count_off) - 1) & 0xFFFF)
+
+
+def pickup_food_b(dgroup, pack, x: int, y: int) -> None:
+    """The black-colony NEST-map sibling of `pickup_food_a` (which operates
+    on the YARD map instead).
+
+    Recovered from `_PickupFoodB` (SIMANTW.SYM seg5:0F40, FAR return, args
+    x=[bp+6], y=[bp+8]). See `_pickup_food_br`.
+    """
+    _pickup_food_br(dgroup, pack, MAP_PLANE_BASE[2], 0x9EA4, x, y)
+
+
+def pickup_food_r(dgroup, pack, x: int, y: int) -> None:
+    """The red-colony twin of `pickup_food_b`.
+
+    Recovered from `_PickupFoodR` (SIMANTW.SYM seg5:0FA2, FAR return, args
+    x=[bp+6], y=[bp+8]).
+    """
+    _pickup_food_br(dgroup, pack, MAP_PLANE_BASE[3], 0x72DE, x, y)
+
+
 def _smooth_edges(dgroup, map_base: int, x: int, y: int) -> None:
     """Shared body of `smooth_edges_b`/`smooth_edges_r`."""
     from .simone import SRAND_SEED_OFF, srand_pow2
