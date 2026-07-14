@@ -37,3 +37,24 @@ def srand_pow2(seed: int, mask: int) -> tuple[int, int]:
     """_SRand2.._SRand256: step the LFSR, return (new_seed, new_seed & mask)."""
     seed = srand_step(seed)
     return seed, seed & mask
+
+
+def r_rand(rand_state: int, n: int) -> tuple[int, int]:
+    """`rand() % n` — SimAnt's own wrapper around the standard C runtime
+    generator (`recovered/crt_math.py`'s `c_rand`), NOT the `_SRand*` LFSR
+    above; used where the game wants "genuinely unpredictable" values
+    (combat rolls, etc.) rather than the deterministic map-gen sequence.
+
+    Recovered from `_RRand` (SIMANTW.SYM seg5:156E, far, arg: n): calls
+    `_rand()`, takes its absolute value (defensive — `_rand`'s result is
+    always 0..0x7FFF, so this never actually changes anything, but is
+    ported faithfully), then returns the SIGNED remainder of dividing by
+    `n`.  `n == 0` reaches the ASM's own `idiv`, which `#DE` faults.
+    """
+    from .crt_math import c_rand
+    rand_state, v = c_rand(rand_state)
+    if v < 0:
+        v = -v
+    if n == 0:
+        raise ZeroDivisionError("r_rand: divide by zero — the ASM would #DE here")
+    return rand_state, v % n

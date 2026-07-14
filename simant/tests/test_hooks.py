@@ -1986,6 +1986,83 @@ def test_afldiv_matches_asm(dividend, divisor):
         f"rec={expect:#010x}")
 
 
+# ---- __aFulmul (seg4:096E) — unsigned 32-bit long multiply, no island -----
+@pytest.mark.parametrize("a,b", [
+    (0, 0), (1, 1), (100, 3), (0xFFFF, 0xFFFF),             # both fit 16 bits
+    (0x12345678, 3), (3, 0x12345678),                        # one operand wide
+    (0x12345678, 0x9ABCDEF0), (0xFFFFFFFF, 0xFFFFFFFF),      # both wide, overflows
+    (0x10000, 0x10000), (0x80000000, 2),
+])
+def test_afulmul_matches_asm(a, b):
+    from simant.recovered.crt_math import a_f_ulmul
+    a_lo, a_hi = _split32(a)
+    b_lo, b_hi = _split32(b)
+    asm = _run_predicate(hooks.RT_SEG_INDEX, 0x096E, "__aFulmul", False,
+                         (a_lo, a_hi, b_lo, b_hi))
+    got = asm["ax"] | (asm["dx"] << 16)
+    expect = a_f_ulmul(a, b)
+    assert got == expect, f"a={a:#x} b={b:#x}: asm={got:#010x} rec={expect:#010x}"
+
+
+# ---- _srand / _rand (seg4:06F6/070A) + _RRand (seg5:156E) — MSC rand(), --
+# distinct from the SRand LFSR family above; no island (not profiled hot).
+RAND_STATE_OFF = 0xAE34
+
+
+def _run_rand_family(seg_index, off, args, state):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    s = m.cpu.s
+    s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
+    m.mem.ww(s.ds, RAND_STATE_OFF, state & 0xFFFF)
+    m.mem.ww(s.ds, (RAND_STATE_OFF + 2) & 0xFFFF, (state >> 16) & 0xFFFF)
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[seg_index], off
+    sp = s.sp
+    for v in (*reversed(args), SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(200):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError("rand-family routine did not return")
+    new_state = (m.mem.rw(s.ds, RAND_STATE_OFF)
+                | (m.mem.rw(s.ds, (RAND_STATE_OFF + 2) & 0xFFFF) << 16))
+    return s.ax & 0xFFFF, new_state
+
+
+@pytest.mark.parametrize("seed", [0x0000, 0x1234, 0xFFFF, 0x8000])
+def test_csrand_matches_asm(seed):
+    from simant.recovered.crt_math import c_srand
+    _ax, new_state = _run_rand_family(hooks.RT_SEG_INDEX, 0x06F6, (seed,), 0xDEADBEEF)
+    assert new_state == c_srand(seed)
+
+
+@pytest.mark.parametrize("state", [0, 1, 0x12345678, 0xFFFFFFFF, 0x0000ACE1, 0x80000000])
+def test_crand_matches_asm(state):
+    from simant.recovered.crt_math import c_rand
+    ax, new_state = _run_rand_family(hooks.RT_SEG_INDEX, 0x070A, (), state)
+    exp_state, exp_val = c_rand(state)
+    assert (ax, new_state) == (exp_val, exp_state), (
+        f"state={state:#010x}: asm=(ax={ax:#06x},state={new_state:#010x}) "
+        f"rec=(ax={exp_val:#06x},state={exp_state:#010x})")
+
+
+@pytest.mark.parametrize("state,n", [
+    (0, 5), (1, 3), (0x12345678, 100), (0xFFFFFFFF, 7), (0xACE1, 1), (0x80000000, 0x7FFF),
+])
+def test_rrand_matches_asm(state, n):
+    from simant.recovered.simone import r_rand
+    ax, new_state = _run_rand_family(hooks.SRAND_SEG_INDEX, 0x156E, (n,), state)
+    exp_state, exp_val = r_rand(state, n)
+    assert (ax, new_state) == (exp_val, exp_state), (
+        f"state={state:#010x} n={n}: asm=(ax={ax:#06x},state={new_state:#010x}) "
+        f"rec=(ax={exp_val:#06x},state={exp_state:#010x})")
+
+
 def _run_issameplane(with_island, plane, current):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False

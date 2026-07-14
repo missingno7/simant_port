@@ -1,5 +1,38 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.92) — /goal grind: __aFulmul + the MSC rand()/_RRand trio
+- RECOVERED `a_f_ulmul` (`crt_math.py`, seg4:096E, `__aFulmul`): unsigned
+  32-bit long multiply truncated to 32 bits. The ASM computes three of the
+  four 16x16 cross-terms and never touches the fourth (`hi*hi`, which only
+  affects bits 32-63) — confirms it's `(a*b) & 0xFFFFFFFF`, trivially
+  correct via Python's arbitrary-precision multiply. 10 cases (including
+  both-wide operands that overflow 32 bits), all green first try.
+- RECOVERED the standard Microsoft C runtime `rand()`/`srand()` pair plus
+  SimAnt's own `_RRand` wrapper — a fully independent RNG family from the
+  `_SRand*` LFSR already in `simone.py` (that one is deterministic map-gen;
+  this one is "genuinely unpredictable" combat-roll-style randomness).
+  - `c_srand`/`c_rand` land in `crt_math.py` (pure MSC library, not SimAnt
+    logic — same reasoning as `__aFldiv`/`__aFulmul`). `c_rand` genuinely
+    near-calls `a_f_ulmul` for `state * 0x343FD` (confirmed via
+    disassembly, the same near-call-to-far-retf ABI bridge seen repeatedly
+    this session), then `+ 0x269EC3` — the textbook MSVC LCG.
+  - `r_rand` (SimAnt's own `_RRand` wrapper, seg5:156E) lands in
+    `simone.py` instead — genuinely SIMONE_MODULE-domain, calls `c_rand`
+    and takes the signed remainder mod `n`. Ported the ASM's defensive
+    `abs()` on `_rand`'s result faithfully even though it's provably dead
+    code (`_rand` always returns 0..0x7FFF, so the abs() never fires) —
+    byte-exact means porting what's there, not what's provably redundant.
+  - 19 cases across all three (including the DGROUP-dword RNG state
+    round-tripped through the ASM, not just the return value), all green
+    first try.
+- This completes the `_RRand`/`_rand`/`_srand`/`__aFulmul` chain flagged
+  as "cheap, worth landing on its own merits" back in cont.84's original
+  survey and reconfirmed in cont.90 — removes one of `_GetWinner`'s two
+  blockers ahead of the day `SIMTWO!_GetNewMode` (seg7) becomes reachable.
+- Suite: simant 1063 (+16 this stretch: 4 `c_srand` + 6 `c_rand` + 6
+  `r_rand`; `a_f_ulmul`'s 10 cases landed in the prior commit's count).
+  Continuing per /goal.
+
 ## 2026-07-14 (cont.91) — /goal grind: _DeadAntHere (100-slot corpse ring buffer)
 - RECOVERED `dead_ant_here` (seg6:28C0, args: new_x, new_y, mode; FAR
   return) — the strongest pure-gameplay pick from cont.90's survey (fan-in

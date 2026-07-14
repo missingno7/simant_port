@@ -48,3 +48,48 @@ def a_f_ldiv(dividend: int, divisor: int) -> int:
     if (dividend < 0) != (divisor < 0):
         q = -q
     return q & 0xFFFFFFFF
+
+
+def a_f_ulmul(a: int, b: int) -> int:
+    """Unsigned 32-bit long multiply, truncated to 32 bits (overflow
+    silently discarded).
+
+    Recovered from `__aFulmul` (SIMANTW.SYM seg4:096E, _TEXT_MODULE, far,
+    `ret far 8`): when both operands fit in 16 bits it's a single 8086
+    `mul`; otherwise the three needed 16-bit cross-terms (`a.lo*b.lo`,
+    `a.hi*b.lo`, `a.lo*b.hi`) are combined — the fourth term (`a.hi*b.hi`,
+    which would only ever affect bits 32-63 of the true 64-bit product) is
+    never even computed, matching C's `unsigned long * unsigned long`
+    truncating overflow.  Returns the 32-bit result as the ASM leaves it in
+    DX:AX.
+    """
+    return ((a & 0xFFFFFFFF) * (b & 0xFFFFFFFF)) & 0xFFFFFFFF
+
+
+RAND_STATE_OFF = 0xAE34   # DGROUP dword: low word @ +0, high word @ +2
+
+
+def c_srand(seed: int) -> int:
+    """New 32-bit `rand()` state after `srand(seed)` — the seed zero-
+    extended into the low word, high word cleared.
+
+    Recovered from `_srand` (SIMANTW.SYM seg4:06F6, _TEXT_MODULE, far).
+    """
+    return seed & 0xFFFF
+
+
+def c_rand(state: int) -> tuple[int, int]:
+    """One step of the standard Microsoft C runtime `rand()` LCG (distinct
+    from SimAnt's own `_SRand*` LFSR family in `simone.py` — this is the
+    "genuinely unpredictable" generator, LFSR is the deterministic one used
+    for map generation).
+
+    Recovered from `_rand` (SIMANTW.SYM seg4:070A, _TEXT_MODULE, far): a
+    genuine near-call to `__aFulmul` for `state * 0x343FD` (confirmed via
+    disassembly, not assumed — the classic `push cs; call near` bridge into
+    a far-retf routine already seen elsewhere this session), then
+    `+ 0x269EC3` (mod 2**32) — the textbook MSVC LCG constants.  Returns
+    `(new_state, value)` where `value = (new_state >> 16) & 0x7FFF`.
+    """
+    state = (a_f_ulmul(state, 0x343FD) + 0x269EC3) & 0xFFFFFFFF
+    return state, (state >> 16) & 0x7FFF
