@@ -280,6 +280,16 @@ def is_clear_tile(plane: int, map_tile: int, life_value: int) -> int:
     return 1 if map_tile < threshold else 0
 
 
+def is_valid_location(plane: int, x: int, y: int) -> int:
+    """Whether (plane, x, y) is a valid cell — the plane-aware coordinate check.
+
+    Recovered from `_IsValidLocation` (SIMANTW.SYM seg5:56DA): the yard planes
+    (plane <= 1) use the wide bounds `is_valid_a` (x 0..0x7F, y 0..0x3F); the
+    nest planes (plane > 1) use `is_valid_b` (x, y 0..0x3F).  Returns 1 / 0.
+    """
+    return is_valid_a(x, y) if plane <= 1 else is_valid_b(x, y)
+
+
 def get_dir(x1: int, y1: int, x2: int, y2: int) -> int:
     """Compass direction (0..8) from point 1 to point 2.
 

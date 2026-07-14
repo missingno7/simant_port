@@ -2123,6 +2123,18 @@ def test_isnotobstacle_island_matches_asm(plane, x, y, tile, inside):
     assert isl == asm, f"(p={plane},{x:#x},{y:#x},t={tile:#x},in={inside}): {isl} != {asm}"
 
 
+@pytest.mark.parametrize("plane,x,y", [
+    (0, 0x10, 0x10), (0, 0x7F, 0x3F), (0, 0x80, 0x10), (1, 0x10, 0x40),
+    (2, 0x3F, 0x3F), (2, 0x40, 0x10), (3, 0x10, 0x10), (0, -1, 0x10),
+])
+def test_isvalidlocation_island_matches_asm(plane, x, y):
+    asm = _run_predicate(hooks.ISVALIDLOC_SEG_INDEX, hooks.ISVALIDLOC_OFF,
+                         "_IsValidLocation", False, (plane, x, y))
+    isl = _run_predicate(hooks.ISVALIDLOC_SEG_INDEX, hooks.ISVALIDLOC_OFF,
+                         "_IsValidLocation", True, (plane, x, y))
+    assert isl == asm, f"(p={plane},{x},{y}): {isl} != {asm}"
+
+
 # ---- _IsClearTile (seg5:5B2C) — map passable + no blocking ant ---------------
 def _run_iscleartile(with_island, plane, x, y, map_tile, life):
     from simant.recovered.gameplay import life_cell_offset, map_cell_offset
