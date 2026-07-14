@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.66) — _IsClear3x3: first looping composite recovered
+- RECOVERED `_IsClear3x3` (seg5:5AD2): the centre + 8 neighbours (offsets from the
+  DGROUP direction tables at [0xC478]/[0xC47A]) must all be clear per the recovered
+  is_clear_tile.  First routine that CALLS a recovered routine in a LOOP — the
+  island reimplements the 9-iteration loop over the real dir tables and threads the
+  LAST _IsClearTile call's residue through it (dx=plane; cx=that call's cx; bx
+  sticky — only a valid cell sets it; es=dir-table selector once a neighbour ran).
+- The A/B oracle caught a real bug: the direction offsets are SIGNED BYTES (0xFF =
+  -1, the ASM's cbw), which I'd sign-extended as 16-bit words — neighbours landed
+  off-grid.  One fix, 9 cases green (all-clear / centre+each-neighbour blocked /
+  both planes / grid corners).  Islands 68 -> 69.  Suite: simant 669.
+- Gave the A/B harness's _step_to_return a step budget so it can drive routines
+  that call sub-routines in a loop (9x _IsClearTile ~= 500 instrs > the old 200).
+- The loop-composite pattern (reimplement the loop, thread the last inner call's
+  residue) now works — a stepping stone toward the behaviour layer (_GetBestDir
+  etc. loop over directions calling the recovered helpers).
+
 ## 2026-07-14 (cont.65) — _IsItAHole recovered; map/life predicate tier complete
 - RECOVERED `_IsItAHole` (seg5:9B4A): plane<=1 tail-calls _IsItHole (so the island
   reproduces _IsItHole's residue exactly); plane>1 is a yard-plane hole (top row
