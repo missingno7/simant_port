@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.133) — /goal grind: _BuildAntListA — full yard A-list rebuild
+- RECOVERED `build_ant_list_a` (`_BuildAntListA`, seg5:3046, FAR return, NO
+  args) — rebuilds the entire yard A-list from scratch by scanning the
+  whole 128x64 yard life plane. Resets `pack[0x80F0]` (count) to `0`, then
+  for every occupied cell that isn't a yellow-ant tile (`is_yellow_ant`
+  gate, its only callee), appends a new A-list entry with `x`/`y` from the
+  scan position, `field_c` hardcoded to `2`, `caste` set to the life-plane
+  byte itself, `field_e` cleared. Ported the genuine silent cap at `0x3E5`
+  (997) entries literally: once the count hits the cap it stops advancing,
+  so further matches keep overwriting slot 997 rather than appending or
+  erroring.
+- Test infra bug, not a logic bug: the state-diff regions for this test
+  were sized for narrower single-cell-position tests elsewhere and didn't
+  cover a full-yard scan. Two rounds of `IndexError` → widened the SDG
+  region from `(0x2300, 0x2400)` to `(0x2300, 0x3800)` (covers all five
+  A-list field bases: `0x23A4`/`0x278E`/`0x2B78`/`0x2F62`/`0x334C`), and
+  the DGROUP region from `(0x68E8, 0x78E8)` to `(0x68E8, 0x88E8)` — the
+  yard `LIFE_PLANE_BASE[0]` plane is `0x2000` (8192) bytes (128x64), not
+  `0x1000` (64x64); the seed function's own zeroing slice needed the same
+  fix. Left the other, already-passing test at the older narrower bound
+  alone — it only ever touches single-cell positions within that
+  sub-range, so it isn't actually broken by the same underlying mistake.
+- Suite: simant 1416 (+1), full suite green.
+
 ## 2026-07-14 (cont.132) — /goal grind: _SimQueenA — yard queen tick, round 3 survey
 - Dispatched a fourth research survey (round 2 closed out in cont.131).
   Independently re-verified `_DoTroph` directly (not just trusting the

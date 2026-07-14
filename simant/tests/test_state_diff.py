@@ -1417,6 +1417,41 @@ def test_simqueena_state_diff_matches_asm(slot, x, y, caste, ant_count,
         assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _BuildAntListA (seg5:3046) — rebuild the whole yard A-list -----------
+# Scans all 128x64 yard cells; kept sparse (mostly-empty grid) so the real
+# ASM run stays well inside the 200k-instruction budget.
+_BUILDANTLISTA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x68E8, 0x88E8),   # yard life plane (128x64, read-only here)
+    (_SDG, 0x2300, 0x3800),                 # covers 0x23A4/278E/2B78/2F62/334C+slot
+    (_PACK, 0x80E0, 0x8100),                # covers [0x80F0] (count)
+]
+
+
+def test_buildantlista_state_diff_matches_asm():
+    from simant.recovered.gameplay import build_ant_list_a
+    occupied = {
+        (0, 0): 0x05,
+        (0x7F, 0x3F): 0x81,
+        (50, 30): 0xFE,        # yellow-ant sentinel -> must be skipped
+        (10, 10): 0xFF,        # yellow-ant sentinel -> must be skipped
+        (60, 40): 0x33,
+    }
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.data[dg + 0x68E8:dg + 0x88E8] = bytes(0x2000)
+        for (x, y), tile in occupied.items():
+            m.mem.wb(dg, 0x68E8 + (x << 6) + y, tile)
+        m.mem.ww(pack, 0x80F0, 0x11)   # pre-existing (stale) count, must be reset
+
+    results = _run_and_diff_segs(
+        5, 0x3046, (),
+        lambda d, s, p: build_ant_list_a(d, s, p),
+        _BUILDANTLISTA_REGIONS, seed_fn=seed)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _BUILDANTLISTA_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _LostHeadA (seg6:0B1E) — yard trail-head marker occupancy check ------
 # Pure predicate: no mutation at all, so the recovered call safely reuses
 # `_run_and_get_ax`'s own (unmutated) machine directly.

@@ -1840,6 +1840,44 @@ def get_from_a_list(dgroup, simant_data_group, pack, colony_bit: int) -> int:
     return 1
 
 
+def build_ant_list_a(dgroup, simant_data_group, pack) -> None:
+    """Rebuild the entire yard A-list from scratch by scanning the whole
+    128x64 yard life plane — likely used on a load/restore or scenario-init
+    pass where only the grid is authoritative and the ant-list metadata
+    needs reconstructing.
+
+    Recovered from `_BuildAntListA` (SIMANTW.SYM seg5:3046, FAR return, NO
+    args). Only callee: the already-recovered `is_yellow_ant`.
+
+    Resets `pack[0x80F0]` (the count) to `0`, then for every occupied cell
+    (nonzero life-plane byte) that ISN'T a yellow-ant tile
+    (`is_yellow_ant(tile) != 1`), appends a new A-list entry: `x`/`y` from
+    the scan position, `field_c` hardcoded to `2`, `caste` set to the
+    tile's OWN byte value (the life-plane byte doubles as the caste here),
+    `field_e` cleared. A genuine silent cap at `0x3E5` (997) entries,
+    ported literally: once the count reaches that cap it stops advancing,
+    so any further matching cells keep overwriting slot `997` instead of
+    appending — the caller is trusted not to have that many yard ants.
+    """
+    pack.ww(0x80F0, 0)
+    count = 0
+    for x in range(0x80):
+        for y in range(0x40):
+            tile = dgroup.rb(LIFE_PLANE_BASE[0] + (x << 6) + y)
+            if tile == 0:
+                continue
+            if is_yellow_ant(tile) == 1:
+                continue
+            simant_data_group.wb(0x23A4 + count, x)
+            simant_data_group.wb(0x278E + count, y)
+            simant_data_group.wb(0x2B78 + count, 2)
+            simant_data_group.wb(0x2F62 + count, tile)
+            simant_data_group.wb(0x334C + count, 0)
+            if count < 0x3E5:
+                count += 1
+                pack.ww(0x80F0, count)
+
+
 def pickup_food_a(dgroup, pack, x: int, y: int) -> None:
     """An ant picking up food from the YARD tile map at `(x, y)` — a
     genuine `_DoForageAnt` dependency.
