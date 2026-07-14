@@ -981,6 +981,93 @@ def find_in_r_list(pack, simant_data_group, y: int, x: int, caste: int) -> int:
     return 0xFFFF
 
 
+def exit_hole(dgroup, simant_data_group, pack, x: int, y: int, caste: int,
+             field_c: int, field_e_hint: int) -> int:
+    """Find a clear yard cell adjacent to (x, y) and append it to the A-list
+    as a new record — an ant/object emerging from a nest hole.
+
+    Recovered from `_ExitHole` (SIMANTW.SYM seg5:2DB6, args x=[bp+6],
+    y=[bp+8], caste=[bp+0xa], field_c=[bp+0xc], field_e_hint=[bp+0xe]; FAR
+    return).  Scans the 8 compass neighbours (the SAME direction-delta
+    tables read LIVE from `simant_data_group[0+dir]/[8+dir]` as
+    `_FixExitMapB`/`get_smell_t`), keeping the first one that is both
+    `is_valid_a` and has a yard map tile `< 0x50` (unsigned).  Returns 0
+    with no further effect if none qualifies.
+
+    Otherwise appends a new A-list record at the found (x, y) — the SAME 5
+    fields `add_ant_to_a_list` writes (`target0`/`target1`/`caste`/
+    `field_c`/`field_e`, at `simant_data_group[0x23A4/0x278E/0x2F62/
+    0x2B78/0x334C]`), but this routine is NOT a call to that one: it does
+    NOT stamp the life grid, and `field_e` is computed rather than passed
+    straight through — `field_e_hint` is used verbatim only when
+    `field_c == 6`; `field_c` in `{3, 7}` forces `field_e = 0`; any other
+    `field_c` picks 0 or 0x78 from a `caste` high-bit + original-x-vs-0x40
+    comparison (byte-exact but the "why" isn't recovered here).
+
+    Also diverges from `add_ant_to_a_list` in how it handles a FULL list
+    (`pack[0x80F0] >= 0x3E8`): rather than silently refusing the append
+    (already written into the just-past-cap slot by this point), it runs a
+    single-pass mark-and-sweep compaction over the EXISTING 0..cap-1 slots
+    (identical to `compact_list_a`'s hole-tracking convention) and only
+    then re-derives the count from the shrunk total — the newly-written
+    slot itself is never touched by that scan, so in the genuinely-full
+    edge case the new entry can end up uncounted; ported byte-exact, not
+    "fixed".  Returns 1 on success.
+    """
+    def sbyte(off):
+        v = simant_data_group.rb(off)
+        return v - 0x100 if v & 0x80 else v
+
+    found = None
+    for si in range(8):
+        ny = y + sbyte(8 + si)
+        nx = x + sbyte(si)
+        if not is_valid_a(nx, ny):
+            continue
+        if dgroup.rb(MAP_PLANE_BASE[0] + (nx << 6) + ny) < 0x50:
+            found = (nx, ny)
+            break
+    if found is None:
+        return 0
+    nx, ny = found
+
+    if field_c == 6:
+        new_field_e = field_e_hint
+    elif field_c in (3, 7):
+        new_field_e = 0
+    elif not (caste & 0x80):
+        new_field_e = 0x78 if x < 0x40 else 0
+    else:
+        new_field_e = 0x78 if x > 0x40 else 0
+
+    count = pack.rw(0x80F0)
+    simant_data_group.wb(0x23A4 + count, nx & 0xFF)
+    simant_data_group.wb(0x278E + count, ny & 0xFF)
+    simant_data_group.wb(0x2F62 + count, caste & 0xFF)
+    simant_data_group.wb(0x2B78 + count, field_c & 0xFF)
+    simant_data_group.wb(0x334C + count, new_field_e & 0xFF)
+
+    if count < 0x3E8:
+        pack.ww(0x80F0, (count + 1) & 0xFFFF)
+    else:
+        holes = 0
+        si = 0
+        cnt = pack.rw(0x80F0)
+        while si < cnt:
+            if simant_data_group.rb(0x2F62 + si) == 0:
+                holes -= 1
+            elif holes != 0:
+                dst = si + holes
+                for base in (0x2F62, 0x23A4, 0x278E, 0x2B78, 0x334C):
+                    simant_data_group.wb(base + dst, simant_data_group.rb(base + si))
+            si += 1
+        cnt = (cnt + holes) & 0xFFFF
+        pack.ww(0x80F0, cnt)
+        if cnt < 0x3E8:
+            pack.ww(0x80F0, (cnt + 1) & 0xFFFF)
+    return 1
+
+
 def add_ant_to_a_list(pack, simant_data_group, dgroup, target0: int,
                       target1: int, caste: int, field_c: int,
                       field_e: int) -> None:

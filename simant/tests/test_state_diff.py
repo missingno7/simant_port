@@ -730,6 +730,64 @@ def test_addanttoalist_state_diff_matches_asm(count):
         assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _ExitHole (seg5:2DB6) — find a clear yard cell, append to A-list -----
+_EXITHOLE_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0x28E8 + _YARD_SPAN),   # yard map plane
+    (_SDG, 0, 0x3800),          # delta tables [0:16) + 0x23A4/278E/2B78/2F62/334C+slot
+    (_PACK, 0x80E0, 0x8100),    # covers [0x80F0] (count)
+]
+
+
+def _exithole_seed(x, y, tiles, count, holes=()):
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        for si in range(8):
+            nx, ny = x + GET_BEST_DIR_DX[si], y + GET_BEST_DIR_DY[si]
+            if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, tiles.get(si, 0x50))
+        m.mem.ww(m.seg_bases[_PACK], 0x80F0, count)
+        for slot in range(count):
+            m.mem.wb(sdg, 0x2F62 + slot, 0 if slot in holes else 1)
+            m.mem.wb(sdg, 0x23A4 + slot, slot & 0xFF)
+            m.mem.wb(sdg, 0x278E + slot, (slot * 3) & 0xFF)
+            m.mem.wb(sdg, 0x2B78 + slot, (slot * 5) & 0xFF)
+            m.mem.wb(sdg, 0x334C + slot, (slot * 7) & 0xFF)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tiles,caste,field_c,field_e_hint,count,holes", [
+    # nothing clear at all -> no-op, returns 0
+    (20, 20, {}, 0x03, 1, 0, 5, ()),
+    # one clear direction (si=3), field_c not special -> caste-bit/x-position rule
+    (20, 20, {3: 0x10}, 0x00, 1, 0, 5, ()),      # caste bit clear, x<0x40 -> field_e=0x78
+    (0x50, 20, {3: 0x10}, 0x00, 1, 0, 5, ()),    # caste bit clear, x>=0x40 -> field_e=0
+    (20, 20, {3: 0x10}, 0x80, 1, 0, 5, ()),      # caste bit set, x<=0x40 -> field_e=0
+    (0x50, 20, {3: 0x10}, 0x80, 1, 0, 5, ()),    # caste bit set, x>0x40 -> field_e=0x78
+    # field_c special cases
+    (20, 20, {3: 0x10}, 0x03, 6, 0x99, 5, ()),   # field_c==6 -> field_e=hint
+    (20, 20, {3: 0x10}, 0x03, 3, 0x99, 5, ()),   # field_c==3 -> field_e=0
+    (20, 20, {3: 0x10}, 0x03, 7, 0x99, 5, ()),   # field_c==7 -> field_e=0
+    # multiple clear directions -> takes the FIRST in scan order
+    (20, 20, {2: 0x10, 5: 0x10}, 0x00, 1, 0, 5, ()),
+    # list at cap with holes -> compaction path
+    (20, 20, {3: 0x10}, 0x03, 1, 0, 0x3E8, (2, 500, 999)),
+    # list at cap with NO holes -> new entry ends up uncounted (ported as-is)
+    (20, 20, {3: 0x10}, 0x03, 1, 0, 0x3E8, ()),
+])
+def test_exithole_state_diff_matches_asm(x, y, tiles, caste, field_c, field_e_hint,
+                                         count, holes):
+    from simant.recovered.gameplay import exit_hole
+    results = _run_and_diff_segs(
+        5, 0x2DB6, (x, y, caste, field_c, field_e_hint),
+        lambda d, s, p: exit_hole(d, s, p, x, y, caste, field_c, field_e_hint),
+        _EXITHOLE_REGIONS, seed_fn=_exithole_seed(x, y, tiles, count, holes))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _EXITHOLE_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} tiles={tiles} caste={caste:#x} fc={field_c} "
+            f"count={count:#x} holes={holes} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 @pytest.mark.parametrize("count", [0, 1, 5, 0x1F3, 0x1F4, 0x1F5])
 def test_addanttoblist_state_diff_matches_asm(count):
     from simant.recovered.gameplay import add_ant_to_b_list

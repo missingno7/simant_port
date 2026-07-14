@@ -1,5 +1,54 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.95) — /goal grind: _ExitHole closes the dig-subsystem "tractable now" trio
+- RECOVERED `exit_hole` (seg5:2DB6, args x, y, caste, field_c, field_e_hint;
+  FAR return) — the third and last independently-tractable dig-subsystem
+  member from cont.90's survey. The biggest/most involved single routine
+  recovered this session by field-layout complexity, sitting immediately
+  before `_AddAntToAList` (seg5:2EF0) in the ASM and sharing its exact
+  5-field A-list layout, but is NOT a call to it — a hand-inlined variant
+  with real behavioural differences:
+  - Scans the 8 compass neighbours (same live-read SIMANT_DATA_GROUP delta
+    tables as `_FixExitMapB`/`get_smell_t`), keeping the first one that is
+    both `is_valid_a` and has a yard map tile `< 0x50` (unsigned `jb`) —
+    confirmed via `_IsValidA`'s existing push-order convention that x/y
+    aren't swapped.
+  - `field_e` is COMPUTED, not passed straight through like
+    `add_ant_to_a_list`'s: `field_c==6` uses the caller's `field_e_hint`
+    verbatim; `field_c` in `{3,7}` forces 0; anything else picks 0 or 0x78
+    from a `caste` high-bit + the ORIGINAL (pre-scan) x compared to 0x40.
+  - Does NOT stamp the life grid at all (a genuine divergence from
+    `add_ant_to_a_list`, not an oversight — re-verified by reading every
+    instruction between the field writes and the tail, twice).
+  - Handles a FULL list (`pack[0x80F0] >= 0x3E8`) completely differently:
+    rather than silently refusing (like `add_ant_to_a_list`), it writes the
+    new entry into the just-past-cap slot regardless, then runs a
+    `compact_list_a`-style single-pass mark-and-sweep over the EXISTING
+    0..cap-1 slots and re-derives the count from the shrunk total — the
+    newly-written slot itself is outside that scan, so in the genuinely-
+    zero-holes edge case the new entry ends up permanently uncounted.
+    Ported byte-exact, not "fixed" — the project reconstructs what
+    SimAnt actually does, bugs included.
+  - CAUGHT A REAL BUG via the state-diff test: the caste-bit/x-threshold
+    rule's TWO branches both had their inequality direction backwards in
+    the first draft (`caste&0x80==0: 0 if x<=0x40 else 0x78`, when the
+    ASM's `jge`/`jle` pair actually means `0x78 if x<0x40 else 0` — and
+    the mirror-image mistake in the other branch too). A dedicated
+    `x=20,caste=0` test case caught it immediately (ASM wrote 0x78, the
+    buggy port wrote 0). Fixed both branches by re-tracing the exact
+    jump targets rather than trusting the first read.
+  - 11 scenarios (no-clear-direction failure, all four caste-bit x
+    x-threshold combinations, all three `field_c` special cases, multiple-
+    clear-directions-picks-first, and both full-list edge cases — WITH
+    holes and with zero holes) — all green after the fix.
+- Suite: simant 1120 (+11). This closes cont.90's "independently tractable
+  now" trio (`_FixExitMapB/R`, `_SmoothEdgesB/R`, `_ExitHole`) entirely.
+  Continuing per /goal — next per cont.90's survey: `_DigTileThemB/R` and
+  `_MakeNewHoleB/R` (seg5, both now unblocked since `__aFldiv` is
+  recovered) are the next layer, closing in on `_TryMoveDirB/R` <->
+  `_GetOutB/R` (the movement-EXECUTION mutual-recursion pair) finally
+  becoming attemptable.
+
 ## 2026-07-14 (cont.94) — /goal grind: _SmoothEdgesB/R (dig-subsystem, second slice)
 - RECOVERED `smooth_edges_b`/`smooth_edges_r` (seg5:255A/26E4, args x, y;
   FAR return) — the second independently-tractable dig-subsystem member
