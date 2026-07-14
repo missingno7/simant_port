@@ -696,6 +696,36 @@ def drop_food_r(dgroup, pack, simant_data_group, x: int, y: int) -> int:
     return _drop_food(dgroup, pack, simant_data_group, 3, 0x72DE, 0x46E6, x, y)
 
 
+def remove_from_a_list(pack, simant_data_group, dgroup, slot: int) -> None:
+    """Remove the yard ("A") ant at `slot`, closing the gap.
+
+    Recovered from `_RemoveFromAList` (SIMANTW.SYM seg5:2B42, arg slot=[bp+6]).
+    Uses the same per-slot fields as `find_in_a_list`/`add_ant_to_a_list`
+    (0x23A4/0x278E/0x2B78/0x2F62/0x334C).  First clears the removed ant's
+    life-grid cell (plane 0, at its recorded target0/target1 — the SAME x/y
+    roles `add_ant_to_a_list` uses), then decrements the list count
+    (`pack[0x80F0]`, floored at 0), then shifts every field array's tail
+    (indices `slot+1 .. old_count-1`) down by one position via a byte-exact
+    copy (the ASM calls a shared far-memcpy helper; observably identical to a
+    plain byte-by-byte shift regardless of its word/byte-pair optimization).
+    `slot` must be a valid existing index (0 <= slot < count) — unlike
+    `set_ant_index`, this routine does NOT bounds-check; the caller is trusted.
+    """
+    target1 = simant_data_group.rb(0x278E + slot)
+    target0 = simant_data_group.rb(0x23A4 + slot) & 0xFF
+    dgroup.wb(LIFE_PLANE_BASE[0] + target1 + (target0 << 6), 0)
+    count = pack.rw(0x80F0)
+    if count > 0:
+        count -= 1
+        pack.ww(0x80F0, count)
+    n = count - slot
+    if n > 0:
+        for base in (0x23A4, 0x278E, 0x2B78, 0x2F62, 0x334C):
+            tail = bytes(simant_data_group.rb(base + slot + 1 + i) for i in range(n))
+            for i, b in enumerate(tail):
+                simant_data_group.wb(base + slot + i, b)
+
+
 def set_ant_index(pack, simant_data_group, list_type: int, slot: int,
                   target0: int, target1: int, caste: int, field_c: int,
                   field_e: int) -> None:

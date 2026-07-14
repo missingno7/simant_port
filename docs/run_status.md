@@ -1,6 +1,26 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.78) — /goal grind: _GetSmellT, _SetAntIndex — ant-list CRUD (C/R/U) done
+## 2026-07-14 (cont.79) — /goal grind: _RemoveFromAList — ant-list CRUD complete
+- RECOVERED `remove_from_a_list` (seg5:2B42): remove the ant at `slot`, closing
+  the gap.  Clears the removed ant's life-grid cell FIRST (using its recorded
+  position before the fields are overwritten), decrements the count (floored
+  0), then shifts every field array's tail down by one via a byte-exact copy.
+- The ASM calls a SHARED far-memcpy helper (seg7:783E) 5x — recognized it as a
+  standard word+odd-byte `rep movsw`/`rep movsb` memcpy (the generic C runtime
+  helper, not SimAnt-specific logic), so it's NOT separately "recovered" as its
+  own routine — the Python byte-by-byte shift is OBSERVABLY identical to its
+  word/byte-pair optimization, and it's exercised for REAL (not stubbed) in the
+  state-diff harness since it performs genuine sim-state mutation, not a
+  rendering side effect.  Verified overlap-direction safety (source ahead of
+  dest, increasing-address copy — matches Python's read-full-tail-then-write
+  approach).  4 state-diff cases green (covering slot=0/mid/last/single-elem).
+- MILESTONE: the ant-list CRUD is now fully recovered — Create (add_ant_to_*),
+  Read (find_in_*), Update (set_ant_index), Delete (remove_from_a_list for A;
+  B/R deletion likely via _CompactListB/R, not yet recovered — A's list uses
+  remove-in-place, B/R may use a different compaction strategy, worth checking
+  next before assuming symmetry).
+- Suite: simant 878.  Continuing per /goal.
+
 - RECOVERED `get_smell_t` (seg6:9612): the READ side of the trail-scent grid —
   reads a per-direction delta from two small tables in SIMANT_DATA_GROUP (read
   LIVE, not hardcoded, since they're genuine game data) and returns the scent

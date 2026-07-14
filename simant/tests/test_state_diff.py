@@ -646,6 +646,39 @@ def test_dropfoodr_state_diff_matches_asm(x, y, tile, ant_idx, caste):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _RemoveFromAList (seg5:2B42) — remove + shift the tail down ----------
+# Calls a shared far-memcpy helper (seg7:783E) 5x; NOT stubbed, since it does
+# genuine sim-state mutation (the array shift), not a rendering/audio side
+# effect — it runs for real.
+_REMOVEFROMA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x68E8, 0x68E8 + _YARD_SPAN),   # life plane 0
+    (_SDG, 0x2300, 0x3800),           # covers 0x23A4/278E/2B78/2F62/334C+slot
+    (_PACK, 0x80E0, 0x8100),          # covers [0x80F0] (count)
+]
+
+
+@pytest.mark.parametrize("slot,count", [(0, 6), (2, 6), (5, 6), (0, 1)])
+def test_removefromalist_state_diff_matches_asm(slot, count):
+    from simant.recovered.gameplay import remove_from_a_list
+    m = runtime.create_machine()
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    m.mem.ww(pack, 0x80F0, count)
+    for i in range(count):
+        m.mem.wb(sdg, 0x23A4 + i, (i * 3 + 1) & 0x3F)     # keep target0 in 0..63
+        m.mem.wb(sdg, 0x278E + i, (i * 5 + 2) & 0x1F)     # keep target1 small
+        m.mem.wb(sdg, 0x2B78 + i, (i * 7 + 3) & 0xFF)
+        m.mem.wb(sdg, 0x2F62 + i, (i * 11 + 4) & 0xFF)
+        m.mem.wb(sdg, 0x334C + i, (i * 13 + 5) & 0xFF)
+
+    results = _run_and_diff_segs(
+        5, 0x2B42, (slot,),
+        lambda d, s, p: remove_from_a_list(p, s, d, slot),
+        _REMOVEFROMA_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _REMOVEFROMA_REGIONS):
+        assert asm_after == rec_after, (
+            f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _SetAntIndex (seg5:584A) — overwrite an existing ant record's fields --
 @pytest.mark.parametrize("list_type,which", [(0, "a"), (1, "a"), (2, "b"),
                                              (3, "r"), (99, "r")])
