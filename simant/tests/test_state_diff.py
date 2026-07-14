@@ -6760,3 +6760,48 @@ def test_replacepillarmap_state_diff_matches_asm(x, y, tile, flag, cache, label)
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _PILLARMAP_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _PillFoodTile (seg7:5A02) — restore + stamp a food tile -------------
+@pytest.mark.parametrize("x,y,tile,flag,cache,label", [
+    (20, 21, 0x50, 1, [0x30] * 6, "cached-high-tile-not-stamped"),
+    (20, 21, 0x50, 1, [0x10] * 6, "cached-low-tile-stamped-to-food"),
+    (0x80, 21, 0x50, 1, [0x4B] * 6, "invalid-position-noop"),
+])
+def test_pillfoodtile_state_diff_matches_asm(x, y, tile, flag, cache, label):
+    from simant.recovered.gameplay import pill_food_tile
+    results = _run_and_diff_segs(
+        7, 0x5A02, (x, y), lambda d, p: pill_food_tile(d, p, x, y),
+        _PILLARMAP_REGIONS, seed_fn=_pillarmap_seed(x, y, tile, flag, cache))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _PILLARMAP_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _IsPillDead (seg7:572A) — 3x3 living-neighbor census -----------------
+def _ispilldead_seed(px, py, alive_cells):
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        m.mem.ww(sdg, 0x8A8C, px & 0xFFFF)
+        m.mem.ww(sdg, 0x8A8E, py & 0xFFFF)
+        for (cx, cy) in alive_cells:
+            m.mem.wb(dg, 0x68E8 + (cx << 6) + cy, 1)
+    return seed
+
+
+@pytest.mark.parametrize("px,py,alive_cells,label", [
+    (20, 20, [], "no-neighbors-alive-not-dead"),
+    (20, 20, [(19, 19), (19, 20), (19, 21), (20, 19), (20, 20), (20, 21)],
+     "six-alive-is-dead"),
+    (20, 20, [(19, 19), (19, 20), (19, 21), (20, 19), (20, 20)],
+     "five-alive-not-dead-boundary"),
+    (0, 0, [(0, 0), (0, 1), (1, 0), (1, 1), (63, 63), (63, 0), (0, 63)],
+     "edge-position-out-of-bounds-neighbors-not-counted"),
+])
+def test_ispilldead_matches_asm(px, py, alive_cells, label):
+    from simant.recovered.gameplay import is_pill_dead
+    ax, m = _run_and_get_ax(7, 0x572A, (), seed_fn=_ispilldead_seed(px, py, alive_cells))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
+    result = is_pill_dead(dg_view, sdg_view)
+    assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"

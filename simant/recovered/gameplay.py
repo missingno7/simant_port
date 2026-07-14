@@ -8153,3 +8153,54 @@ def replace_pillar_map(dgroup, pack, x: int, y: int) -> None:
     idx = _pillar_cache_index(pack, x, y)
     tile = pack.rb(0x7C0E + (idx << 1))
     dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, tile)
+
+
+def pill_food_tile(dgroup, pack, x: int, y: int) -> None:
+    """Restore `(x, y)`'s cached map tile (via `replace_pillar_map`),
+    then stamp it to a fixed "food" tile (`0x4B`) if it's `< 0x18` —
+    an `is_valid_a`-gated no-op otherwise.
+
+    Recovered from `_PillFoodTile` (SIMANTW.SYM seg7:5A02, args
+    x=[bp+6], y=[bp+8]; FAR return, 110 bytes). The real ASM calls
+    `_IsValidA` TWICE with the identical `(x, y)` — a genuine redundant
+    double-check (confirmed via the raw disassembly: same args both
+    times, so the second call is provably always equal to the first
+    for this pure, deterministic predicate) that has no observable
+    effect beyond what a single check already establishes; ported as
+    one check via composing `is_valid_a` and the already-recovered
+    `replace_pillar_map` (whose body IS that exact "second call +
+    restore" sequence, inlined again in the real ASM rather than
+    called as a function).
+    """
+    if is_valid_a(x, y) != 1:
+        return
+    replace_pillar_map(dgroup, pack, x, y)
+    cell = MAP_PLANE_BASE[0] + (x << 6) + y
+    if dgroup.rb(cell) < 0x18:
+        dgroup.wb(cell, 0x4B)
+
+
+def is_pill_dead(dgroup, simant_data_group) -> int:
+    """Scan the 3x3 neighborhood around the pillar's own recorded
+    position (`simant_data_group[0x8A8C]`=x, `[0x8A8E]`=y — NO
+    arguments, a genuinely self-contained predicate) for living
+    neighbors on the yard life plane; `1` ("dead") once MORE than 5
+    of the (up to 9) cells are alive, else `0`.
+
+    Recovered from `_IsPillDead` (SIMANTW.SYM seg7:572A, NO args; FAR
+    return, 168 bytes). Composes the already-recovered `is_valid_a`.
+    Each of the 9 candidate cells is checked for validity first (an
+    out-of-bounds cell contributes `0`, not counted as alive); a valid
+    cell's life-plane byte being nonzero counts it.
+    """
+    px = _sx16(simant_data_group.rw(0x8A8C))
+    py = _sx16(simant_data_group.rw(0x8A8E))
+    count = 0
+    for row in range(px - 1, px + 2):
+        for col in range(py - 1, py + 2):
+            life = 0
+            if is_valid_a(row, col):
+                life = dgroup.rb(LIFE_PLANE_BASE[0] + (row << 6) + col)
+            if life != 0:
+                count += 1
+    return 1 if count > 5 else 0

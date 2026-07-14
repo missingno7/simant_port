@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.182) — /goal grind: _PillFoodTile/_IsPillDead
+- RECOVERED `pill_food_tile` (`_PillFoodTile`, SIMANTW.SYM seg7:5A02,
+  args x=[bp+6], y=[bp+8]; FAR return, 110 bytes) — composes
+  `is_valid_a` and the already-recovered `replace_pillar_map`.
+  Restores the cached map tile, then stamps it to a fixed "food" tile
+  (`0x4B`) if it's `< 0x18`. The real ASM calls `_IsValidA` TWICE with
+  the identical `(x, y)` — a genuine redundant double-check
+  (independently confirmed: same args both times on a pure,
+  deterministic predicate) that has no observable effect beyond a
+  single check; ported as one, composing `replace_pillar_map` for the
+  body that duplicate second check guards (the real ASM inlines that
+  body again rather than calling the function).
+  - Caught a genuine INVERTED-comparison bug via the first failing
+    test: read `jnb` (jump if tile `>= 0x18`, skipping the stamp) as
+    "stamp when `>= 0x18`" instead of the correct "stamp when `< 0x18`"
+    — caught immediately by a deliberately contrasting pair of test
+    cases (a cached tile clearly above vs below the threshold), fixed
+    by re-reading the raw jump condition.
+- RECOVERED `is_pill_dead` (`_IsPillDead`, SIMANTW.SYM seg7:572A, NO
+  args; FAR return, 168 bytes) — a genuinely self-contained predicate
+  (reads the pillar's own position from `simant_data_group[0x8A8C]`/
+  `[0x8A8E]`, no parameters) scanning its 3x3 neighborhood on the yard
+  life plane; `1` ("dead") once MORE than 5 of the (up to 9) cells are
+  alive. Composes `is_valid_a` (an out-of-bounds neighbor contributes
+  `0`, not counted).
+- 7 cases (3 `pill_food_tile`, 4 `is_pill_dead` including an
+  out-of-bounds-neighbor edge case) — all green after the one
+  comparison-direction fix.
+- Suite: simant 1806 (+7), full suite green.
+
 ## 2026-07-15 (cont.181) — /goal grind: _StorePillarMap/_ReplacePillarMap
 - RECOVERED `store_pillar_map`/`replace_pillar_map`
   (`_StorePillarMap`/`_ReplacePillarMap`, SIMANTW.SYM seg7:5304/5372,
