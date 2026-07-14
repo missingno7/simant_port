@@ -3292,6 +3292,103 @@ def raid_out_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
              LIFE_PLANE_BASE[3], 0x46E6, x, y)
 
 
+def _queen_move(dgroup, simant_data_group, pack, plane: int, target_x_off: int,
+                target_y_off: int, try_move_dir, life_plane_base: int,
+                find_list, y_off: int, x_off: int, caste_off: int,
+                marker_add: int, final_transform, x: int, y: int,
+                exclude_direction: int) -> int:
+    """Shared body of `queen_move_b`/`r`: move the queen one step toward her
+    stored target (`pack[target_x_off]`/`[target_y_off]`) via
+    `get_best_dir`, falling back to a random direction when already there
+    is impossible or no neighbor improves; near the yard's top edge
+    (`y < 3`) the chosen direction must be 3-5 (roughly "downward") or the
+    whole call is a no-op. On a successful move, clears the OLD trail
+    marker one step in `exclude_direction`'s opposite, then relocates that
+    marker's ant-list record (if any, and only if it's still alive) to the
+    queen's OLD position, restamping it with a transformed direction byte
+    — B and R do NOT use the same transform here, ported as passed-in
+    constants/callables rather than assumed symmetric.
+
+    Returns `1` on a successful move, `0` on any failure/no-op.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def read_map(pl, mx, my):
+        o = map_cell_offset(pl, mx, my)
+        return dgroup.rb(o) if o is not None else None
+
+    def read_life(pl, mx, my):
+        o = life_cell_offset(pl, mx, my)
+        return dgroup.rb(o) if o is not None else None
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    inside = pack.rb(0x9B6E) != 0
+    tgt_x = pack.rw(target_x_off)
+    tgt_y = pack.rw(target_y_off)
+    result = get_best_dir(plane, x, y, tgt_x, tgt_y, read_map, read_life, inside)
+
+    if result >= 0:
+        direction = result
+    elif result == -1:
+        return 0
+    else:
+        seed, direction = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+
+    if y < 3 and not (3 <= direction <= 5):
+        return 0
+
+    if not try_move_dir(dgroup, simant_data_group, pack, x, y, direction):
+        return 0
+
+    opp_dir = (exclude_direction ^ 4) & 7
+    ny2 = y + sx8(simant_data_group.rb(8 + opp_dir))
+    nx2 = x + sx8(simant_data_group.rb(opp_dir))
+    dgroup.wb(life_plane_base + (nx2 << 6) + ny2, 0)
+
+    marker = ((exclude_direction & 7) + marker_add) & 0xFF
+    found_slot = find_list(pack, simant_data_group, nx2, ny2, marker)
+    if _sx16(found_slot) >= 0 and simant_data_group.rb(caste_off + found_slot) != 0:
+        simant_data_group.wb(y_off + found_slot, x & 0xFF)
+        simant_data_group.wb(x_off + found_slot, y & 0xFF)
+        new_caste = final_transform(direction)
+        simant_data_group.wb(caste_off + found_slot, new_caste)
+        dgroup.wb(life_plane_base + (x << 6) + y, new_caste)
+
+    return 1
+
+
+def queen_move_b(dgroup, simant_data_group, pack, x: int, y: int,
+                  exclude_direction: int) -> int:
+    """Recovered from `_QueenMoveB` (SIMANTW.SYM seg6:4154, FAR return, args
+    x=[bp+6], y=[bp+8], exclude_direction=[bp+10]). See `_queen_move`.
+    """
+    return _queen_move(dgroup, simant_data_group, pack, 2, 0x7C48, 0x7C90,
+                       try_move_dir_b, LIFE_PLANE_BASE[2], find_in_b_list,
+                       0x3736, 0x392C, 0x3D18, 0x68,
+                       lambda d: (d + 0x68) & 0xFF, x, y, exclude_direction)
+
+
+def queen_move_r(dgroup, simant_data_group, pack, x: int, y: int,
+                  exclude_direction: int) -> int:
+    """The red-colony twin of `queen_move_b` — NOT byte-symmetric: the
+    marker offset (`0xE8`, not `0x68`) and the final caste transform
+    (`direction - 0x18`, not `direction + 0x68`) genuinely differ,
+    confirmed by independently disassembling this routine rather than
+    assuming symmetry.
+
+    Recovered from `_QueenMoveR` (SIMANTW.SYM seg6:6606, FAR return, args
+    x=[bp+6], y=[bp+8], exclude_direction=[bp+10]).
+    """
+    return _queen_move(dgroup, simant_data_group, pack, 3, 0x9FBA, 0x9FD2,
+                       try_move_dir_r, LIFE_PLANE_BASE[3], find_in_r_list,
+                       0x4104, 0x42FA, 0x46E6, 0xE8,
+                       lambda d: (d - 0x18) & 0xFF, x, y, exclude_direction)
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.

@@ -1015,6 +1015,134 @@ def test_raidoutr_state_diff_matches_asm(tile_at_dest, label):
         assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _QueenMoveB / _QueenMoveR (seg6:4154 / 6606) — queen movement + trail-
+# marker relocation. Composes get_best_dir, try_move_dir_b/r, find_in_b/
+# r_list -- all already recovered. NOT byte-symmetric between colonies (the
+# marker offset and the final caste transform genuinely differ).
+def _queenmove_seed(x, y, tgt_x, tgt_y, map_base, life_base, inside_flag,
+                    target_x_off, target_y_off, count_off, count,
+                    marker_slot=None, marker_val=0, marker_pos=None,
+                    y_off=None, x_off=None, caste_off=None, seed_val=0x1234):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B6E, inside_flag)
+        m.mem.ww(pack, target_x_off, tgt_x)
+        m.mem.ww(pack, target_y_off, tgt_y)
+        m.mem.ww(pack, count_off, count)
+        for si in range(8):
+            nx, ny = x + GET_BEST_DIR_DX[si], y + GET_BEST_DIR_DY[si]
+            if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                m.mem.wb(dg, map_base + (nx << 6) + ny, 0)
+                m.mem.wb(dg, life_base + (nx << 6) + ny, 0)
+        if marker_slot is not None:
+            mx, my = marker_pos
+            m.mem.wb(sdg, y_off + marker_slot, mx)
+            m.mem.wb(sdg, x_off + marker_slot, my)
+            m.mem.wb(sdg, caste_off + marker_slot, marker_val)
+    return seed
+
+
+@pytest.mark.parametrize("colony,seg,off,map_base,life_base,target_x_off,"
+                         "target_y_off,count_off,y_off,x_off,caste_off", [
+    ("B", 6, 0x4154, 0x48E8, 0x88E8, 0x7C48, 0x7C90, 0x99D4, 0x3736, 0x392C, 0x3D18),
+    ("R", 6, 0x6606, 0x58E8, 0x98E8, 0x9FBA, 0x9FD2, 0x72CC, 0x4104, 0x42FA, 0x46E6),
+])
+def test_queenmove_already_there_matches_asm(colony, seg, off, map_base,
+                                             life_base, target_x_off,
+                                             target_y_off, count_off, y_off,
+                                             x_off, caste_off):
+    from simant.recovered.gameplay import queen_move_b, queen_move_r
+    fn = queen_move_b if colony == "B" else queen_move_r
+    x, y, exclude = 30, 30, 3
+    results = _run_and_diff_segs(
+        seg, off, (x, y, exclude),
+        lambda d, s, p: fn(d, s, p, x, y, exclude),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_queenmove_seed(x, y, x, y, map_base, life_base, 0,
+                                target_x_off, target_y_off, count_off, 0))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{colony} already-there {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("colony,seg,off,map_base,life_base,target_x_off,"
+                         "target_y_off,count_off,y_off,x_off,caste_off,"
+                         "marker_add", [
+    ("B", 6, 0x4154, 0x48E8, 0x88E8, 0x7C48, 0x7C90, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x68),
+    ("R", 6, 0x6606, 0x58E8, 0x98E8, 0x9FBA, 0x9FD2, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0xE8),
+])
+def test_queenmove_no_marker_matches_asm(colony, seg, off, map_base, life_base,
+                                         target_x_off, target_y_off, count_off,
+                                         y_off, x_off, caste_off, marker_add):
+    from simant.recovered.gameplay import queen_move_b, queen_move_r
+    fn = queen_move_b if colony == "B" else queen_move_r
+    x, y, exclude = 30, 30, 3
+    results = _run_and_diff_segs(
+        seg, off, (x, y, exclude),
+        lambda d, s, p: fn(d, s, p, x, y, exclude),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_queenmove_seed(x, y, x + 10, y, map_base, life_base, 0,
+                                target_x_off, target_y_off, count_off, 0))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{colony} no-marker {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("colony,seg,off,map_base,life_base,target_x_off,"
+                         "target_y_off,count_off,y_off,x_off,caste_off,"
+                         "marker_add", [
+    ("B", 6, 0x4154, 0x48E8, 0x88E8, 0x7C48, 0x7C90, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x68),
+    ("R", 6, 0x6606, 0x58E8, 0x98E8, 0x9FBA, 0x9FD2, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0xE8),
+])
+def test_queenmove_relocates_marker_matches_asm(colony, seg, off, map_base,
+                                                life_base, target_x_off,
+                                                target_y_off, count_off,
+                                                y_off, x_off, caste_off,
+                                                marker_add):
+    from simant.recovered.gameplay import queen_move_b, queen_move_r
+    fn = queen_move_b if colony == "B" else queen_move_r
+    x, y, exclude = 30, 30, 3
+    opp_dir = (exclude ^ 4) & 7
+    nx2 = x + GET_BEST_DIR_DX[opp_dir]
+    ny2 = y + GET_BEST_DIR_DY[opp_dir]
+    marker = ((exclude & 7) + marker_add) & 0xFF
+    results = _run_and_diff_segs(
+        seg, off, (x, y, exclude),
+        lambda d, s, p: fn(d, s, p, x, y, exclude),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_queenmove_seed(x, y, x + 10, y, map_base, life_base, 0,
+                                target_x_off, target_y_off, count_off, 1,
+                                marker_slot=0, marker_val=marker,
+                                marker_pos=(nx2, ny2), y_off=y_off,
+                                x_off=x_off, caste_off=caste_off))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{colony} relocates {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("colony,seg,off,map_base,life_base,target_x_off,"
+                         "target_y_off,count_off,y_off,x_off,caste_off", [
+    ("B", 6, 0x4154, 0x48E8, 0x88E8, 0x7C48, 0x7C90, 0x99D4, 0x3736, 0x392C, 0x3D18),
+    ("R", 6, 0x6606, 0x58E8, 0x98E8, 0x9FBA, 0x9FD2, 0x72CC, 0x4104, 0x42FA, 0x46E6),
+])
+def test_queenmove_top_edge_restriction_matches_asm(colony, seg, off, map_base,
+                                                     life_base, target_x_off,
+                                                     target_y_off, count_off,
+                                                     y_off, x_off, caste_off):
+    from simant.recovered.gameplay import queen_move_b, queen_move_r
+    fn = queen_move_b if colony == "B" else queen_move_r
+    # near the top edge (y<3), target due WEST -> best dir is index 6 (dx=-1,
+    # dy=0), outside the allowed [3,5] band -> the whole call is a no-op.
+    x, y, exclude = 30, 1, 3
+    results = _run_and_diff_segs(
+        seg, off, (x, y, exclude),
+        lambda d, s, p: fn(d, s, p, x, y, exclude),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_queenmove_seed(x, y, x - 10, y, map_base, life_base, 0,
+                                target_x_off, target_y_off, count_off, 0))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{colony} top-edge {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _GetNewMode (seg7:0910) — caste mode-transition lookup ---------------
 _GETNEWMODE_REGIONS = [
     (hooks.DG_SEG_INDEX, 0xCBF0, 0xCBF4),   # SRand seed

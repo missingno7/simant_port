@@ -180,7 +180,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}`/`_PickupFoodA` done | 75 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_SimEggA`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_RaidOutB/R` done; forage/nest frontier | 57 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_SimEggA`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_RaidOutB/R`/`_QueenMoveB/R` done; forage/nest frontier | 59 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family done | 14 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -255,11 +255,14 @@ move and then actually move* is byte-exact, end to end:
   colony-growth trigger keyed off two DGROUP ant-count stats) and
   `pickup_food_a` (a genuine `_DoForageAnt` dependency — two different
   tile transforms gated on the same "inside the nest" flag
-  `_DeadAntHere` reads), and `raid_out_b`/`r` (move toward an exit via
+  `_DeadAntHere` reads), `raid_out_b`/`r` (move toward an exit via
   `get_exit_dir_b`/`r`, or a random direction, or give up and re-stamp
   the ant's caste in place — composes straight into the movement-
-  EXECUTION tier via `try_move_dir_b`/`r`). `_DeadAntHere` (a 100-slot
-  corpse-decay ring buffer),
+  EXECUTION tier via `try_move_dir_b`/`r`), and `queen_move_b`/`r`
+  (queen movement + trail-marker relocation via `get_best_dir` and
+  `find_in_b`/`r_list` — genuinely NOT byte-symmetric between colonies,
+  confirmed by independently disassembling both rather than assuming
+  symmetry). `_DeadAntHere` (a 100-slot corpse-decay ring buffer),
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
   LFSR used for map generation).

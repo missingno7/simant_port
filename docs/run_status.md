@@ -1,5 +1,43 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.124) — /goal grind: _QueenMoveB/R — queen movement + trail-marker relocation
+- RECOVERED `queen_move_b`/`r` (`_QueenMoveB`/`R`, seg6:4154/6606, FAR
+  return, args x/y/exclude_direction) — the last two routines from the
+  fresh survey's candidate list. Composes `get_best_dir` (the seg6:405E
+  copy — confirmed the SAME address/routine as the already-recovered
+  pathfinding core, not a distinct duplicate), `try_move_dir_b`/`r`, and
+  `find_in_b`/`r_list`.
+- Moves the queen one step toward her stored target (`pack`-resident,
+  colony-specific fields) via `get_best_dir`, falling back to a random
+  direction when already there is impossible (`-1`) or no neighbor
+  improves (`-2`); near the yard's top edge (`y < 3`) the chosen
+  direction must land in `[3, 5]` ("roughly downward") or the ENTIRE call
+  is a no-op — verified this exact 3-way branch structure (not just "any
+  restriction near the edge") with a dedicated test.
+- On a successful move: clears the OLD trail marker one cell in
+  `exclude_direction`'s opposite, then searches for a matching ant
+  record there (`find_in_b`/`r_list`) and, if found and still alive,
+  relocates it to the queen's OLD position and restamps its caste with a
+  transformed direction byte.
+- **Independently disassembled BOTH colonies rather than assuming
+  symmetry — and caught a genuine, non-obvious asymmetry**: the search
+  marker's offset constant (`0x68` for B, `0xE8` for R — consistent with
+  this project's established "R fields = B fields + 0x80" pattern) AND
+  the final caste transform are DIFFERENT shapes entirely (`direction +
+  0x68` for B vs `direction - 0x18` for R), not just a different
+  constant plugged into the same formula. Ported both as explicit
+  parameters/callables rather than forcing a shared formula that would
+  have silently been wrong for one colony.
+- 8 cases (already-there no-op, successful-move-no-marker, marker
+  relocation exercising the confirmed B/R asymmetry, and the top-edge
+  direction restriction — each x2 colonies) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1360 (+8). **This closes the entire fresh-survey
+  candidate list.** `_DoForageAnt` and the other top-level `_Do*Ant*`
+  behaviors remain blocked on the unrecovered sound-engine/dialog-UI
+  chain (`_YellowFight`/`_DoTroph`); a new survey pass is needed to find
+  the next batch of tractable routines, or this becomes a natural
+  session boundary.
+
 ## 2026-07-14 (cont.123) — /goal grind: _RaidOutB/R — move toward an exit or give up in place
 - RECOVERED `raid_out_b`/`r` (`_RaidOutB`/`R`, seg6:3610/5D10, FAR return,
   args x/y) — composes FOUR already-recovered routines
