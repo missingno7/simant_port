@@ -5714,3 +5714,38 @@ def test_getmydir_state_diff_matches_asm(plane, cur_x, cur_y, sub, tgt_x,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _GETMYNEXTRANDDIRS_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _GetMyDis (seg6:8682) — cross-plane distance via SDG connector table -
+# Pure: composes only get_dis, over the SAME 4-slot SDG coordinate table
+# get_my_dir reads. No PACK/mutation at all -- a plain predicate oracle.
+def _getmydis_seed(cur_x, cur_y, tgt_x, tgt_y):
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(sdg, 0x835A, 11); m.mem.ww(sdg, 0x835C, 12)   # table A
+        m.mem.ww(sdg, 0x835E, 13); m.mem.ww(sdg, 0x8360, 14)   # table B
+        m.mem.ww(sdg, 0x8352, 15); m.mem.ww(sdg, 0x8354, 16)   # table C
+        m.mem.ww(sdg, 0x8356, 17); m.mem.ww(sdg, 0x8358, 18)   # table D
+    return seed
+
+
+@pytest.mark.parametrize("plane,cur_x,cur_y,tgt_plane,tgt_x,tgt_y,label", [
+    (2, 20, 25, 2, 40, 45, "same-plane-direct"),
+    (1, 20, 25, 2, 40, 45, "yard-to-nest2"),
+    (1, 20, 25, 3, 40, 45, "yard-to-nest3"),
+    (2, 20, 25, 1, 40, 45, "nest2-to-yard"),
+    (3, 20, 25, 1, 40, 45, "nest3-to-yard"),
+    (0, 20, 25, 1, 40, 45, "plane0-to-yard"),
+    (2, 20, 25, 3, 40, 45, "nest2-to-nest3-threeleg"),
+    (3, 20, 25, 2, 40, 45, "nest3-to-nest2-threeleg"),
+    (1, 20, 25, 0, 40, 45, "yard-to-plane0-fallsto-catchall"),
+])
+def test_getmydis_matches_asm(plane, cur_x, cur_y, tgt_plane, tgt_x, tgt_y, label):
+    from simant.recovered.gameplay import get_my_dis
+    ax, m = _run_and_get_ax(
+        6, 0x8682, (plane, cur_x, cur_y, tgt_plane, tgt_x, tgt_y),
+        seed_fn=_getmydis_seed(cur_x, cur_y, tgt_x, tgt_y))
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
+    expect = get_my_dis(sdg_view, plane, cur_x, cur_y, tgt_plane, tgt_x, tgt_y)
+    assert ax == (expect & 0xFFFF), (
+        f"{label}: asm={ax:#06x} rec={expect & 0xFFFF:#06x}")

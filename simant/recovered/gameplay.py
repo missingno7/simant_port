@@ -6775,3 +6775,94 @@ def get_my_dir(dgroup, simant_data_group, pack, plane: int, cur_x: int,
     else:
         atx, aty = simant_data_group.rw(0x8356), simant_data_group.rw(0x8358)
     return probe(atx, aty)
+
+
+def get_my_dis(simant_data_group, plane: int, cur_x: int, cur_y: int,
+               tgt_plane: int, tgt_x: int, tgt_y: int) -> int:
+    """Cross-plane distance estimate: when `(cur_x, cur_y)` and
+    `(tgt_x, tgt_y)` are interpreted on the SAME plane, a plain
+    `_GetDis`; otherwise routes through the SAME fixed SDG "connector"
+    coordinate slots `get_my_dir` reads as its alternate-destination
+    table (`0x835A/0x835C`=table A, `0x835E/0x8360`=table B,
+    `0x8352/0x8354`=table C, `0x8356/0x8358`=table D), summing 2 or 3
+    leg distances as 16-bit adds (matching the real ASM's `add ax,cx`
+    on `_GetDis`'s low word only — DX/the high word is never
+    consulted here, unlike `get_dis`'s own full 32-bit-squared-distance
+    return, so every intermediate sum is masked `& 0xFFFF`).
+
+    Recovered from `_GetMyDis` (SIMANTW.SYM seg6:8682, args plane=[bp+6],
+    cur_x=[bp+8], cur_y=[bp+10], tgt_plane=[bp+12], tgt_x=[bp+14],
+    tgt_y=[bp+16]; FAR return, 0x1A6 bytes). Composes only `get_dis` — no
+    other primitives.
+
+    `tgt_plane == plane`: `dis(cur, tgt)` directly.
+
+    `plane == 1` and `tgt_plane > 1` (the only case where `plane == 1`
+    routes here instead of the shared fallback below): `dis(table C,
+    tgt) + dis(cur, table A)` if `tgt_plane == 2`, else `dis(table C,
+    tgt) + dis(cur, table B)`.
+
+    Otherwise (`plane != 1`, OR `plane == 1` with `tgt_plane <= 1`
+    — `tgt_plane == 1` is impossible here since `tgt_plane == plane`
+    was already excluded above):
+      - `tgt_plane == 1`: `dis(table A, tgt) + dis(cur, table C)` when
+        `plane == 2`, else `dis(table B, tgt) + dis(cur, table D)`.
+      - otherwise, a THREE-leg route: `plane == 2` sums `dis(table D,
+        tgt) + dis(table A, table B) + dis(cur, table C)`; any other
+        `plane` sums `dis(table C, tgt) + dis(table B, table A)`
+        (independently confirmed the two anchor-to-anchor legs are
+        pushed in SWAPPED order between these two branches — not a
+        transcription slip) `+ dis(cur, table D)`.
+    """
+    def dis(x1, y1, x2, y2):
+        return get_dis(x1, y1, x2, y2) & 0xFFFF
+
+    def tbl(off_x, off_y):
+        return simant_data_group.rw(off_x), simant_data_group.rw(off_y)
+
+    if tgt_plane == plane:
+        return dis(cur_x, cur_y, tgt_x, tgt_y)
+
+    if plane == 1 and tgt_plane > 1:
+        cx, cy = tbl(0x8352, 0x8354)
+        leg1 = dis(cx, cy, tgt_x, tgt_y)
+        if tgt_plane == 2:
+            ax_, ay_ = tbl(0x835A, 0x835C)
+        else:
+            ax_, ay_ = tbl(0x835E, 0x8360)
+        leg2 = dis(cur_x, cur_y, ax_, ay_)
+        return (leg1 + leg2) & 0xFFFF
+
+    if tgt_plane == 1:
+        if plane == 2:
+            ax_, ay_ = tbl(0x835A, 0x835C)
+            leg1 = dis(ax_, ay_, tgt_x, tgt_y)
+            cx, cy = tbl(0x8352, 0x8354)
+            leg2 = dis(cur_x, cur_y, cx, cy)
+        else:
+            bx, by = tbl(0x835E, 0x8360)
+            leg1 = dis(bx, by, tgt_x, tgt_y)
+            dx, dy = tbl(0x8356, 0x8358)
+            leg2 = dis(cur_x, cur_y, dx, dy)
+        return (leg1 + leg2) & 0xFFFF
+
+    if plane == 2:
+        dx, dy = tbl(0x8356, 0x8358)
+        leg1 = dis(dx, dy, tgt_x, tgt_y)
+        ax_, ay_ = tbl(0x835A, 0x835C)
+        bx, by = tbl(0x835E, 0x8360)
+        leg2 = dis(ax_, ay_, bx, by)
+        running = (leg1 + leg2) & 0xFFFF
+        cx, cy = tbl(0x8352, 0x8354)
+        leg3 = dis(cur_x, cur_y, cx, cy)
+        return (running + leg3) & 0xFFFF
+
+    cx, cy = tbl(0x8352, 0x8354)
+    leg1 = dis(cx, cy, tgt_x, tgt_y)
+    bx, by = tbl(0x835E, 0x8360)
+    ax_, ay_ = tbl(0x835A, 0x835C)
+    leg2 = dis(bx, by, ax_, ay_)
+    running = (leg1 + leg2) & 0xFFFF
+    dx, dy = tbl(0x8356, 0x8358)
+    leg3 = dis(cur_x, cur_y, dx, dy)
+    return (running + leg3) & 0xFFFF

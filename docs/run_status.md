@@ -1,5 +1,32 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.162) — /goal grind: _GetMyDis — cross-plane distance
+- RECOVERED `get_my_dis` (`_GetMyDis`, SIMANTW.SYM seg6:8682, args
+  plane=[bp+6], cur_x=[bp+8], cur_y=[bp+10], tgt_plane=[bp+12],
+  tgt_x=[bp+14], tgt_y=[bp+16]; FAR return, 0x1A6 bytes) — the routine
+  cont.145-era survey originally deferred as "multi-branch colony-anchor
+  distance routing." Composes only `get_dis`, reused against the SAME
+  four SDG "connector" coordinate slots `get_my_dir` (cont.161) reads
+  as its alternate-destination table — confirms those four slots are a
+  genuine shared yard<->nest2/nest3 tunnel-endpoint table, not
+  incidental to either routine alone.
+  - Same-plane query: a plain `dis(cur, tgt)`.
+  - Cross-plane: sums 2 or 3 `_GetDis` legs routed through the
+    connector table (2 legs when either endpoint's plane is the yard,
+    3 legs — via BOTH nest-side connectors plus an anchor-to-anchor
+    hop — when routing nest2<->nest3 directly). Every running sum is
+    masked `& 0xFFFF` to match the real ASM's `add ax,cx` on `_GetDis`'s
+    low word only (DX/the high word is never consulted here, unlike
+    `get_dis`'s own full 32-bit-squared-distance return).
+  - Two branches push the SAME anchor-to-anchor `_GetDis` call in
+    SWAPPED argument order (`dis(table_A, table_B)` vs `dis(table_B,
+    table_A)`) — independently confirmed via the raw disassembly, not
+    a transcription slip, and ported literally.
+- 9 cases spanning same-plane, both yard<->nest directions, both
+  three-leg nest2<->nest3 directions, and the `plane == 0` edge — ALL
+  GREEN ON THE FIRST REAL-ASM RUN.
+- Suite: simant 1656 (+9), full suite green.
+
 ## 2026-07-14 (cont.161) — /goal grind: _GetMyDir — target-select + probe
 - Resumed cont.160's deferred `_GetMyDir` and finished the map: the
   "SDG-resident far-pointer dispatch table" flagged in cont.160 was a
