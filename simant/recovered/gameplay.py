@@ -4929,6 +4929,100 @@ def do_repo_fly(dgroup, simant_data_group, pack, slot: int) -> None:
     dgroup.ww(milestone_off, (dgroup.rw(milestone_off) + 1) & 0xFFFF)
 
 
+def do_return_food_ant(dgroup, simant_data_group, pack, slot: int) -> None:
+    """A food-carrying yard ant heads for its nest: enters if already
+    standing on a nest-entrance tile, otherwise takes one step via
+    `get_nest_dir`'s gradient/homing direction — unless the destination
+    is too crowded, in which case it just jitters caste in place.
+
+    Recovered from `_DoReturnFoodAnt` (SIMANTW.SYM seg6:1CB4, arg
+    slot=[bp+4]; NEAR return).  Composes the already-recovered
+    `is_valid_a`, `go_in_nest`, `get_nest_dir`, `jam_scent_bt`, and
+    `jam_scent_rt`.
+
+    Nest-entrance check is IDENTICAL to `do_rest_ant`'s own: valid
+    position, and the yard map tile is exactly `0x50` (outside) or in
+    `0x80..0x8F` (inside, `pack[0x9B6E]!=0`). A match calls
+    `go_in_nest(x, y, slot)` and returns immediately.
+
+    Otherwise: calls `get_nest_dir(x, y, caste&7, colony_flag=caste)`
+    for a direction, steps the compass delta for that SAME direction to
+    get a candidate `(new_x, new_y)`, and checks the yard map tile
+    there against `pack[0x7604]` (a density/crowding threshold).
+
+    Tile TOO crowded (`> threshold`): jitters caste in place instead of
+    moving — rolls `_SRand16()`, looks up a small SDG table
+    (`simant_data_group[36 + (caste&7)*8 + roll16]`), ORs in the
+    caste's high bits (`&0xF8`), and stamps that as the NEW caste at
+    the CURRENT (unmoved) position.
+
+    Otherwise (destination clear enough): actually moves — stamps the
+    new caste (`direction | high_bits`) at `(new_x, new_y)`, clears the
+    old life-grid cell, and updates the slot's recorded `(x, y)`. If
+    the slot's `field_e` (a carried-food counter) is nonzero,
+    decrements it and jams the mover's OWN colony's TRAIL scent at the
+    NEW position with the post-decrement value (`jam_scent_rt` for red,
+    `jam_scent_bt` for black) — a food-carrying ant leaves a trail
+    behind it. `field_e == 0` skips this entirely (no trail, no jam
+    call at all).
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    x = simant_data_group.rb(0x23A4 + slot)
+    y = simant_data_group.rb(0x278E + slot)
+    caste = simant_data_group.rb(0x2F62 + slot)
+
+    at_nest_entrance = False
+    if is_valid_a(x, y):
+        tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+        if pack.rw(0x9B6E) == 0:
+            at_nest_entrance = tile == 0x50
+        else:
+            at_nest_entrance = 0x80 <= tile <= 0x8F
+
+    if at_nest_entrance:
+        go_in_nest(dgroup, simant_data_group, pack, x, y, slot)
+        return
+
+    high_bits = caste & 0xF8
+    direction = get_nest_dir(dgroup, simant_data_group, x, y, caste & 7, caste)
+
+    new_x = x + sx8(simant_data_group.rb(direction))
+    new_y = y + sx8(simant_data_group.rb(8 + direction))
+
+    tile = dgroup.rb(MAP_PLANE_BASE[0] + (new_x << 6) + new_y)
+
+    if tile > pack.rw(0x7604):
+        from .simone import SRAND_SEED_OFF, srand_pow2
+
+        seed, roll16 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 15)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        table_idx = ((caste & 7) << 3) + roll16
+        new_caste = (simant_data_group.rb(36 + table_idx) | high_bits) & 0xFF
+        simant_data_group.wb(0x2F62 + slot, new_caste)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, new_caste)
+        return
+
+    new_caste = (direction | high_bits) & 0xFF
+    dgroup.wb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y, new_caste)
+    simant_data_group.wb(0x2F62 + slot, new_caste)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
+    simant_data_group.wb(0x23A4 + slot, new_x & 0xFF)
+    simant_data_group.wb(0x278E + slot, new_y & 0xFF)
+
+    field_e = simant_data_group.rb(0x334C + slot)
+    if field_e == 0:
+        return
+    field_e = (field_e - 1) & 0xFF
+    simant_data_group.wb(0x334C + slot, field_e)
+    if caste & 0x80:
+        jam_scent_rt(simant_data_group, new_x, new_y, field_e)
+    else:
+        jam_scent_bt(simant_data_group, new_x, new_y, field_e)
+
+
 def rand_turn(dgroup, simant_data_group, caste_low3: int) -> int:
     """Pick a purely random direction from the caste-mode table — no
     yard-edge handling, no gradient, just a fresh `_SRand8()` roll.

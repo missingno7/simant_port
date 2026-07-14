@@ -2474,6 +2474,73 @@ def test_dorepofly_state_diff_matches_asm(is_red, seed_val, count, gate_80b4, la
             f"is_red={is_red} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _DoReturnFoodAnt (seg6:1CB4) — a food-carrying ant heads for its nest
+# Composes is_valid_a, go_in_nest, get_nest_dir, jam_scent_bt/rt.
+_DORETURNFOODANT_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0, 0x9000),
+    (_PACK, 0x7200, 0xA000),
+]
+
+
+def _doreturnfoodant_seed(x, y, caste, field_e, at_entrance, inside,
+                          dest_tile, threshold, target_x, target_y,
+                          count_off, alist_count):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4, x)
+        m.mem.wb(sdg, 0x278E, y)
+        m.mem.wb(sdg, 0x2F62, caste)
+        m.mem.wb(sdg, 0x334C, field_e)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        if at_entrance:
+            m.mem.wb(dg, 0x28E8 + (x << 6) + y, 0x50 if not inside else 0x80)
+        else:
+            m.mem.wb(dg, 0x28E8 + (x << 6) + y, 0x00)
+        m.mem.ww(pack, count_off, alist_count)
+        # get_nest_dir: clear the whole NEST scent grid so the "no scent"
+        # get_dir-toward-target branch is deterministic, and set the target.
+        nest_base = 0x72D2 if caste & 0x80 else 0x62D2
+        m.mem.data[sdg + nest_base:sdg + nest_base + 0x800] = bytes(0x800)
+        tx_off, ty_off = (0x835E, 0x8360) if caste & 0x80 else (0x835A, 0x835C)
+        m.mem.ww(sdg, tx_off, target_x & 0xFFFF)
+        m.mem.ww(sdg, ty_off, target_y & 0xFFFF)
+        # the resulting destination cell's tile + crowding threshold
+        m.mem.ww(pack, 0x7604, threshold)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,caste,field_e,at_entrance,inside,dest_tile,threshold,target_x,"
+    "target_y,label", [
+    (20, 25, 0x03, 0, True, False, 0x00, 0, 0, 0, "outside-nest-entrance"),
+    (20, 25, 0x03, 0, False, False, 0x10, 0x30, 40, 40, "move-no-field-e"),
+    (20, 25, 0x03, 5, False, False, 0x10, 0x30, 40, 40, "move-black-jam"),
+    (20, 25, 0x83, 5, False, False, 0x10, 0x30, 40, 40, "move-red-jam"),
+    (20, 25, 0x03, 0, False, False, 0x50, 0x05, 40, 40, "crowded-jitter-in-place"),
+])
+def test_doreturnfoodant_state_diff_matches_asm(
+        x, y, caste, field_e, at_entrance, inside, dest_tile, threshold,
+        target_x, target_y, label):
+    from simant.recovered.gameplay import do_return_food_ant
+    results = _run_and_diff_segs(
+        6, 0x1CB4, (0,),
+        lambda d, s, p: do_return_food_ant(d, s, p, 0),
+        _DORETURNFOODANT_REGIONS, near=True,
+        seed_fn=_doreturnfoodant_seed(
+            x, y, caste, field_e, at_entrance, inside, dest_tile, threshold,
+            target_x, target_y, 0x80F0, 5))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DORETURNFOODANT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.

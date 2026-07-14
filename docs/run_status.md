@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.156) — /goal grind: _DoReturnFoodAnt — a food-carrying ant heads home
+- RECOVERED `do_return_food_ant` (`_DoReturnFoodAnt`, seg6:1CB4, arg
+  slot=[bp+4], NEAR return) — another genuinely TOP-LEVEL `_Do*Ant*`
+  behavior. Composes the already-recovered `is_valid_a`, `go_in_nest`,
+  `get_nest_dir`, and `jam_scent_bt`/`rt` — no new primitives needed.
+  Same nest-entrance tile check as `do_rest_ant` (identical `0x50`
+  outside / `0x80..0x8F` inside band); on a match, enters via
+  `go_in_nest`. Otherwise steps one cell via `get_nest_dir`'s gradient/
+  homing direction, unless the destination is too crowded
+  (`pack[0x7604]` threshold), in which case it jitters caste in place
+  via a small SDG table lookup instead of moving. On an actual move,
+  decrements a carried-food counter (`field_e`) if nonzero and jams the
+  mover's own colony's TRAIL scent at the new position — a food-
+  carrying ant leaves a trail; `field_e==0` skips this entirely.
+- 5 cases (nest-entrance entry, a plain move with no trail, a move
+  leaving a trail for each colony, and the crowded-destination jitter-
+  in-place path) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1608 (+5), full suite green.
+
 ## 2026-07-14 (cont.155) — /goal grind: _PlaceBlackQueen — scenario-init black queen founding
 - User asked mid-turn whether "readme coverage" needed updating; clarified
   there are two separate metrics — the "Coverage by segment" table
