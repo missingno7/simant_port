@@ -5810,3 +5810,42 @@ def test_dropfooda_state_diff_matches_asm(x, y, tile, inside, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _FOODFALL_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _IsValidYard (seg7:2072) — bounds check for the 12x16 boy's-yard grid -
+@pytest.mark.parametrize("x,y", [
+    (0, 0), (0xB, 0xF), (6, 8), (-1, 8), (0xC, 8),
+    (6, -1), (6, 0x10), (0xB, 0x10), (0xFFFF, 8),
+])
+def test_isvalidyard_matches_asm(x, y):
+    from simant.recovered.gameplay import is_valid_yard
+    ax, _m = _run_and_get_ax(7, 0x2072, (x, y))
+    expect = is_valid_yard(x, y)
+    assert ax == (expect & 0xFFFF), f"({x},{y}): asm={ax:#06x} rec={expect:#06x}"
+
+
+# ---- _FindInLionList (seg7:4B12) — antlion list reverse search -----------
+def _findinlionlist_seed(count, slots):
+    def seed(m):
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.ww(sdg, 0x8A88, count)
+        for slot, (v0, v1) in enumerate(slots):
+            m.mem.wb(pack, 0x809C + slot, v0)
+            m.mem.wb(pack, 0x80BC + slot, v1)
+    return seed
+
+
+@pytest.mark.parametrize("count,slots,val0,val1,label", [
+    (0, [], 5, 9, "empty-list-notfound"),
+    (3, [(1, 1), (2, 2), (3, 3)], 2, 2, "found-middle-slot"),
+    (3, [(1, 1), (2, 2), (3, 3)], 9, 9, "not-found"),
+    (3, [(5, 9), (5, 9), (1, 1)], 5, 9, "duplicate-matches-picks-last-added"),
+])
+def test_findinlionlist_matches_asm(count, slots, val0, val1, label):
+    from simant.recovered.gameplay import find_in_lion_list
+    ax, m = _run_and_get_ax(7, 0x4B12, (val0, val1),
+                            seed_fn=_findinlionlist_seed(count, slots))
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
+    expect = find_in_lion_list(pack_view, sdg_view, val0, val1)
+    assert ax == (expect & 0xFFFF), f"{label}: asm={ax:#06x} rec={expect & 0xFFFF:#06x}"

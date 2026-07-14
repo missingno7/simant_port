@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.164) — /goal grind: _IsValidYard + _FindInLionList
+- Dispatched an Explore survey now that every previously-deferred
+  candidate is resolved; it enumerated seg6/seg7 symbols not yet
+  recovered and cross-referenced against `gameplay.py` + `hooks.py`'s
+  `_ISLANDS`. Picked the two smallest, highest-confidence hits to close
+  the turn out; the rest of the survey's list (`_CheckNestFightB/R`,
+  `_FeedAnts`, `_DoRestB/R`, `_DoRandB/R`, `_ForceModeA/B`,
+  `_GstrB/R`, etc.) is recorded there for a future session.
+- RECOVERED `is_valid_yard` (`_IsValidYard`, SIMANTW.SYM seg7:2072, args
+  x=[bp+6], y=[bp+8]; FAR return, 36 bytes) — a THIRD bounds-check grid
+  alongside the already-recovered `is_valid_a` (128x64) and
+  `is_valid_b` (64x64): the small 12x16 boy's-yard grid (`0 <= x <=
+  0xB`, `0 <= y <= 0xF`).
+- RECOVERED `find_in_lion_list` (`_FindInLionList`, SIMANTW.SYM
+  seg7:4B12, args val0=[bp+6], val1=[bp+8]; FAR return, 70 bytes) —
+  the antlion-list twin of `find_in_a_list`/`find_in_b_list`/
+  `find_in_r_list`'s reverse-scan idiom, but with two genuine
+  differences independently confirmed via the raw disassembly: the
+  live count comes from `simant_data_group[0x8A88]` (SDG, not `pack`
+  like every sibling search), while the per-slot fields are parallel
+  byte arrays in PACK instead (`pack[0x809C+slot]`/`[0x80BC+slot]`,
+  reached via a hardcoded `0x5EF3` segment literal confirmed to equal
+  the real PACK selector) — and there's no third nonzero-field gate.
+- 22 cases total (9 `is_valid_yard`, 4 `find_in_lion_list`, plus this
+  entry's own regression coverage) — ALL GREEN ON THE FIRST REAL-ASM
+  RUN.
+- Suite: simant 1682 (+13 from this entry: 9+4 test cases), full suite
+  green.
+
 ## 2026-07-15 (cont.163) — /goal grind: _FoodFall/_DropFoodA — yard food-fall physics
 - RECOVERED `food_fall`/`drop_food_a` (`_FoodFall`/`_DropFoodA`,
   SIMANTW.SYM seg5:0EAA/0D86; the LAST of the originally-deferred

@@ -285,6 +285,19 @@ def is_valid_b(x: int, y: int) -> int:
     return 1 if 0 <= y <= 0x3F else 0
 
 
+def is_valid_yard(x: int, y: int) -> int:
+    """Whether (x, y) is a valid cell on the small 12x16 boy's-yard grid
+    (a THIRD, smaller grid alongside `is_valid_a`'s 128x64 and
+    `is_valid_b`'s 64x64).
+
+    Recovered from `_IsValidYard` (SIMANTW.SYM seg7:2072): x must be
+    0..0xB and y must be 0..0xF (signed compares).  Returns 1/0.
+    """
+    if not 0 <= x <= 0xB:
+        return 0
+    return 1 if 0 <= y <= 0xF else 0
+
+
 def is_less_than_hole(tile: int, inside: bool) -> int:
     """Whether a tile value sits below the hole-tile range.
 
@@ -1270,6 +1283,30 @@ def find_in_r_list(pack, simant_data_group, y: int, x: int, caste: int) -> int:
         if (simant_data_group.rb(0x4104 + slot) == y
                 and simant_data_group.rb(0x42FA + slot) == x
                 and simant_data_group.rb(0x46E6 + slot) == caste):
+            return slot
+    return 0xFFFF
+
+
+def find_in_lion_list(pack, simant_data_group, val0: int, val1: int) -> int:
+    """Search the antlion list backward for the last-added slot whose two
+    recorded fields match `(val0, val1)`.
+
+    Recovered from `_FindInLionList` (SIMANTW.SYM seg7:4B12, args
+    val0=[bp+6], val1=[bp+8]; FAR return). The live slot count is read
+    from `simant_data_group[0x8A88]` (NOT `pack`, unlike the sibling
+    `find_in_a_list`/`find_in_b_list`/`find_in_r_list` searches, which
+    all read their count from `pack`); the per-slot fields are parallel
+    byte arrays in PACK instead (accessed via a hardcoded `0x5EF3`
+    segment literal in the real ASM — independently confirmed to equal
+    the PACK selector, not SIMANT_DATA_GROUP's): `pack[0x809C + slot]
+    == val0`, `pack[0x80BC + slot] == val1`. Unlike `find_in_a_list`,
+    there is no third nonzero-field gate. Search order is backward
+    (highest slot first). Returns the found 0-based slot index, or
+    `0xFFFF` if none match.
+    """
+    count = simant_data_group.rw(0x8A88)
+    for slot in range(count - 1, -1, -1):
+        if pack.rb(0x809C + slot) == val0 and pack.rb(0x80BC + slot) == val1:
             return slot
     return 0xFFFF
 
