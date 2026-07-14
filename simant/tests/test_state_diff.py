@@ -679,6 +679,24 @@ def test_removefromalist_state_diff_matches_asm(slot, count):
             f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _ClrModePop (seg6:034A) — reset mode-population tally arrays ---------
+@pytest.mark.parametrize("c1,c2", [(0, 0), (1, 1), (5, 0), (0, 9), (100, 200)])
+def test_clrmodepop_state_diff_matches_asm(c1, c2):
+    from simant.recovered.gameplay import clr_mode_pop
+    m = runtime.create_machine()
+    pack = m.seg_bases[_PACK]
+    for i in range(0x14):
+        m.mem.ww(pack, 0x7BE4 + 2 * i, 0xBEEF)
+        m.mem.ww(pack, 0x786A + 2 * i, 0xDEAD)
+    m.mem.ww(pack, 0x7C44, c1)
+    m.mem.ww(pack, 0x8078, c2)
+
+    results = _run_and_diff_segs(6, 0x034A, (), lambda p: clr_mode_pop(p),
+                                 [(_PACK, 0x7800, 0x8100)], near=True)
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, f"c1={c1} c2={c2}: {_first_diff(asm_after, rec_after, 0x7800)}"
+
+
 # ---- _FillHolesBN / _FillHolesRN (seg6:91DE / 9244) — hole-scent refresh --
 @pytest.mark.parametrize("routine,off,hole_x_off,scent_base,fn_name", [
     ("_FillHolesBN", 0x91DE, 0x82D2, 0x62D2, "fill_holes_bn"),

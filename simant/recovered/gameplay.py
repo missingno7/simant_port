@@ -775,6 +775,26 @@ def fill_holes_rn(simant_data_group, dgroup) -> None:
     _fill_holes(simant_data_group, dgroup, 0x8312, 0x72D2)
 
 
+def clr_mode_pop(pack) -> None:
+    """Reset the two 20-word "mode population" count arrays to all zero
+    (`pack[0x7BE4..+0x28)` and `pack[0x786A..+0x28)`), then decrement two
+    unrelated scalar counters (`pack[0x7C44]`, `pack[0x8078]`) by 1 each,
+    floored at 0.
+
+    Recovered from `_ClrModePop` (SIMANTW.SYM seg6:034A, no args).  Its
+    neighbor `_TallyModePop` (not yet recovered) presumably fills these arrays
+    each tick by counting ants per behavior mode; this clears them for the
+    next tick's tally.
+    """
+    for i in range(0x14):
+        pack.ww(0x7BE4 + 2 * i, 0)
+        pack.ww(0x786A + 2 * i, 0)
+    if pack.rw(0x7C44) != 0:
+        pack.ww(0x7C44, pack.rw(0x7C44) - 1)
+    if pack.rw(0x8078) != 0:
+        pack.ww(0x8078, pack.rw(0x8078) - 1)
+
+
 def clear_list_b(pack) -> None:
     """Empty the black colony's ant list (just resets the count to 0 — the
     per-slot arrays are left as-is, matching `compact_list_b`'s "the count is
