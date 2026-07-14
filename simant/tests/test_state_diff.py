@@ -3035,6 +3035,58 @@ def test_addanttorlist_state_diff_matches_asm(count):
         assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _MakeNewTailB / _MakeNewTailR (seg6:424A / 66FC) — append a trailing -
+# tail segment behind an ant. Composes add_ant_to_b/r_list; reuses their own
+# established regions, widened to also cover the compass delta tables.
+_MAKENEWTAILB_REGIONS = [
+    (hooks.DG_SEG_INDEX, _LIFE_NEST2, _LIFE_NEST2 + _NEST_SPAN),
+    (_SDG, 0, 0x4200),
+    (_PACK, 0x9900, 0x9A00),
+]
+_MAKENEWTAILR_REGIONS = [
+    (hooks.DG_SEG_INDEX, _LIFE_NEST3, _LIFE_NEST3 + _NEST_SPAN),
+    (_SDG, 0, 0x4C00),
+    (_PACK, 0x7280, 0x7300),
+]
+
+
+@pytest.mark.parametrize("colony,seg,off,regions,caste_off,x_off,y_off,"
+                         "count_off", [
+    ("B", 6, 0x424A, _MAKENEWTAILB_REGIONS, 0x3D18, 0x392C, 0x3736, 0x99D4),
+    ("R", 6, 0x66FC, _MAKENEWTAILR_REGIONS, 0x46E6, 0x42FA, 0x4104, 0x72CC),
+])
+@pytest.mark.parametrize("caste,x_field,y_field,count", [
+    (0x83, 20, 30, 5),
+    (0x08, 5, 5, 0),
+])
+def test_makenewtail_state_diff_matches_asm(colony, seg, off, regions,
+                                            caste_off, x_off, y_off,
+                                            count_off, caste, x_field,
+                                            y_field, count):
+    from simant.recovered.gameplay import make_new_tail_b, make_new_tail_r
+    fn = make_new_tail_b if colony == "B" else make_new_tail_r
+    slot = 3
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, count_off, count)
+        m.mem.wb(sdg, caste_off + slot, caste)
+        m.mem.wb(sdg, x_off + slot, x_field)
+        m.mem.wb(sdg, y_off + slot, y_field)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+
+    results = _run_and_diff_segs(
+        seg, off, (slot,),
+        lambda d, s, p: fn(d, s, p, slot),
+        regions, seed_fn=seed)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, (
+            f"{colony} caste={caste:#x} count={count} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DropFoodB / _DropFoodR (seg6:3C3C / 6242) — grow a food pile --------
 # Each spans DGROUP (the map cell), PACK (a "total dropped" counter + the
 # shared "acting ant index" context slot [0x9B6A]), and SIMANT_DATA_GROUP (the

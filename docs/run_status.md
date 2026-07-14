@@ -1,5 +1,23 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.130) — /goal grind: _MakeNewTailB/R — append a trailing tail segment
+- RECOVERED `make_new_tail_b`/`r` (`_MakeNewTailB`/`R`, seg6:424A/66FC,
+  FAR return, arg: slot) — composes `add_ant_to_b`/`r_list` with no new
+  dependencies; pure DGROUP table math otherwise. Appends a trailing tail
+  segment one step BEHIND `slot` (the OPPOSITE of its own facing
+  direction, `caste & 7` XOR `4`), with a `caste + 8` "tail" caste,
+  `field_c=9`, `field_e=0`.
+- `add_list`'s own `(y, x)` argument order once again takes the DX-table
+  delta added to the ant's OWN y-field into its `y` slot and the
+  DY-table delta added to its OWN x-field into its `x` slot — the SAME
+  swapped convention already caught in `_QueenMoveB`/`R` and
+  `_PlaceEggB`/`R`, now confirmed a genuine THIRD time across this
+  batch, ported as a literal positional pass-through again.
+- 4 cases (two caste/position scenarios x both colonies) — ALL GREEN ON
+  THE FIRST RUN.
+- Suite: simant 1405 (+4). Only `_RaidInB/R` remains from this round's
+  batch.
+
 ## 2026-07-14 (cont.129) — /goal grind: _ScanForAnts — 3x3 occupancy count
 - RECOVERED `scan_for_ants` (`_ScanForAnts`, seg5:5362, FAR return, NO
   args) — a pure double-loop scan, no calls at all. Counts occupied yard

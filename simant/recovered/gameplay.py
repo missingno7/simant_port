@@ -1983,6 +1983,50 @@ def scan_for_ants(dgroup) -> int:
     return count
 
 
+def _make_new_tail(dgroup, simant_data_group, pack, add_list, caste_off: int,
+                   x_off: int, y_off: int, slot: int) -> None:
+    """Shared body of `make_new_tail_b`/`r`: append a trailing tail segment
+    one step BEHIND `slot` (the OPPOSITE of its own facing direction,
+    `caste & 7` XOR `4`), with a `caste + 8` "tail" caste, `field_c=9`,
+    `field_e=0`. Pure DGROUP table math — no calls beyond `add_list`.
+
+    `add_list`'s own `(y, x)` argument order again takes the DX-table
+    delta added to the ant's OWN y-field into its `y` slot and the
+    DY-table delta added to the OWN x-field into its `x` slot — the same
+    swapped convention already seen in `_QueenMoveB`/`R`/`_PlaceEggB`/`R`,
+    ported as a literal positional pass-through.
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    caste = simant_data_group.rb(caste_off + slot)
+    dir_idx = (caste & 7) ^ 4
+    dy_val = sx8(simant_data_group.rb(8 + dir_idx))
+    dx_val = sx8(simant_data_group.rb(dir_idx))
+    new_y = dx_val + simant_data_group.rb(y_off + slot)
+    new_x = dy_val + simant_data_group.rb(x_off + slot)
+    add_list(pack, simant_data_group, dgroup, new_y, new_x, caste + 8, 9, 0)
+
+
+def make_new_tail_b(dgroup, simant_data_group, pack, slot: int) -> None:
+    """Recovered from `_MakeNewTailB` (SIMANTW.SYM seg6:424A, FAR return,
+    arg: slot=[bp+6]). See `_make_new_tail`.
+    """
+    _make_new_tail(dgroup, simant_data_group, pack, add_ant_to_b_list,
+                   0x3D18, 0x392C, 0x3736, slot)
+
+
+def make_new_tail_r(dgroup, simant_data_group, pack, slot: int) -> None:
+    """The red-colony twin of `make_new_tail_b`.
+
+    Recovered from `_MakeNewTailR` (SIMANTW.SYM seg6:66FC, FAR return, arg:
+    slot=[bp+6]).
+    """
+    _make_new_tail(dgroup, simant_data_group, pack, add_ant_to_r_list,
+                   0x46E6, 0x42FA, 0x4104, slot)
+
+
 def _smooth_edges(dgroup, map_base: int, x: int, y: int) -> None:
     """Shared body of `smooth_edges_b`/`smooth_edges_r`."""
     from .simone import SRAND_SEED_OFF, srand_pow2
