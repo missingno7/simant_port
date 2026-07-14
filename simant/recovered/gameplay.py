@@ -692,6 +692,52 @@ def get_my_rand_dirs(dgroup, pack, out1, out2, inside: bool, plane: int,
     return -1
 
 
+def check_my_best_dirs(dgroup, pack, out, inside: bool, plane: int, cur_x: int,
+                       cur_y: int, tgt_x: int, tgt_y: int) -> int:
+    """Walk `get_my_best_dirs` forward up to 64 steps toward the target,
+    counting how many steps actually advance, and report the last direction
+    taken.
+
+    Recovered from `_CheckMyBestDirs` (SIMANTW.SYM seg6:8B40, args: one FAR
+    pointer output, then plane, cur_x, cur_y, tgt_x, tgt_y; FAR return; a
+    genuine caller of `_GetMyBestDirs` via the same NEAR-call-to-FAR-retf
+    ABI bridge seen with `_TallyModePop` -> `_MakeRedInitiator`).  `out`
+    models the far-pointer output cell as a 1-element list: `out[0]` is
+    written (never read) with the final step count.
+
+    Calls `get_my_best_dirs` once from (cur_x, cur_y); if that already fails
+    (< 0), writes `out[0] = 0` and returns -1.  Otherwise walks the returned
+    direction, then repeatedly calls `get_my_best_dirs` again from the new
+    position — each success advances the position one more step; the loop
+    always increments its step counter (even on the call that fails) before
+    checking the failure and breaking, and separately stops once the counter
+    reaches 0x40 (64) steps.  `out[0]` gets the final step count; the return
+    value is the LAST direction's raw sign only: if the last `get_my_best_dirs`
+    call succeeded (>= 0), the actual direction index is discarded and this
+    returns exactly -1 (a plain "it worked" marker); only a failure (< 0)
+    propagates its original value unchanged (so a caller CAN still tell -1
+    "blocked" apart from -2 "nothing clear at all" on failure, but never
+    learns the specific direction on success — only `out[0]`'s step count
+    and the fact that `check_my_best_dirs` returns -1 either way when it did
+    make progress).
+    """
+    si = get_my_best_dirs(dgroup, pack, inside, plane, cur_x, cur_y, tgt_x, tgt_y)
+    step_count = 0
+    if si >= 0:
+        nx = cur_x + GET_BEST_DIR_DX[si]
+        ny = cur_y + GET_BEST_DIR_DY[si]
+        while step_count < 0x40:
+            si = get_my_best_dirs(dgroup, pack, inside, plane, nx, ny, tgt_x, tgt_y)
+            if si >= 0:
+                nx += GET_BEST_DIR_DX[si]
+                ny += GET_BEST_DIR_DY[si]
+            step_count += 1
+            if si < 0:
+                break
+    out[0] = step_count & 0xFFFF
+    return si if si < 0 else -1
+
+
 # The 3x3 neighbour offsets _IsClear3x3 walks (a DGROUP direction table): the 8
 # compass directions around the centre, in the order N, NE, E, SE, S, SW, W, NW.
 CLEAR_3X3_DX = (0, 1, 1, 1, 0, -1, -1, -1)

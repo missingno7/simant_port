@@ -1314,6 +1314,90 @@ def test_getmyranddirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, out1_init,
         f"o2={out2[0]&0xFFFF:#06x})")
 
 
+# ---- _CheckMyBestDirs (seg6:8B40) — walk get_my_best_dirs up to 64 steps ---
+# Genuine caller of `_GetMyBestDirs` via the near-call/far-retf ABI bridge;
+# each call can itself run for tens of thousands of CPU steps, so a full
+# 64-step walk needs real headroom.
+_CHECKDIRS_OUT_OFF = 0x9F04
+
+
+def _run_checkmybestdirs_asm(plane, cur_x, cur_y, tgt_x, tgt_y, fill_tile, holes,
+                             inside):
+    from simant.recovered.gameplay import map_cell_offset
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        world = m.mem.rw(dg, 0xC4AC)
+        m.mem.wb(world, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(pack, 0x9BC4, 0)      # check_adjacent off
+        m.mem.ww(pack, 0x9BE0, 0)      # cand_plane 0 -> never matches a real plane>0
+        m.mem.ww(pack, _CHECKDIRS_OUT_OFF, 0xBEEF)   # poison
+        lo, hi = (0, 0x40) if plane > 1 else (0, 0x80)
+        for x in range(lo, hi):
+            for y in range(0, 0x40):
+                off = map_cell_offset(plane, x, y)
+                if off is not None:
+                    m.mem.wb(dg, off & 0xFFFF, fill_tile)
+        for (hx, hy) in holes:
+            off = map_cell_offset(plane, hx, hy)
+            if off is not None:
+                m.mem.wb(dg, off & 0xFFFF, 0x40)   # blocked
+
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    pack_seg = m.seg_bases[_PACK]
+    seed(m)
+    s = m.cpu.s
+    s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[6], 0x8B40
+    sp = s.sp
+    args = (tgt_y, tgt_x, cur_y, cur_x, plane, pack_seg, _CHECKDIRS_OUT_OFF)
+    for v in (*args, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(1_500_000):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError("ASM _CheckMyBestDirs did not return")
+    out = m.mem.rw(pack_seg, _CHECKDIRS_OUT_OFF)
+    return s.ax & 0xFFFF, out, m
+
+
+@pytest.mark.parametrize("plane,cur_x,cur_y,tgt_x,tgt_y,fill_tile,holes,inside", [
+    # already at target -> immediate failure, 0 steps, ax=-1
+    (2, 20, 20, 20, 20, 0x05, (), False),
+    # wide open field, short hop -> completes in a few steps (< 64)
+    (2, 3, 3, 8, 3, 0x05, (), False),
+    # wide open field, far target -> may hit the 64-step cap or finish close
+    (2, 1, 1, 62, 62, 0x05, (), False),
+    # walled in immediately -> fails on the very first get_my_best_dirs call
+    (2, 20, 20, 40, 40, 0x40, (), False),
+    # open a couple steps, then a wall -> fails partway through the loop
+    (2, 20, 20, 40, 20, 0x05, tuple((x, 20) for x in range(23, 40)), False),
+    # yard plane (plane<=1)
+    (0, 3, 3, 10, 3, 0x50, (), False),
+])
+def test_checkmybestdirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, fill_tile,
+                                     holes, inside):
+    from simant.recovered.gameplay import check_my_best_dirs, map_cell_offset
+    asm_ax, asm_out, m = _run_checkmybestdirs_asm(
+        plane, cur_x, cur_y, tgt_x, tgt_y, fill_tile, holes, inside)
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
+    out = [0xBEEF]
+    rec_ax = check_my_best_dirs(dg_view, pack_view, out, inside, plane, cur_x,
+                                cur_y, tgt_x, tgt_y) & 0xFFFF
+    rec_out = out[0] & 0xFFFF
+    assert (rec_ax, rec_out) == (asm_ax, asm_out), (
+        f"(p={plane},cur=({cur_x},{cur_y}),tgt=({tgt_x},{tgt_y}),fill={fill_tile:#x},"
+        f"holes={holes}): asm=(ax={asm_ax:#06x},out={asm_out:#06x}) "
+        f"rec=(ax={rec_ax:#06x},out={rec_out:#06x})")
+
+
 # ---- _SmoothAlarm (seg6:9380) — 4-neighbour box blur of the alarm grid -----
 # Snapshots the live grid [0x52D2..) into a scratch buffer [0x4AD2..) first,
 # then blurs read-old/write-new; both bands are covered by one region.

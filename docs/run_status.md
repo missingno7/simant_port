@@ -1,5 +1,44 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.88) — /goal grind: _CheckMyBestDirs (1000 tests)
+- RECOVERED `check_my_best_dirs` (seg6:8B40, args: one FAR pointer output,
+  then plane, cur_x, cur_y, tgt_x, tgt_y; FAR return) — walks
+  `get_my_best_dirs` up to 64 steps toward a target, accumulating a step
+  count into the output pointer. Another genuine caller of `_GetMyBestDirs`
+  via the near-call/far-retf ABI bridge (same pattern as `_TallyModePop` ->
+  `_MakeRedInitiator` in cont.83, and `_GetMyRandDirs` calling the same
+  callee in cont.87).
+  - CAUGHT A REAL BUG via the state-diff test itself, not by re-reading the
+    disassembly first: the initial port had the final result exactly
+    backwards. The ASM's tail (`or si,si; jl -> 8BE3 [skip]; mov si,0xFFFF;
+    8BE3: mov ax,si`) actually means "if the last `get_my_best_dirs` call
+    FAILED (si<0), return that failure code UNCHANGED (so callers can still
+    tell -1 'blocked' apart from -2 'nothing clear'); if it SUCCEEDED
+    (si>=0), DISCARD the actual direction and force the return to exactly
+    -1" — i.e. success collapses to a generic -1 marker and only failure
+    preserves its real value. My first draft had `return si if si>=0 else -1`
+    (backwards) instead of `return si if si<0 else -1`. A dedicated "walled
+    in on the very first call" test case (expects the real -2 sentinel to
+    survive) caught it immediately: ASM returned 0xFFFE, the buggy port
+    returned 0xFFFF. Also had to move the clamp so the "first call fails
+    immediately" path shares the SAME finalize logic as the loop-exit path
+    (both routes in the ASM converge on the identical tail code at 8BD6) —
+    my first draft special-cased the immediate-failure branch to hardcode
+    -1, which is what caused the mismatch in the first place.
+  - Needed a real step-count measurement before sizing the test harness:
+    empirically measured a full-ish 57-step open-field walk taking ~81,000
+    CPU steps (each `get_my_best_dirs` sub-call is itself thousands of
+    steps), so the harness budget is 1,500,000 (vs. the shared
+    `_run_and_diff*` helpers' 200,000) — this routine's own bespoke harness,
+    not the shared one, since it also needs a single far-pointer output
+    checked alongside AX like `_GetMyRandDirs`'s did.
+  - 6 scenarios (already-at-target, short open-field hop, long open-field
+    walk near the 64-step cap, walled-in-immediately, walled-in-partway-
+    through the loop, yard-plane) — all green after the fix.
+- Suite: simant 1000 (+6). Continuing per /goal — `_GetRedBestDirs`
+  (seg6:9A18, the red-colony twin of this pathfinding family, last symbol
+  in seg6) is next.
+
 ## 2026-07-14 (cont.87) — /goal grind: _GetMyRandDirs (stateful sticky-direction search)
 - RECOVERED `get_my_rand_dirs` (seg6:8928, args: TWO far-pointer outputs then
   plane, cur_x, cur_y, tgt_x, tgt_y; FAR return; genuine MUTATOR via the
