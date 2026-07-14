@@ -100,6 +100,7 @@ flowchart TD
     gdis["_GetDis"]
     glife["_GetLife"]
     inobs["_IsNotObstacle"]
+    bnc["_Bounce"]
   end
   subgraph L4["leaves — the foundation"]
     iva["_IsValidA"]
@@ -140,7 +141,7 @@ flowchart TD
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
   classDef front fill:#5c564b,stroke:#a99e86,color:#f3ece0,stroke-dasharray:5 4;
-  class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs done;
+  class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs,bnc done;
   class iva,idirt,iyel,srand load;
   class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
@@ -156,7 +157,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
 | `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA` combat resolution done; forage/nest behaviors frontier | 38 / 123 | movement **done** |
-| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode` done | 5 / 282 | mostly rendering |
+| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode`/`_Bounce` done | 6 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
 The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88
@@ -209,8 +210,11 @@ move and then actually move* is byte-exact, end to end:
 an actual decision, `_DoTroph`'s own dependency chain (a real sound-engine
 routine plus a dialog/busy-wait UI routine — presentation/audio work, not
 core sim logic), and the rest of combat (`_YellowFight`/`_GetWinner`, which
-now only needs zero-blocker leftovers now that `_GetNewMode` is done). That's
-the next milestone toward the [VM-less native port](docs/vmless_port.md).
+now only needs zero-blocker leftovers now that `_GetNewMode` is done).
+`_Bounce` (a yard-edge "bounce back into the map" compass helper, also
+recovered) was the last missing dependency for `_DoDigOutAntA` — a 502-byte
+top-level `_Do*Ant*` routine, next up. That's the next milestone toward the
+[VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 

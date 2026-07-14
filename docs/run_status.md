@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.104) — /goal grind: _Bounce — yard-edge compass, unblocks _DoDigOutAntA
+- RECOVERED `bounce` (`_Bounce`, seg7:12EC, FAR call/return, args x=[bp+6]/
+  y=[bp+8]) — picks a "bounce back into the map" compass value for an ant at
+  the yard edge (x in `0..0x7F`, y in `0..0x3F`, the same axes
+  `LIFE_PLANE_BASE[0] + (x << 6) + y` indexes), or `0` for a strictly
+  interior position. Eight cases (four edges, four corners) each roll
+  `_SRand1(3)` (corners) or `_SRand1(5)` (edges) plus a per-edge offset
+  (left=1/top=3/right=5/bottom=7). Independently disassembled the full
+  140-byte body (found while investigating `_DoDigOutAntA`'s only unrecovered
+  dependency, a far call to seg7:0x12EC that symbol lookup identified as
+  `_Bounce` — part of the seg7 `_Get*Dir` family the research survey had
+  already flagged as fully unblocked) and hand-traced its compiler-shared
+  tail-jump structure (several corner/edge branches jump into a SHARED
+  `roll+offset;return` tail rather than duplicating it — a pattern not seen
+  elsewhere in this project's recovered code so far).
+- Pure(ish): its only mutation is the SRand LFSR seed, so its test needed a
+  variant of the return-value oracle — `_run_and_get_ax`'s own machine is
+  POST-execution (past the ASM's own `_SRand1` call), so the recovered call
+  can't reuse it the way `find_in_a_list`'s test does; built a fresh
+  `ByteBackend` seeded with just the PRE-state seed instead, and checked
+  both the returned AX and the post-call seed word.
+- 12 cases (every edge/corner + 3 interior positions, incl. one interior
+  point immediately diagonal to a corner) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1211 (+12). This was the last missing piece for
+  `_DoDigOutAntA` (seg6:1480) — a 502-byte top-level `_Do*Ant*` routine that
+  composes `_Bounce`, the already-recovered `_GetNewMode`, and two small
+  SDG-resident compass delta tables; next up.
+
 ## 2026-07-14 (cont.103) — /goal grind: _GetNewMode + _DoFightA — first TOP-LEVEL `_Do*Ant*` routine
 - A research survey (Explore agent) found the entire seg7 `_GetNewMode*`
   family and `_DoFightA` (seg6:27E6) fully unblocked — every callee already

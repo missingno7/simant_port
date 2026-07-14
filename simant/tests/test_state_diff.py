@@ -1108,6 +1108,45 @@ def test_dofighta_state_diff_matches_asm(slot, acting_slot, a_x, a_y, caste_init
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _Bounce (seg7:12EC) — yard-edge "bounce back into the map" compass ----
+# Pure(ish): its only mutation is the SRand LFSR seed, so (unlike
+# `find_in_a_list`'s reuse of `_run_and_get_ax`'s post-execution machine) the
+# recovered call needs the PRE-state seed — `m` is already past the ASM's own
+# _SRand1 call(s) by the time `_run_and_get_ax` returns.
+@pytest.mark.parametrize("x,y,seed_val", [
+    (0x00, 0x00, 0x1234),   # top-left corner
+    (0x00, 0x00, 0xABCD),
+    (0x00, 0x3F, 0x1234),   # bottom-left corner (left-edge branch, n=3)
+    (0x00, 0x20, 0x1234),   # left edge, general (n=5)
+    (0x7F, 0x00, 0x1234),   # top-right corner
+    (0x40, 0x00, 0x1234),   # top edge, general
+    (0x7F, 0x3F, 0x1234),   # bottom-right corner
+    (0x7F, 0x20, 0x1234),   # right edge, general
+    (0x40, 0x3F, 0x1234),   # bottom edge, general
+    (0x40, 0x20, 0x1234),   # strictly interior -> 0, no RNG call at all
+    (0x01, 0x01, 0x1234),   # interior, adjacent to the top-left corner
+    (0x7E, 0x3E, 0x9999),   # interior, adjacent to the bottom-right corner
+])
+def test_bounce_matches_asm(x, y, seed_val):
+    from simant.recovered.gameplay import bounce
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+
+    ax, m = _run_and_get_ax(7, 0x12EC, (x, y), seed_fn=seed)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+
+    buf = bytearray(0x10000)
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    view = ByteBackend(buf, 0)
+    rec_ax = bounce(view, x, y)
+
+    assert ax == (rec_ax & 0xFFFF), f"x={x:#x} y={y:#x} seed={seed_val:#x}"
+    assert view.rw(0xCBF2) == asm_seed_after, (
+        f"x={x:#x} y={y:#x} seed={seed_val:#x}: seed mismatch")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only

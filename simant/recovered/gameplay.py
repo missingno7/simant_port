@@ -2584,6 +2584,46 @@ def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
     dead_ant_here(dgroup, pack, a_x, a_y, colony_bit)
 
 
+def bounce(dgroup, x: int, y: int) -> int:
+    """Pick a "bounce back into the map" compass value for an ant sitting at
+    the yard edge, or `0` for a strictly interior position.
+
+    Recovered from `_Bounce` (SIMTWO.SYM seg7:12EC, args: x=[bp+6], y=[bp+8];
+    FAR return). The yard is 128x64 (`x` in `0..0x7F`, `y` in `0..0x3F` — the
+    same axes `LIFE_PLANE_BASE[0] + (x << 6) + y` indexes elsewhere). Eight
+    cases — four edges, four corners — each roll `_SRand1(3)` (corners, a
+    narrower jitter) or `_SRand1(5)` (edges) and add a per-edge offset
+    (left=1, top=3, right=5, bottom=7) that keeps the result inside a single
+    contiguous `1..11` band; the caller (`_DoDigOutAntA`) turns a nonzero
+    result into a 0-based octant index via `(result - 1) & 7`. Strictly
+    interior (`1 <= x <= 0x7E`, `1 <= y <= 0x3E`) returns `0` — the sentinel
+    the caller reads as "no edge to bounce off of, use the mode-random
+    direction instead."
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    def roll(n: int) -> int:
+        seed, r = srand1(dgroup.rw(SRAND_SEED_OFF), n)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return r
+
+    if x == 0:
+        if y == 0:
+            return roll(3) + 3
+        return roll(3 if y == 0x3F else 5) + 1
+    if y == 0:
+        if x == 0x7F:
+            return roll(3) + 5
+        return roll(5) + 3
+    if x == 0x7F:
+        if y == 0x3F:
+            return roll(3) + 7
+        return roll(5) + 5
+    if y == 0x3F:
+        return roll(5) + 7
+    return 0
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
