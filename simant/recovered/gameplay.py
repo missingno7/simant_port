@@ -696,6 +696,42 @@ def drop_food_r(dgroup, pack, simant_data_group, x: int, y: int) -> int:
     return _drop_food(dgroup, pack, simant_data_group, 3, 0x72DE, 0x46E6, x, y)
 
 
+def set_ant_index(pack, simant_data_group, list_type: int, slot: int,
+                  target0: int, target1: int, caste: int, field_c: int,
+                  field_e: int) -> None:
+    """Overwrite an EXISTING ant record's fields at `slot` — a no-op if `slot`
+    is out of the list's current bounds.  Unlike `add_ant_to_*_list`, this does
+    NOT append, does NOT touch the life grid, and does NOT change the count.
+
+    Recovered from `_SetAntIndex` (SIMANTW.SYM seg5:584A, args
+    list_type=[bp+6], slot=[bp+8], target0=[bp+0xa], target1=[bp+0xc],
+    caste=[bp+0xe], field_c=[bp+0x10], field_e=[bp+0x12]).  `list_type` selects
+    the list the same way `MAP_PLANE_BASE`/`LIFE_PLANE_BASE` select a plane:
+    <=1 -> the yard ("A") list (count 0x80F0; fields 0x23A4/0x278E/0x2F62/
+    0x2B78/0x334C), ==2 -> the black ("B") list (0x99D4; 0x3736/0x392C/0x3D18/
+    0x3B22/0x3F0E), anything else -> the red ("R") list (0x72CC; 0x4104/
+    0x42FA/0x46E6/0x44F0/0x48DC) — confirmed from the ASM's own `cmp/jg` +
+    `cmp/jne` dispatch, mirroring the established plane-numbering convention.
+    `slot` must satisfy `0 <= slot < count` (signed) or the write is skipped.
+    """
+    if list_type <= 1:
+        count_off, f0, f1, caste_off, fc_off, fe_off = (
+            0x80F0, 0x23A4, 0x278E, 0x2F62, 0x2B78, 0x334C)
+    elif list_type == 2:
+        count_off, f0, f1, caste_off, fc_off, fe_off = (
+            0x99D4, 0x3736, 0x392C, 0x3D18, 0x3B22, 0x3F0E)
+    else:
+        count_off, f0, f1, caste_off, fc_off, fe_off = (
+            0x72CC, 0x4104, 0x42FA, 0x46E6, 0x44F0, 0x48DC)
+    if not (0 <= slot < pack.rw(count_off)):
+        return
+    simant_data_group.wb(f0 + slot, target0 & 0xFF)
+    simant_data_group.wb(f1 + slot, target1 & 0xFF)
+    simant_data_group.wb(caste_off + slot, caste & 0xFF)
+    simant_data_group.wb(fc_off + slot, field_c & 0xFF)
+    simant_data_group.wb(fe_off + slot, field_e & 0xFF)
+
+
 def get_smell_t(simant_data_group, p: int, q: int, direction: int,
                 is_red) -> int:
     """Read a colony's TRAIL scent grid at a cell offset from (p, q) by a

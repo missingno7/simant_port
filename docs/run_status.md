@@ -1,6 +1,25 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.77) — /goal grind: _DecTSmell, _DropFoodB/R
+## 2026-07-14 (cont.78) — /goal grind: _GetSmellT, _SetAntIndex — ant-list CRUD (C/R/U) done
+- RECOVERED `get_smell_t` (seg6:9612): the READ side of the trail-scent grid —
+  reads a per-direction delta from two small tables in SIMANT_DATA_GROUP (read
+  LIVE, not hardcoded, since they're genuine game data) and returns the scent
+  value at (p,q)+delta on the same 0x6AD2/0x7AD2 grids the whole scent family
+  covers.  This is the pheromone-sensing primitive ant AI uses to pick a
+  direction.  Pure predicate, return-value A/B, 7 cases green.
+- RECOVERED `set_ant_index` (seg5:584A): a UNIFIED "overwrite an EXISTING ant
+  record's fields at a slot" dispatcher across all three lists (list_type<=1
+  ->A, ==2->B, else->R — the SAME plane-numbering convention as
+  MAP_PLANE_BASE/LIFE_PLANE_BASE, confirmed from the ASM's own dispatch, not
+  assumed).  Unlike add_ant_to_*_list this does NOT append, touch the life
+  grid, or change the count — a genuine "update" (bounds-checked 0<=slot<count,
+  no-op otherwise) completing the C(reate)/R(ead)/U(pdate) trio for the ant-list
+  data structure (find_in_*_list=R, add_ant_to_*_list=C, set_ant_index=U).
+  25 state-diff cases green (all 3 list-type dispatches x bounds edge cases).
+- Suite: simant 874.  Continuing per /goal — next: the Delete side
+  (_RemoveFromAList, _CompactListA/B/R) to close out the CRUD story, then
+  reassess candidates toward the behavior tier.
+
 - RECOVERED `dec_t_smell` (seg6:95B6): single-cell decrement (guarded nonzero)
   of a colony's TRAIL scent grid — confirmed it operates on the EXACT SAME
   64x32 grids `jam_scent_bt/rt` and `colony_smell_decay_bt/rt` already cover

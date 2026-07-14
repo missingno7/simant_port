@@ -646,6 +646,32 @@ def test_dropfoodr_state_diff_matches_asm(x, y, tile, ant_idx, caste):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _SetAntIndex (seg5:584A) — overwrite an existing ant record's fields --
+@pytest.mark.parametrize("list_type,which", [(0, "a"), (1, "a"), (2, "b"),
+                                             (3, "r"), (99, "r")])
+@pytest.mark.parametrize("slot,count", [(0, 5), (4, 5), (5, 5), (6, 5), (0, 0)])
+def test_setantindex_state_diff_matches_asm(list_type, which, slot, count):
+    from simant.recovered.gameplay import set_ant_index
+    t0, t1, caste, fc, fe = 9, 19, 3, 7, 11
+    count_off = {"a": 0x80F0, "b": 0x99D4, "r": 0x72CC}[which]
+    sdg_region = {"a": _ADDANTA_REGIONS[1], "b": _ADDANTB_REGIONS[1],
+                 "r": _ADDANTR_REGIONS[1]}[which]
+    pack_region = {"a": _ADDANTA_REGIONS[2], "b": _ADDANTB_REGIONS[2],
+                  "r": _ADDANTR_REGIONS[2]}[which]
+    regions = [sdg_region, pack_region]
+    m = runtime.create_machine()
+    m.mem.ww(m.seg_bases[_PACK], count_off, count)
+
+    results = _run_and_diff_segs(
+        5, 0x584A, (list_type, slot, t0, t1, caste, fc, fe),
+        lambda s, p: set_ant_index(p, s, list_type, slot, t0, t1, caste, fc, fe),
+        regions)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, (
+            f"list_type={list_type} slot={slot} count={count} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _GetSmellT (seg6:9612) — read the trail-scent grid via a direction ----
 # Pure read (no mutation): seed the whole trail grid with a distinguishable
 # pattern, run to return, compare AX against the recovered fn on the same
