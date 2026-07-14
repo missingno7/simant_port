@@ -920,6 +920,43 @@ def _make_isthispebble_island(machine):
     return island
 
 
+# -- _IsThisFood (seg5:5F04) — food test (delegates to _IsItFood on nest planes) -
+# Two word args (plane, tile).  plane<=1 tail-calls _IsItFood(tile) — so the
+# residue is _IsItFood's: dx = the loaded tile, es = world selector.  plane>1 is
+# the yard nest-food band 0x10..0x13, leaving dx = the 1/0 result.
+ISTHISFOOD_SEG_INDEX = 5
+ISTHISFOOD_OFF = 0x5F04
+ISTHISFOOD_SIG = bytes.fromhex("558bec837e06017f0dff76089a1a2d5e398be5c9")
+
+
+def _make_isthisfood_island(machine):
+    from .recovered.gameplay import is_it_food
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane = _sx(m.rw(ss, (sp + 4) & 0xFFFF))
+        tile_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        if plane <= 1:                                # tail-call _IsItFood(tile)
+            world_seg = m.rw(s.ds, ISITFOOD_WORLD_SEG_G)
+            inside = m.rw(world_seg, ISITFOOD_INSIDE_FLAG_OFF) != 0
+            s.ax = is_it_food(_sx(tile_w), inside)
+            s.dx = tile_w                             # _IsItFood leaves dx = its arg
+            s.es = world_seg                          # ... and es = world selector
+        else:                                         # yard: nest-food band 0x10..0x13
+            r = 1 if 0x10 <= _sx(tile_w) <= 0x13 else 0
+            s.ax = r
+            s.dx = r                                  # dx overwritten with the result
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsValidA (seg5:9C02) — coordinate validity on the wide yard grid ---------
 # Two word args (x, y).  x loaded into dx first; if x is out of 0..0x7F the
 # routine returns with dx=x, otherwise dx is reloaded to y for the y-check (so
@@ -2148,6 +2185,8 @@ _ISLANDS = [
      lambda machine, off: _make_isthisgrass_island(machine), "_IsThisGrass"),
     (ISTHISPEBBLE_SEG_INDEX, ISTHISPEBBLE_OFF, ISTHISPEBBLE_SIG,
      lambda machine, off: _make_isthispebble_island(machine), "_IsThisPebble"),
+    (ISTHISFOOD_SEG_INDEX, ISTHISFOOD_OFF, ISTHISFOOD_SIG,
+     lambda machine, off: _make_isthisfood_island(machine), "_IsThisFood"),
     (ISVALIDA_SEG_INDEX, ISVALIDA_OFF, ISVALIDA_SIG,
      lambda machine, off: _make_isvalida_island(machine), "_IsValidA"),
     (ISVALIDB_SEG_INDEX, ISVALIDB_OFF, ISVALIDB_SIG,
@@ -2213,7 +2252,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 62
+EXPECTED_ISLAND_COUNT = 63
 
 
 def install(machine) -> int:

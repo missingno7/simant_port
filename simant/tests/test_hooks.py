@@ -1538,6 +1538,54 @@ def test_isitfood_island_matches_asm(tile, inside):
     assert asm["ax"] == is_it_food(tile, inside)
 
 
+def _run_isthisfood(with_island, plane, tile, inside):
+    """_IsThisFood(plane, tile): plane<=1 tail-calls _IsItFood(tile), so seed the
+    inside/outside flag; plane>1 is the yard nest-food band."""
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    m.mem.ww(DG, hooks.ISITFOOD_WORLD_SEG_G, DG)
+    m.mem.ww(DG, hooks.ISITFOOD_INSIDE_FLAG_OFF, 1 if inside else 0)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISTHISFOOD_SEG_INDEX], hooks.ISTHISFOOD_OFF
+    sp = s.sp
+    for v in (tile, plane, SENT_CS, SENT_IP):       # plane@[bp+6], tile@[bp+8]
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(200):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _IsThisFood did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    return dict(ax=s.ax, dx=s.dx, es=s.es, bx=s.bx, cx=s.cx,
+                si=s.si, di=s.di, bp=s.bp, sp=s.sp, ds=s.ds)
+
+
+@pytest.mark.parametrize("inside", [False, True])
+@pytest.mark.parametrize("plane,tile", [
+    (0, 0x18), (1, 0x27), (1, 0x48), (0, 0x00),       # nest planes -> _IsItFood
+    (2, 0x0F), (2, 0x10), (2, 0x13), (2, 0x14), (3, 0x11),  # yard band 0x10..0x13
+])
+def test_isthisfood_island_matches_asm(plane, tile, inside):
+    asm = _run_isthisfood(False, plane, tile, inside)
+    isl = _run_isthisfood(True, plane, tile, inside)
+    assert isl == asm, f"(p={plane},t={tile:#x},in={inside}): {isl} != {asm}"
+    from simant.recovered.gameplay import is_this_food
+    assert asm["ax"] == is_this_food(plane, tile, inside)
+
+
 # ---- _IsYellowAnt (seg5:5720) — recovered/gameplay.py ----------------------
 def _run_isyellowant(with_island, val):
     m = runtime.create_machine()

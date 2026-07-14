@@ -120,6 +120,19 @@ def is_this_pebble(plane: int, tile: int) -> int:
     return 0
 
 
+def is_this_food(plane: int, tile: int, inside: bool) -> int:
+    """Whether (plane, tile) denotes food.
+
+    Recovered from `_IsThisFood` (SIMANTW.SYM seg5:5F04): on the nest planes
+    (plane <= 1) it defers to `is_it_food` (which the world-state inside flag
+    drives); on the yard planes (plane > 1) food is the nest-food band
+    0x10..0x13 (signed compares).  Returns 1 / 0.
+    """
+    if plane <= 1:
+        return is_it_food(tile, inside)
+    return 1 if 0x10 <= tile <= 0x13 else 0
+
+
 def is_valid_a(x: int, y: int) -> int:
     """Whether (x, y) is a valid cell on the wide (yard/overworld) grid.
 
