@@ -1,5 +1,19 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.138) — /goal grind: _FindAntIndex — colony-dispatching list search
+- RECOVERED `find_ant_index` (`_FindAntIndex`, seg5:59FC, args
+  colony=[bp+6], field0=[bp+8], field1=[bp+10], caste=[bp+0xc], FAR
+  return) — a generalized reverse-linear list search that dispatches on
+  `colony` (<=1 -> A-list, ==2 -> B-list, else -> R-list) and matches
+  THREE fields per slot at once (unlike `find_in_a_list`'s two-field-
+  plus-nonzero-check, though it reuses the exact same per-slot field
+  bases `find_in_a_list`/`find_in_b_list`/`find_in_r_list` already use).
+  This unblocks `_SFoundAnt` (seg5:53F6, 320B) for a future slice.
+- 20 cases (4 count/match scenarios x 5 colony selectors spanning all
+  three dispatch branches, including the `colony==9` "anything else"
+  fallthrough) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1461 (+20), full suite green.
+
 ## 2026-07-14 (cont.137) — /goal grind: _IsItFoodAt — bounds-checked food predicate
 - RECOVERED `is_it_food_at` (`_IsItFoodAt`, seg5:5F7E, args plane=[bp+6],
   x=[bp+8], y=[bp+10], FAR return) — validates `(x, y)` against

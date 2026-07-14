@@ -3229,6 +3229,40 @@ def test_findinlist_matches_asm(routine, off, count_off, y_off, x_off, c_off,
     assert ax == (expect & 0xFFFF), f"{routine}: asm={ax:#06x} rec={expect:#06x}"
 
 
+# ---- _FindAntIndex (seg5:59FC) — colony-dispatching 3-field list search ---
+@pytest.mark.parametrize("colony,count_off,f0_off,f1_off,c_off", [
+    (0, 0x80F0, 0x23A4, 0x278E, 0x2F62),   # colony<=1 -> A-list
+    (1, 0x80F0, 0x23A4, 0x278E, 0x2F62),
+    (2, 0x99D4, 0x3736, 0x392C, 0x3D18),   # colony==2 -> B-list
+    (3, 0x72CC, 0x4104, 0x42FA, 0x46E6),   # colony==other -> R-list
+    (9, 0x72CC, 0x4104, 0x42FA, 0x46E6),
+])
+@pytest.mark.parametrize("count,slots,f0,f1,c", [
+    (5, [(0, 5, 6, 2), (1, 5, 6, 2)], 5, 6, 2),   # 2 matches -> last wins
+    (5, [(2, 7, 8, 3)], 7, 8, 3),                  # single match mid-list
+    (3, [(0, 1, 1, 1)], 1, 1, 2),                  # caste mismatch -> no match
+    (0, [], 5, 5, 1),                              # empty list -> 0xFFFF
+])
+def test_findantindex_matches_asm(colony, count_off, f0_off, f1_off, c_off,
+                                  count, slots, f0, f1, c):
+    from simant.recovered.gameplay import find_ant_index
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, count_off, count)
+        for slot, sf0, sf1, sc in slots:
+            m.mem.wb(sdg, f0_off + slot, sf0)
+            m.mem.wb(sdg, f1_off + slot, sf1)
+            m.mem.wb(sdg, c_off + slot, sc)
+
+    ax, m = _run_and_get_ax(5, 0x59FC, (colony, f0, f1, c), seed_fn=seed)
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    expect = find_ant_index(pack_view, sdg_view, colony, f0, f1, c)
+    assert ax == (expect & 0xFFFF), f"colony={colony}: asm={ax:#06x} rec={expect:#06x}"
+
+
 # ---- _AddAntToAList/BList/RList (seg5:2EF0/2F4A/2FA4) — list insert --------
 _YARD_SPAN = 0x2000
 _ADDANTA_REGIONS = [

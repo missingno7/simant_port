@@ -1010,6 +1010,44 @@ def find_in_r_list(pack, simant_data_group, y: int, x: int, caste: int) -> int:
     return 0xFFFF
 
 
+def find_ant_index(pack, simant_data_group, colony: int, field0: int,
+                   field1: int, caste: int) -> int:
+    """Generalized reverse-linear list search across all three colonies,
+    dispatching purely on `colony` and matching THREE fields per slot
+    (unlike `find_in_a_list`'s two-field-plus-nonzero-check, or
+    `find_in_b_list`/`find_in_r_list`'s plain three-field match — this is
+    effectively a colony-dispatching sibling of the latter two, reusing
+    their exact per-slot field bases).
+
+    Recovered from `_FindAntIndex` (SIMANTW.SYM seg5:59FC, args
+    colony=[bp+6], field0=[bp+8], field1=[bp+10], caste=[bp+0xc]; FAR
+    return).  `colony<=1` selects the yard A-list (count `pack[0x80F0]`,
+    fields `[0x23A4]`/`[0x278E]`/`[0x2F62]`); `colony==2` selects the
+    B-list (count `pack[0x99D4]`, `[0x3736]`/`[0x392C]`/`[0x3D18]`);
+    anything else selects the R-list (count `pack[0x72CC]`,
+    `[0x4104]`/`[0x42FA]`/`[0x46E6]`) — the SAME arrays
+    `find_in_a_list`/`find_in_b_list`/`find_in_r_list` use.  Searches
+    backward from the last slot; returns the matching slot, or 0xFFFF if
+    the list is empty or exhausted without a match.
+    """
+    if colony <= 1:
+        count = pack.rw(0x80F0)
+        f0_base, f1_base, c_base = 0x23A4, 0x278E, 0x2F62
+    elif colony == 2:
+        count = pack.rw(0x99D4)
+        f0_base, f1_base, c_base = 0x3736, 0x392C, 0x3D18
+    else:
+        count = pack.rw(0x72CC)
+        f0_base, f1_base, c_base = 0x4104, 0x42FA, 0x46E6
+
+    for slot in range(count - 1, -1, -1):
+        if (simant_data_group.rb(f0_base + slot) == field0
+                and simant_data_group.rb(f1_base + slot) == field1
+                and simant_data_group.rb(c_base + slot) == caste):
+            return slot
+    return 0xFFFF
+
+
 def exit_hole(dgroup, simant_data_group, pack, x: int, y: int, caste: int,
              field_c: int, field_e_hint: int) -> int:
     """Find a clear yard cell adjacent to (x, y) and append it to the A-list
