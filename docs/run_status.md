@@ -1,5 +1,26 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.67) — _GetBestDir: FIRST BEHAVIOUR routine (return-value tier)
+- RECOVERED `_GetBestDir` (seg6:405E), the ant pathfinding core — the routine that
+  composes the recovered movement predicates.  For each of 8 neighbours it scores
+  the squared distance to the target (get_dis) and keeps the closest that is
+  passable (is_not_obstacle), not a pebble (is_this_pebble), strictly closer;
+  prefers a clear cell (is_clear_tile), else an occupied/blocked fallback.  ALL 6
+  of its sub-calls were already recovered — this is the payoff of the predicate
+  grind.
+- METHODOLOGY SHIFT (behaviour tier): _GetBestDir has 7 interleaved sub-calls per
+  iteration, so a full-register-residue island is impractical.  Recovered instead
+  as clean source (recovered/gameplay.get_best_dir) and verified against the ASM's
+  RETURN VALUE — what its callers read — over seeded scenarios (clear paths,
+  obstacle/pebble/occupied direct dir, both planes, grid edges).  16 cases green
+  first try.  This is a NEW, deliberately-labelled recovery category for
+  behaviours (return-value proof, not a lifted island); the pure fn is exactly
+  what a native sim tick calls.  No island installed (count stays 69).  Suite 685.
+- Tiers now: leaves + predicates + looping composites = byte-exact islands;
+  behaviours = source + return-value.  Next behaviours: _DoForageAnt, _DoNestAntB,
+  _DoDigInB (each composes recovered predicates + RNG + list ops) toward the
+  sim-tick a native backend runs.
+
 ## 2026-07-14 (cont.66) — _IsClear3x3: first looping composite recovered
 - RECOVERED `_IsClear3x3` (seg5:5AD2): the centre + 8 neighbours (offsets from the
   DGROUP direction tables at [0xC478]/[0xC47A]) must all be clear per the recovered
