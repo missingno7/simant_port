@@ -1,5 +1,65 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.84) — /goal grind: _SmoothAlarm + _FloodNestB; README recovery-map refresh
+- Updated `README.md`'s "Recovery map" section (Mermaid graph + coverage table)
+  to reflect this /goal session's actual progress: seg6 (SIMANT1) jumped
+  2/123 -> 26/123 with the ant-list/scent/mode-pop mutator tier recovered in
+  cont.72..83; seg5 (SIMONE) 38/169 -> 57/169. Added a "mutator tier" subgraph
+  layer to the diagram and refreshed the load-bearing ranking (`_SRand1` 88,
+  `_SRand8` 71, `_win_IsWinOpen` 67, `_win_GetObjRect` 50, `_FindInAList` 16,
+  `_FindInBList` 15, ...).
+- Surveyed seg5/seg6 for the next tractable candidates (dispatched to a
+  research subagent to avoid burning main-context budget on disassembly). Key
+  finding: **no `_Do*Ant*` behavior routine is end-to-end tractable yet** —
+  every one of `_DoDigInB`/`_DoForageAnt`/`_DoNestAntB`/`_DoAntSimA/B` bottoms
+  out on a still-unrecovered cluster (`_GetNewMode*` in `seg7`, `_TryMoveDirB/R`
+  -> `_GetOutB/R` -> the dig-subsystem, `_YellowFight`/`_GetWinner` combat).
+  `_GetWinner` (30 callers) looked promising but makes far calls into
+  `SIMTWO!_GetNewMode` (seg7, unrecovered) and `ANTEDIT!_FightBalloons`
+  (seg3, presentation) — not tractable this session. Also fully decoded the
+  `_RRand`/`_rand`/`_srand` C-runtime LCG chain (seg5:156E / seg4:070A/06F6,
+  `seed = seed*0x343FD + 0x269EC3`) as a cheap future win once `_GetNewMode`
+  is tackled, but did not land it this round (no seg5/seg6 caller needs it
+  yet on its own).
+- RECOVERED `smooth_alarm` (seg6:9380, no args, NEAR return): a one-step
+  4-neighbour box blur of the same 64x32 half-res alarm grid `alarm_here`/
+  `alarm_here2` operate on (`simant_data_group[0x52D2..)`), snapshotting into
+  a scratch copy at `[0x4AD2..)` first (mirrored byte-for-byte even though
+  nothing else reads it, to stay diffable over the ASM's actual touched
+  region) then computing `(4*center + sum_of_in_bounds_neighbours) >> 3` per
+  cell, storing 0 when that's <= 8. The initial port guessed the wrong
+  formula (`(center + 4*sum) >> 1`) from disassembly alone — a uniform-input
+  (`0xFF` everywhere) state-diff case caught it immediately (real ASM output
+  was 0xBF/0xDF/0xFF for corner/edge/interior, not the guessed formula's
+  values), so the fix was derived by solving the three observed constants
+  directly rather than re-reading the trace: `4*255+2*255=1530, >>3=191=0xBF`
+  (corner, 2 neighbours), `+3*255 -> 1785,>>3=223=0xDF` (edge), `+4*255 ->
+  2040,>>3=255` (interior, exactly preserved — the tell that centre weight
+  is 4/8 not 1/8). 6 state-diff cases green (uniform, ramp, sparse, checker,
+  and a low-value case exercising the <=8 snap threshold).
+- RECOVERED `flood_nest_b` (seg5:29DA, no args, FAR return): floods the black
+  colony's nest map plane 2 (`dgroup[0x48E8..)`, rows 0..63, cols 3..63 only
+  — cols 0..2 are never touched): dirt-band tiles (0x20..0x2D) bump by 0x31
+  into the flooded-dirt band (0x51..0x5E); nest-food/floor tiles (<=0x13)
+  become the canonical hole tile (0x50); everything else is untouched. Pure
+  single-DGROUP transform, ported clean on the first pass (no formula bugs).
+  Confirmed no `_FloodNestR` sibling exists in the seg5 symbol table — this
+  one's genuinely colony-B-only, not a missing-twin gap.
+- Harness fix: bumped the `_run_and_diff`/`_run_and_diff_segs`/
+  `_run_and_get_ax` step budget from 50,000 to 200,000 — both new routines'
+  full 64x(32 or 61) nested-loop sweeps genuinely need more than 50k CPU
+  steps to reach their return sentinel (`_FloodNestB` ~51k, `_SmoothAlarm`
+  ~98k); this isn't a correctness bug like cont.82/83, just headroom, and
+  raising it doesn't change behavior for any faster-returning existing test.
+- Suite: simant 938 (+12 from this stretch). Continuing per /goal — next up
+  per the survey: `_TileCanBeMovedOn` (seg5:9342, 7 args, FAR) is the unlock
+  for `_GetMyBestDirs`/`_GetMyRandDirs`/`_GetRedBestDirs` (the yellow-ant/
+  red-colony pathfinding tier one level below the `_Do*Ant*` behaviors); its
+  `plane<=1` branch is fully pinned (mirrors `is_valid_a` + a world-flag-gated
+  tile threshold already seen in `is_not_barrier`) but the `plane>1` branch's
+  3 extra coordinate args + boolean flag need one more disassembly pass
+  before porting byte-exact.
+
 ## 2026-07-14 (cont.83) — /goal grind: _TallyModePop (chained mutator-calls-mutator)
 - RECOVERED `tally_mode_pop` (seg6:038E, no args): rolls up 12 mode-population
   tally fields (all PACK-resident — confirmed all 4 "world selector" globals it

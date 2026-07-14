@@ -1222,6 +1222,42 @@ def alarm_here2(simant_data_group, x: int, y: int, value: int) -> None:
         simant_data_group.wb(0x52D2 + idx, value & 0xFF)
 
 
+def smooth_alarm(simant_data_group) -> None:
+    """Blur the 64x32 half-res alarm grid (same grid as `alarm_here`, base
+    `simant_data_group[0x52D2..)`) by one step of a 4-neighbour box filter,
+    read-old/write-new: snapshots the whole grid into a scratch buffer at
+    `simant_data_group[0x4AD2..)` first (the ASM's own scratch copy, mirrored
+    here byte-for-byte though nothing else reads it), then for each cell sums
+    the (up to 4) in-bounds orthogonal neighbours from the snapshot, computes
+    `(4*center + sum) >> 3`, and stores 0 if that's <= 8 else the truncated
+    byte into the live grid.  Out-of-bounds neighbours are omitted from the
+    sum, not treated as zero -- and the divisor stays a fixed >>3 regardless
+    of how many neighbours were in range, so edge/corner cells (fewer terms
+    in the sum) decay faster than interior ones, even on a uniform field.
+
+    Recovered from `_SmoothAlarm` (SIMANTW.SYM seg6:9380, no args).
+    """
+    base, scratch = 0x52D2, 0x4AD2
+    snap = bytearray(0x800)
+    for i in range(0x800):
+        snap[i] = simant_data_group.rb(base + i)
+        simant_data_group.wb(scratch + i, snap[i])
+    for row in range(0, 0x800, 0x20):
+        for col in range(0x20):
+            idx = row + col
+            total = 0
+            if row > 0:
+                total += snap[idx - 0x20]
+            if col > 0:
+                total += snap[idx - 1]
+            if row < 0x7E0:
+                total += snap[idx + 0x20]
+            if col < 0x1F:
+                total += snap[idx + 1]
+            v = (4 * snap[idx] + total) >> 3
+            simant_data_group.wb(base + idx, 0 if v <= 8 else v & 0xFF)
+
+
 def kill_tail_r(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a red-colony ant's tail segment from the sim — the twin of
     `kill_tail_b` on the red colony's per-ant fields and life plane 3.
@@ -1232,6 +1268,28 @@ def kill_tail_r(dgroup, simant_data_group, ant_idx: int) -> None:
     x = simant_data_group.rb(0x42FA + ant_idx)
     y = simant_data_group.rw(0x4104 + ant_idx) & 0xFF
     dgroup.wb(LIFE_PLANE_BASE[3] + x + (y << 6), 0)
+
+
+def flood_nest_b(dgroup) -> None:
+    """Flood the black colony's nest map (plane 2): every cell whose tile is
+    in the dirt-tile band (0x20..0x2D) is bumped by 0x31 into the flooded-dirt
+    band (0x51..0x5E); every cell whose tile is a nest-food/floor tile
+    (<=0x13) is replaced by the canonical hole tile (0x50).  Cells in
+    0x14..0x1F or > 0x2D are left untouched.  Scans rows 0..63, columns
+    3..63 (columns 0..2 are never touched).
+
+    Recovered from `_FloodNestB` (SIMANTW.SYM seg5:29DA, no args).
+    """
+    base = MAP_PLANE_BASE[2]
+    for row in range(0x40):
+        row_base = base + (row << 6)
+        for col in range(3, 0x40):
+            off = row_base + col
+            tile = dgroup.rb(off)
+            if 0x20 <= tile <= 0x2D:
+                dgroup.wb(off, (tile + 0x31) & 0xFF)
+            elif tile <= 0x13:
+                dgroup.wb(off, 0x50)
 
 
 def dec_eat_b(dgroup, simant_data_group, pack) -> None:

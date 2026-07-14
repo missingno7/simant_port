@@ -86,7 +86,7 @@ def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, seed_fn=None,
         sp = (sp - 2) & 0xFFFF
         m.mem.ww(s.ss, sp, v & 0xFFFF)
     s.sp = sp
-    for _ in range(50_000):                             # loop mutators need headroom
+    for _ in range(200_000):                             # loop mutators need headroom
         m.cpu.step()
         if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
             break
@@ -143,7 +143,7 @@ def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
         m.mem.ww(s.ss, sp, v & 0xFFFF)
     s.sp = sp
     target = (s.cs & 0xFFFF, SENT_IP) if near else (SENT_CS, SENT_IP)
-    for _ in range(50_000):
+    for _ in range(200_000):
         m.cpu.step()
         if (s.cs & 0xFFFF, s.ip & 0xFFFF) == target:
             break
@@ -179,7 +179,7 @@ def _run_and_get_ax(seg, off, args, *, seed_fn=None, near=False):
         m.mem.ww(s.ss, sp, v & 0xFFFF)
     s.sp = sp
     target = (s.cs & 0xFFFF, SENT_IP) if near else (SENT_CS, SENT_IP)
-    for _ in range(50_000):
+    for _ in range(200_000):
         m.cpu.step()
         if (s.cs & 0xFFFF, s.ip & 0xFFFF) == target:
             break
@@ -1038,6 +1038,68 @@ def test_dectsmell_state_diff_matches_asm(x, y, is_red, existing):
                                  seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, _first_diff(asm_after, rec_after, base)
+
+
+# ---- _SmoothAlarm (seg6:9380) — 4-neighbour box blur of the alarm grid -----
+# Snapshots the live grid [0x52D2..) into a scratch buffer [0x4AD2..) first,
+# then blurs read-old/write-new; both bands are covered by one region.
+_SMOOTHALARM_REGION = (_SDG, 0x4AD2, 0x5AD2)
+
+
+def _smooth_alarm_seed(pattern):
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        for i in range(0x800):
+            m.mem.wb(sdg, 0x52D2 + i, pattern(i) & 0xFF)
+            m.mem.wb(sdg, 0x4AD2 + i, 0xEE)   # poison the scratch band up front
+    return seed
+
+
+@pytest.mark.parametrize("name,pattern", [
+    ("zero", lambda i: 0),
+    ("max", lambda i: 0xFF),
+    ("ramp", lambda i: i * 37 + 13),
+    ("sparse", lambda i: 0xFF if i % 97 == 0 else 0),
+    ("checker", lambda i: 0xFF if ((i // 0x20) + (i % 0x20)) % 2 == 0 else 3),
+    ("low", lambda i: (i * 7) % 9),   # exercises the <=8 -> 0 snap threshold
+])
+def test_smoothalarm_state_diff_matches_asm(name, pattern):
+    from simant.recovered.gameplay import smooth_alarm
+
+    results = _run_and_diff_segs(6, 0x9380, (), lambda s: smooth_alarm(s),
+                                 [_SMOOTHALARM_REGION], near=True,
+                                 seed_fn=_smooth_alarm_seed(pattern))
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, (
+        f"{name}: {_first_diff(asm_after, rec_after, _SMOOTHALARM_REGION[1])}")
+
+
+# ---- _FloodNestB (seg5:29DA) — flood the black colony's nest map plane ----
+# Pure DGROUP transform on map plane 2 (0x48E8..); no SIMANT_DATA_GROUP/PACK
+# involvement, so the plain single-segment `_run_and_diff` harness applies.
+def _flood_nest_seed(pattern):
+    def seed(mem, dg):
+        base = 0x48E8
+        for row in range(0x40):
+            for col in range(0x40):
+                mem.wb(dg, base + (row << 6) + col, pattern(row, col) & 0xFF)
+    return seed
+
+
+@pytest.mark.parametrize("name,pattern", [
+    ("dirt_band", lambda row, col: 0x20 + ((row + col) % 0x0E)),   # 0x20..0x2D
+    ("nfood_band", lambda row, col: (row + col) % 0x14),           # 0x00..0x13
+    ("untouched_band", lambda row, col: 0x14 + ((row + col) % 0x1A)),  # 0x14..0x2D..>0x2D mix
+    ("high_band", lambda row, col: 0x2E + ((row * 3 + col) % 0x50)),   # > 0x2D
+    ("skip_cols", lambda row, col: 0x22 if col < 3 else 0x00),     # cols 0..2 never touched
+    ("boundary", lambda row, col: 0x2D if (row + col) % 2 else 0x13),  # both edges of bands
+])
+def test_floodnestb_state_diff_matches_asm(name, pattern):
+    from simant.recovered.gameplay import flood_nest_b
+    asm_after, rec_after = _run_and_diff(
+        5, 0x29DA, (), lambda v: flood_nest_b(v),
+        seed_fn=_flood_nest_seed(pattern))
+    assert asm_after == rec_after, f"{name}: {_first_diff(asm_after, rec_after)}"
 
 
 def _sx(v):
