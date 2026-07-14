@@ -1,6 +1,22 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.76) — /goal grind: _AddAntToAList/BList/RList (list insert)
+## 2026-07-14 (cont.77) — /goal grind: _DecTSmell, _DropFoodB/R
+- RECOVERED `dec_t_smell` (seg6:95B6): single-cell decrement (guarded nonzero)
+  of a colony's TRAIL scent grid — confirmed it operates on the EXACT SAME
+  64x32 grids `jam_scent_bt/rt` and `colony_smell_decay_bt/rt` already cover
+  (red @0x7AD2, black @0x6AD2), closing out the scent-system recovery.
+- RECOVERED `drop_food_b`/`drop_food_r` (seg6:3C3C / 6242): grow a food pile on
+  the map (tile <0x10 -> set to 0x10; tile <0x13 -> +1; already-0x13 -> no
+  change), unconditionally followed by bookkeeping: increments a "total
+  dropped" counter in PACK, then clears bit 0x08 of the ACTING ant's caste byte
+  in SIMANT_DATA_GROUP.  DISCOVERS `pack[0x9B6A]` as a shared "which ant is
+  dropping" context slot the caller sets — reused identically by both colonies
+  (confirmed: both B and R read the SAME offset).  Also confirms the caste
+  field (0x3D18/0x46E6, from kill_tail_*/find_in_*list/add_ant_to_*_list) is a
+  BIT-PACKED byte, not a plain enum — bit 0x08 = "carrying food", cleared here.
+  18 new state-diff cases green (6 dec_t_smell + 12 drop_food).
+- Suite: simant 842.  Continuing per /goal.
+
 - RECOVERED the insert side of the ant lists (seg5:2EF0/2F4A/2FA4): append a new
   ant record at the current count (capped at 1000/A, 500/B, 500/R — jge skip, a
   full list is a silent no-op), writing the SAME per-ant arrays discovered

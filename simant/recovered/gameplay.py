@@ -645,6 +645,57 @@ def add_ant_to_r_list(pack, simant_data_group, dgroup, y: int, x: int,
     pack.ww(0x72CC, (count + 1) & 0xFFFF)
 
 
+def _drop_food(dgroup, pack, simant_data_group, plane: int, counter_off: int,
+               caste_off: int, x: int, y: int) -> int:
+    """Shared body of drop_food_b/r: grow a food pile on the map, then clear
+    the acting ant's "carrying food" flag.  Map cell =
+    `MAP_PLANE_BASE[plane] + (x<<6) + y` (the map's own x=*64/y=+1 convention,
+    unlike the per-ant arrays).  A tile below the food-pile minimum (0x10) is
+    set to 0x10 (a pile starts); a tile below the maximum (0x13) grows by 1; a
+    full tile (0x13) is left unchanged.  Returns 1 if food was dropped
+    (either branch fired), 0 if the pile was already full.
+
+    Bookkeeping runs UNCONDITIONALLY (even when the pile was full): increments
+    a "total dropped" counter at `pack[counter_off]`, then clears bit 0x08 of
+    the ACTING ant's caste byte (`simant_data_group[caste_off +
+    pack[0x9B6A]]` — `pack[0x9B6A]` is a shared "which ant is dropping"
+    context slot the caller sets, reused by both colonies) if that bit is set.
+    """
+    off = MAP_PLANE_BASE[plane] + (x << 6) + y
+    tile = dgroup.rb(off)
+    dropped = 0
+    if tile < 0x10:
+        dgroup.wb(off, 0x10)
+        dropped = 1
+    elif tile < 0x13:
+        dgroup.wb(off, tile + 1)
+        dropped = 1
+    pack.ww(counter_off, (pack.rw(counter_off) + 1) & 0xFFFF)
+    slot = caste_off + pack.rw(0x9B6A)
+    caste = simant_data_group.rb(slot)
+    if caste & 0x08:
+        simant_data_group.wb(slot, (caste - 0x08) & 0xFF)
+    return dropped
+
+
+def drop_food_b(dgroup, pack, simant_data_group, x: int, y: int) -> int:
+    """Drop food onto the black colony's nest map tile at (x, y) (plane 2,
+    counter `pack[0x9EA4]`, caste array base 0x3D18 — see `_drop_food`).
+
+    Recovered from `_DropFoodB` (SIMANTW.SYM seg6:3C3C, args x=[bp+6], y=[bp+8]).
+    """
+    return _drop_food(dgroup, pack, simant_data_group, 2, 0x9EA4, 0x3D18, x, y)
+
+
+def drop_food_r(dgroup, pack, simant_data_group, x: int, y: int) -> int:
+    """The red-colony twin of `drop_food_b` (plane 3, counter `pack[0x72DE]`,
+    caste array base 0x46E6).
+
+    Recovered from `_DropFoodR` (SIMANTW.SYM seg6:6242, args x=[bp+6], y=[bp+8]).
+    """
+    return _drop_food(dgroup, pack, simant_data_group, 3, 0x72DE, 0x46E6, x, y)
+
+
 def dec_t_smell(simant_data_group, x: int, y: int, is_red) -> None:
     """Decrement a single cell of a colony's TRAIL scent grid by 1, if nonzero.
 

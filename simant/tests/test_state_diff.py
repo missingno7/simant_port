@@ -588,6 +588,62 @@ def test_addanttorlist_state_diff_matches_asm(count):
         assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _DropFoodB / _DropFoodR (seg6:3C3C / 6242) — grow a food pile --------
+# Each spans DGROUP (the map cell), PACK (a "total dropped" counter + the
+# shared "acting ant index" context slot [0x9B6A]), and SIMANT_DATA_GROUP (the
+# acting ant's caste byte, bit 0x08 cleared).
+_DROPFOODB_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x48E8, 0x48E8 + _NEST_SPAN),   # map plane 2
+    (_PACK, 0x9B00, 0x9F00),      # covers [0x9B6A] (ant idx) and [0x9EA4] (counter)
+    (_SDG, 0x3D00, 0x3E00),       # covers [0x3D18+idx] (caste)
+]
+_DROPFOODR_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x58E8, 0x58E8 + _NEST_SPAN),   # map plane 3
+    (_PACK, 0x7280, 0x9F00),      # covers [0x72DE] (counter) and [0x9B6A] (ant idx)
+    (_SDG, 0x46E0, 0x4800),       # covers [0x46E6+idx] (caste)
+]
+
+
+@pytest.mark.parametrize("x,y,tile,ant_idx,caste", [
+    (10, 20, 0x05, 0, 0x0B), (10, 20, 0x10, 1, 0x03), (10, 20, 0x12, 2, 0x08),
+    (10, 20, 0x13, 3, 0x00), (0, 0, 0x00, 50, 0xFF), (63, 63, 0x13, 5, 0x08),
+])
+def test_dropfoodb_state_diff_matches_asm(x, y, tile, ant_idx, caste):
+    from simant.recovered.gameplay import drop_food_b
+    m = runtime.create_machine()
+    dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
+                     m.seg_bases[_SDG])
+    m.mem.wb(dg, 0x48E8 + (x << 6) + y, tile)
+    m.mem.ww(pack, 0x9B6A, ant_idx)
+    m.mem.wb(sdg, 0x3D18 + ant_idx, caste)
+
+    results = _run_and_diff_segs(6, 0x3C3C, (x, y),
+                                 lambda d, p, s: drop_food_b(d, p, s, x, y),
+                                 _DROPFOODB_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DROPFOODB_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("x,y,tile,ant_idx,caste", [
+    (10, 20, 0x05, 0, 0x0B), (10, 20, 0x10, 1, 0x03), (10, 20, 0x12, 2, 0x08),
+    (10, 20, 0x13, 3, 0x00), (0, 0, 0x00, 50, 0xFF), (63, 63, 0x13, 5, 0x08),
+])
+def test_dropfoodr_state_diff_matches_asm(x, y, tile, ant_idx, caste):
+    from simant.recovered.gameplay import drop_food_r
+    m = runtime.create_machine()
+    dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
+                     m.seg_bases[_SDG])
+    m.mem.wb(dg, 0x58E8 + (x << 6) + y, tile)
+    m.mem.ww(pack, 0x9B6A, ant_idx)
+    m.mem.wb(sdg, 0x46E6 + ant_idx, caste)
+
+    results = _run_and_diff_segs(6, 0x6242, (x, y),
+                                 lambda d, p, s: drop_food_r(d, p, s, x, y),
+                                 _DROPFOODR_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DROPFOODR_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _DecTSmell (seg6:95B6) — single-cell trail-scent decrement -----------
 @pytest.mark.parametrize("x,y,is_red,existing", [
     (0, 0, 0, 5), (0, 0, 1, 5), (126, 62, 0, 1), (126, 62, 1, 1),
