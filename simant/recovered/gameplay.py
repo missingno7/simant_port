@@ -5320,6 +5320,133 @@ def do_rest_r(dgroup, simant_data_group, pack, x: int, y: int,
     simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
 
 
+def do_rand_b(dgroup, simant_data_group, pack, x: int, y: int, attacker: int,
+              sub: int) -> None:
+    """A black nest ant's "random wander" tick: an occasional periodic
+    `field_c` refresh, THEN the same `check_nest_fight_b`-shaped combat
+    resolution `do_rest_b` composes, and — only when no fight happens —
+    a plain `try_move_dir_b` wander step (retried once with a fresh
+    `_SRand8()` direction on a `0` result, matching the SAME
+    epilogue shape `do_nesting_b`'s `finish()` uses).
+
+    Recovered from `_DoRandB` (SIMANTW.SYM seg6:3876, args x=[bp+6],
+    y=[bp+8], attacker=[bp+10], sub=[bp+12]; FAR return, 246 bytes).
+    Composes `get_new_mode_b`, `is_yellow_ant`, `find_in_b_list`,
+    `get_winner`, and `try_move_dir_b` — all already recovered.
+
+    Unconditionally first: a `_SRand32()` roll of `0` (1-in-32)
+    refreshes the acting ant's own `field_c` via `get_new_mode_b(sub)`.
+    Then the SAME `check_nest_fight_b`/`do_rest_b` combat shape (same
+    `_YellowFight` gate, tile range, `find_in_b_list` +
+    `get_winner` resolution — the `_YellowFight` branch raises
+    `NotImplementedError` for the same reason those routines' does). A
+    fight of either kind ends the routine here. Otherwise: attempts
+    `try_move_dir_b(x, y, attacker & 7)`; a `0` result retries once
+    more with a fresh `_SRand8()` direction, discarding that second
+    call's result either way.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    seed, roll32 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 31)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll32 == 0:
+        field_c = get_new_mode_b(dgroup, simant_data_group, pack, sub)
+        slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x3B22 + slot, field_c & 0xFF)
+
+    cell = LIFE_PLANE_BASE[2] + (x << 6) + y
+    tile = dgroup.rb(cell)
+
+    if is_yellow_ant(tile) == 1 and dgroup.rw(0xCE98) != 0:
+        raise NotImplementedError(
+            "do_rand_b: _YellowFight branch reached (not recovered) -- "
+            "x={!r} y={!r} attacker={!r}".format(x, y, attacker))
+
+    fought = False
+    if 0x88 <= tile <= 0xE7:
+        found = find_in_b_list(pack, simant_data_group, y=x, x=y, caste=tile)
+        if found != 0xFFFF:
+            winner = get_winner(dgroup, simant_data_group, pack, tile,
+                                attacker) & 0xFF
+            simant_data_group.wb(0x3F0E + found, winner)
+            new_caste = ((winner & 0x80) + 0x70) & 0xFF
+            simant_data_group.wb(0x3D18 + found, new_caste)
+            dgroup.wb(cell, new_caste)
+            simant_data_group.wb(0x3B22 + found, 0x0A)
+            fought = True
+
+    if fought:
+        return
+
+    mode7 = attacker & 7
+    result = try_move_dir_b(dgroup, simant_data_group, pack, x, y, mode7)
+    if result != 0:
+        return
+    seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    try_move_dir_b(dgroup, simant_data_group, pack, x, y, roll8)
+
+
+def do_rand_r(dgroup, simant_data_group, pack, x: int, y: int, attacker: int,
+              sub: int) -> None:
+    """The red-colony twin of `do_rand_b` — NOT a mechanical twin
+    (independently confirmed via the raw disassembly): the caste-range
+    check runs FIRST here (opposite order from black, matching
+    `check_nest_fight_r`/`do_rest_r`'s own reordering), and the
+    `_YellowFight` gate polarity is inverted (`dgroup[0xCE98] == 0`
+    triggers it here, vs `!= 0` for black) with a different
+    `_YellowFight` first argument (`3`, vs `2` for black) — the SAME
+    asymmetries `check_nest_fight_r`/`do_rest_r` have vs their black
+    twins.
+
+    Recovered from `_DoRandR` (SIMANTW.SYM seg6:5F7A, args x=[bp+6],
+    y=[bp+8], attacker=[bp+10], sub=[bp+12]; FAR return, 248 bytes).
+    Composes `get_new_mode_r`, `find_in_r_list`, `get_winner`,
+    `is_yellow_ant`, and `try_move_dir_r` — all already recovered; the
+    `_YellowFight` branch raises `NotImplementedError` for the same
+    reason `do_rand_b`'s does.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    seed, roll32 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 31)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll32 == 0:
+        field_c = get_new_mode_r(dgroup, simant_data_group, pack, sub)
+        slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
+
+    cell = LIFE_PLANE_BASE[3] + (x << 6) + y
+    tile = dgroup.rb(cell)
+
+    fought = False
+    if 8 <= tile <= 0x67:
+        found = find_in_r_list(pack, simant_data_group, y=x, x=y, caste=tile)
+        if found != 0xFFFF:
+            winner = get_winner(dgroup, simant_data_group, pack, tile,
+                                attacker) & 0xFF
+            simant_data_group.wb(0x48DC + found, winner)
+            new_caste = ((winner & 0x80) + 0x70) & 0xFF
+            simant_data_group.wb(0x46E6 + found, new_caste)
+            dgroup.wb(cell, new_caste)
+            simant_data_group.wb(0x44F0 + found, 0x0A)
+            fought = True
+    elif is_yellow_ant(tile) == 1 and dgroup.rw(0xCE98) == 0:
+        raise NotImplementedError(
+            "do_rand_r: _YellowFight branch reached (not recovered) -- "
+            "x={!r} y={!r} attacker={!r}".format(x, y, attacker))
+
+    if fought:
+        return
+
+    mode7 = attacker & 7
+    result = try_move_dir_r(dgroup, simant_data_group, pack, x, y, mode7)
+    if result != 0:
+        return
+    seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    try_move_dir_r(dgroup, simant_data_group, pack, x, y, roll8)
+
+
 def do_repo_fly(dgroup, simant_data_group, pack, slot: int) -> None:
     """A yard ant occasionally departs on a "reproductive flight" —
     vanishes from the yard A-list/life-grid, bumping a per-colony

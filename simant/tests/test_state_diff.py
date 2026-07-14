@@ -6098,3 +6098,59 @@ def test_dorestr_yellowfight_gate_raises():
     with pytest.raises(NotImplementedError):
         do_rest_r(dgv, ByteBackend(bytearray(0x10000), 0),
                   ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08)
+
+
+# ---- _DoRandB/R (seg6:3876/5F7A) — random wander tick ---------------------
+# Composes get_new_mode_b/r, is_yellow_ant, find_in_b/r_list, get_winner,
+# try_move_dir_b/r -- all already recovered. Reuses _dorest_seed's tables.
+@pytest.mark.parametrize("which,off,life_base,count_off,y_off,x_off,"
+                         "caste_off,tile,found_slot,sub,seed_val,label", [
+    ("b", 0x3876, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x50, False, 1,
+     4660, "b-out-of-range-wander"),
+    ("b", 0x3876, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x90, True, 1,
+     4660, "b-in-range-found-fight"),
+    ("r", 0x5F7A, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x05, False, 1,
+     4660, "r-out-of-range-notyellow-wander"),
+    ("r", 0x5F7A, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x30, True, 1,
+     4660, "r-in-range-found-fight"),
+])
+def test_dorand_state_diff_matches_asm(which, off, life_base, count_off,
+                                       y_off, x_off, caste_off, tile,
+                                       found_slot, sub, seed_val, label):
+    import simant.recovered.gameplay as G
+    fn = G.do_rand_b if which == "b" else G.do_rand_r
+    x, y, attacker = 20, 20, 0x08
+    slots = [(x, y, tile)] if found_slot else []
+    results = _run_and_diff_segs(
+        6, off, (x, y, attacker, sub),
+        lambda d, s, p: fn(d, s, p, x, y, attacker, sub),
+        _DOREST_REGIONS,
+        seed_fn=_dorest_seed(x, y, life_base, tile, count_off, y_off, x_off,
+                             caste_off, slots, acting_slot=5, cheat_flag=1))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOREST_REGIONS):
+        assert asm_after == rec_after, f"{which} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dorandb_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_rand_b
+    dg = bytearray(0x10000)
+    dg[0x88E8] = 0xFE
+    dgv = ByteBackend(dg, 0)
+    dgv.ww(0xCE98, 1)
+    dgv.ww(0xCBF2, 1)   # nonzero SRand seed -> skip the roll32==0 refresh path
+    with pytest.raises(NotImplementedError):
+        do_rand_b(dgv, ByteBackend(bytearray(0x10000), 0),
+                 ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08, 1)
+
+
+def test_dorandr_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_rand_r
+    dg = bytearray(0x10000)
+    dg[0x98E8] = 0xFE   # out of the 8..0x67 range
+    dgv = ByteBackend(dg, 0)
+    dgv.ww(0xCE98, 0)
+    dgv.ww(0xCBF2, 1)
+    with pytest.raises(NotImplementedError):
+        do_rand_r(dgv, ByteBackend(bytearray(0x10000), 0),
+                 ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08, 1)

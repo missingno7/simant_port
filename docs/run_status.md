@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.169) — /goal grind: _DoRandB/R — random wander tick
+- RECOVERED `do_rand_b`/`do_rand_r` (`_DoRandB`/`_DoRandR`, SIMANTW.SYM
+  seg6:3876/5F7A, args x=[bp+6], y=[bp+8], attacker=[bp+10], sub=
+  [bp+12]; FAR return, 246/248 bytes) — the survey's guessed
+  "`_RandTurn` sibling" was, like `_DoRestB`/`R`, actually a
+  `check_nest_fight_b`/`r`-shaped combat routine: an unconditional
+  periodic `_SRand32()`-gated (1-in-32) `field_c` refresh via
+  `get_new_mode_b`/`r`, THEN the same combat resolution `do_rest_b`/`r`
+  compose, and — only when no fight happens — a plain
+  `try_move_dir_b`/`r` wander step (retried once with a fresh
+  `_SRand8()` direction on a `0` result, the SAME epilogue shape
+  `do_nesting_b`/`r`'s `finish()` uses). Composes `get_new_mode_b`/`r`,
+  `is_yellow_ant`, `find_in_b_list`/`find_in_r_list`, `get_winner`, and
+  `try_move_dir_b`/`r` — no new primitives, the fourth recovery this
+  session built on the `check_nest_fight_b`/`r` combat shape.
+  - Confirmed the SAME B/R asymmetries (check order, `_YellowFight`
+    gate polarity/argument) hold here too — independently re-verified
+    via the raw disassembly for THIS pair.
+  - The `_YellowFight` branch raises `NotImplementedError` for the
+    same reason `check_nest_fight_b`/`r`/`do_rest_b`/`r`'s does.
+- 6 cases (2 B, 2 R, plus a `NotImplementedError`-gate check per
+  colony) — ALL GREEN ON THE FIRST REAL-ASM RUN.
+- Suite: simant 1711 (+6), full suite green.
+
 ## 2026-07-15 (cont.168) — /goal grind: _DoRestB/R — nest combat + retreat
 - RECOVERED `do_rest_b`/`do_rest_r` (`_DoRestB`/`_DoRestR`, SIMANTW.SYM
   seg6:367E/5D7E, args x=[bp+6], y=[bp+8], attacker=[bp+10]; FAR
