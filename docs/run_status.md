@@ -1,5 +1,17 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.129) — /goal grind: _ScanForAnts — 3x3 occupancy count
+- RECOVERED `scan_for_ants` (`_ScanForAnts`, seg5:5362, FAR return, NO
+  args) — a pure double-loop scan, no calls at all. Counts occupied yard
+  life-plane cells in the 3x3 block around
+  `(dgroup[0xAC7C] >> 4, dgroup[0xAC7E] >> 4)`; out-of-bounds neighbors
+  are simply skipped, not treated as occupied.
+- 3 cases (nothing occupied, a partial 3-of-9 count, and the
+  `base_x == 0` boundary skipping its off-grid west column) — ALL GREEN
+  ON THE FIRST RUN.
+- Suite: simant 1401 (+3). Remaining from this round's batch:
+  `_MakeNewTailB/R`, `_RaidInB/R`.
+
 ## 2026-07-14 (cont.128) — /goal grind: _PlaceEggB/R — place a new egg
 - RECOVERED `place_egg_b`/`r` (`_PlaceEggB`/`R`, seg5:1004/1068, FAR
   return, args x/y/caste) — composes `dig_tile_b`/`r` and

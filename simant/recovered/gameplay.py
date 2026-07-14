@@ -1961,6 +1961,28 @@ def place_egg_r(dgroup, simant_data_group, pack, x: int, y: int, caste: int) -> 
               add_ant_to_r_list, LIFE_PLANE_BASE[3], x, y, caste)
 
 
+def scan_for_ants(dgroup) -> int:
+    """Count occupied yard life-plane cells in the 3x3 block around
+    `(dgroup[0xAC7C] >> 4, dgroup[0xAC7E] >> 4)`.
+
+    Recovered from `_ScanForAnts` (SIMANTW.SYM seg5:5362, FAR return, NO
+    args) — no calls at all, a pure double-loop scan. Out-of-bounds
+    neighbors (`x` outside `0..0x7F`, `y` outside `0..0x3F`) are simply
+    skipped, not treated as occupied.
+    """
+    base_x = _sx16(dgroup.rw(0xAC7C)) >> 4
+    base_y = _sx16(dgroup.rw(0xAC7E)) >> 4
+    count = 0
+    for ox in range(-1, 2):
+        for oy in range(-1, 2):
+            nx, ny = base_x + ox, base_y + oy
+            if not (0 <= nx <= 0x7F and 0 <= ny <= 0x3F):
+                continue
+            if dgroup.rb(LIFE_PLANE_BASE[0] + (nx << 6) + ny) != 0:
+                count += 1
+    return count
+
+
 def _smooth_edges(dgroup, map_base: int, x: int, y: int) -> None:
     """Shared body of `smooth_edges_b`/`smooth_edges_r`."""
     from .simone import SRAND_SEED_OFF, srand_pow2

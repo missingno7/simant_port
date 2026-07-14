@@ -1833,6 +1833,35 @@ def test_placeegg_state_diff_matches_asm(colony, seg, off, count_off, x, y,
         assert asm_after == rec_after, f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _ScanForAnts (seg5:5362) — count occupied cells in a 3x3 block -------
+# Pure predicate, no args, no mutation at all.
+@pytest.mark.parametrize("word_x,word_y,base_x,base_y,occupied,label", [
+    (0x200, 0x200, 0x20, 0x20, [], "nothing occupied -> 0"),
+    (0x200, 0x200, 0x20, 0x20, [(0x20, 0x20), (0x21, 0x21), (0x1F, 0x1F)], "3 of 9 occupied"),
+    (0x000, 0x200, 0x00, 0x20, [(0x00, 0x20)], "base_x==0 -> west neighbours off-grid, skipped"),
+])
+def test_scanforants_matches_asm(word_x, word_y, base_x, base_y, occupied, label):
+    from simant.recovered.gameplay import scan_for_ants
+
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        m.mem.ww(dg, 0xAC7C, word_x)
+        m.mem.ww(dg, 0xAC7E, word_y)
+        for ox in range(-1, 2):
+            for oy in range(-1, 2):
+                nx, ny = base_x + ox, base_y + oy
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, 0)
+        for (nx, ny) in occupied:
+            m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, 1)
+
+    ax, m = _run_and_get_ax(5, 0x5362, (), seed_fn=seed)
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    rec_ax = scan_for_ants(dgroup_view)
+    assert ax == (rec_ax & 0xFFFF), label
+
+
 # ---- _GetExitDirB / _GetExitDirR (seg5:119C / 1240) — exit-distance-------
 # gradient direction, biased away from `exclude`'s opposite.
 @pytest.mark.parametrize("colony,seg,off,map_base,exit_base", [
