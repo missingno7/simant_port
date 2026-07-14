@@ -376,6 +376,52 @@ def test_fixexitmap_state_diff_matches_asm(routine, off, map_base, exit_base,
             f"{label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _SmoothEdgesB / _SmoothEdgesR (seg5:255A / 26E4) — dig-edge autotile --
+_NEIGHBOR_DELTA = {"north": -1, "east": 0x40, "south": 1, "west": -0x40}
+
+
+@pytest.mark.parametrize("routine,off,map_base,fn_name", [
+    ("_SmoothEdgesB", 0x255A, 0x48E8, "smooth_edges_b"),
+    ("_SmoothEdgesR", 0x26E4, 0x58E8, "smooth_edges_r"),
+])
+@pytest.mark.parametrize("x,y,tile,dirt_neighbors,seed_val", [
+    (10, 0, 0x20, (), 0x1234),      # row 0, tile<0x30 -> forced to 0x18
+    (10, 0, 0x35, (), 0x1234),      # row 0, tile>=0x30 -> no-op
+    (10, 5, 0x10, (), 0x1234),      # tile<0x20 -> no-op
+    (10, 5, 0x38, (), 0x1234),      # tile in the excluded 0x30..0x4E band -> no-op
+    (10, 5, 0x25, (), 0x1234),      # centre 0x20-0x2F, all neighbours clear -> SRand8 reroll
+    (10, 5, 0x25, (), 0xABCD),      # same, different LFSR seed
+    (10, 5, 0x55, (), 0x1234),      # centre >=0x4F, all neighbours clear -> literal 0x4E
+    (10, 5, 0x25, ("north",), 0x1234),          # one neighbour dirt -> bits=1
+    (10, 5, 0x25, ("north", "east", "south", "west"), 0x1234),   # all 4 -> bits=15
+    (10, 5, 0x55, ("east", "west"), 0x1234),    # centre high band, some neighbours dirt
+    (0, 5, 0x25, (), 0x1234),        # x=0 -> west defaults to dirt
+    (0x3F, 5, 0x25, (), 0x1234),     # x=0x3F -> east defaults to dirt
+    (10, 1, 0x25, (), 0x1234),       # y=1 (<2) -> north defaults to dirt
+    (10, 0x3F, 0x25, (), 0x1234),    # y=0x3F -> south defaults to dirt
+    (-1, 5, 0x25, (), 0x1234),       # x out of range -> no-op
+    (10, 0x40, 0x25, (), 0x1234),    # y out of range -> no-op
+])
+def test_smoothedges_state_diff_matches_asm(routine, off, map_base, fn_name, x, y,
+                                            tile, dirt_neighbors, seed_val):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+
+    def seed(mem, dg):
+        if 0 <= x <= 0x3F and 0 <= y <= 0x3F:
+            mem.wb(dg, map_base + (x << 6) + y, tile)
+            for name, delta in _NEIGHBOR_DELTA.items():
+                nv = 0x25 if name in dirt_neighbors else 0x05
+                mem.wb(dg, map_base + (x << 6) + y + delta, nv)
+        mem.ww(dg, 0xCBF2, seed_val)
+
+    asm_after, rec_after = _run_and_diff(5, off, (x, y), lambda v: fn(v, x, y),
+                                         seed_fn=seed)
+    assert asm_after == rec_after, (
+        f"{routine} x={x} y={y} tile={tile:#x} dirt={dirt_neighbors}: "
+        f"{_first_diff(asm_after, rec_after)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only

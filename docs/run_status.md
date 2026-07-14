@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.94) — /goal grind: _SmoothEdgesB/R (dig-subsystem, second slice)
+- RECOVERED `smooth_edges_b`/`smooth_edges_r` (seg5:255A/26E4, args x, y;
+  FAR return) — the second independently-tractable dig-subsystem member
+  from cont.90's survey (only calls the already-recovered `_SRand8`).
+  Rounds off a dirt tile's exposed edges after a dig: row 0 is special-
+  cased (tile < 0x30 forced to 0x18, the same exit marker `_FixExitMapB`
+  uses); every other row builds a 4-bit neighbour-dirt bitmask (a
+  neighbour off the 64x64 grid always counts as "dirt") and either writes
+  a 4-bit auto-tile edge/corner variant selector (`bits + center_class +
+  0x1F`) when any neighbour is dirt, or — when fully surrounded by
+  non-dirt — rerolls to a random 0..7 via `_SRand8` (centre in the
+  0x20-0x2F band) or writes the literal 0x4E (centre >=0x4F band).
+  - Identified but deliberately did NOT recover `_RIsItDirt` (seg5:26C4) as
+    a separate function: it's byte-identical to the classification this
+    routine already inlines four times, but `_SmoothEdgesB/R` never
+    actually CALLS it (confirmed the near-call target at `push cs; call
+    near 0x15EE` resolves to `_SRand8`, not `_RIsItDirt`) — recovering an
+    unused-by-anything-yet leaf would be scope creep; noted for a future
+    session if something else needs it.
+  - CAUGHT A REAL BUG via the state-diff test, not by re-reading the
+    disassembly: the first port had the row-0 threshold exactly backwards
+    (`if tile >= 0x30: write 0x18`). The ASM's `cmp tile,0x30; jb -> write`
+    is an UNSIGNED "jump if BELOW" — i.e. `tile < 0x30` triggers the
+    write, `>= 0x30` is the no-op — and I'd swapped which branch did
+    which. A dedicated `tile=0x20` (below 0x30) test case caught it
+    immediately (ASM wrote 0x18, the buggy port left it unchanged).
+  - 32 scenarios (both twins x all four boundary-default directions,
+    both reroll bands, one-neighbour and all-four-neighbours-dirt bitmask
+    cases, two out-of-range coordinate cases) — all green after the fix.
+- Suite: simant 1109 (+32). Continuing per /goal — next per cont.90's
+  survey: `_ExitHole` (seg5:2DB6, only calls the already-recovered
+  `_IsValidA`) is the last of the three independently-tractable dig-
+  subsystem members; after that, `_DigTileThemB/R` and `_MakeNewHoleB/R`
+  (which additionally need `__aFldiv`, already recovered) become the next
+  layer, closing in on `_TryMoveDirB/R` <-> `_GetOutB/R`.
+
 ## 2026-07-14 (cont.93) — /goal grind: _FixExitMapB/R (dig-subsystem, first slice)
 - Started the dig-subsystem chain cont.90's survey flagged as independently
   tractable now: `_FixExitMapB`/`_FixExitMapR` (seg5:284E/2914, pure leaves,

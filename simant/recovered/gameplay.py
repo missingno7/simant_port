@@ -1542,6 +1542,82 @@ def fix_exit_map_r(dgroup, simant_data_group, x: int, y: int) -> None:
     _fix_exit_map(dgroup, simant_data_group, MAP_PLANE_BASE[3], 0x13A4, x, y)
 
 
+def _smooth_edges(dgroup, map_base: int, x: int, y: int) -> None:
+    """Shared body of `smooth_edges_b`/`smooth_edges_r`."""
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    if not (0 <= x <= 0x3F and 0 <= y <= 0x3F):
+        return
+    idx = (x << 6) + y
+
+    if y == 0:
+        tile = dgroup.rb(map_base + idx)
+        if tile < 0x30:
+            dgroup.wb(map_base + idx, 0x18)
+        return
+
+    tile = dgroup.rb(map_base + idx)
+    if not (0x20 <= tile <= 0x2F or tile >= 0x4F):
+        return
+    center_class = 0 if tile <= 0x2F else 0x2F
+
+    def dirt(delta):
+        v = dgroup.rb(map_base + idx + delta)
+        return 1 if (0x20 <= v <= 0x2F or v >= 0x4F) else 0
+
+    bits = 1 if (y < 2 or dirt(-1)) else 0            # north (y-1)
+    bits |= 2 if (x > 0x3E or dirt(0x40)) else 0       # east  (x+1)
+    bits |= 4 if (y > 0x3E or dirt(1)) else 0          # south (y+1)
+    bits |= 8 if (x < 1 or dirt(-0x40)) else 0         # west  (x-1)
+
+    if bits:
+        dgroup.wb(map_base + idx, (bits + center_class + 0x1F) & 0xFF)
+        return
+
+    if center_class == 0:
+        seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        dgroup.wb(map_base + idx, val & 0xFF)
+    else:
+        dgroup.wb(map_base + idx, 0x4E)
+
+
+def smooth_edges_b(dgroup, x: int, y: int) -> None:
+    """Round off a black-colony dirt tile's exposed edges after a dig.
+
+    Recovered from `_SmoothEdgesB` (SIMANTW.SYM seg5:255A, args x=[bp+6],
+    y=[bp+8]).  Row 0 is special-cased: a tile < 0x30 there is forced to
+    0x18 (the exit marker `_FixExitMapB` also uses); >= 0x30 is a no-op.
+    Every other row only
+    acts on "dirt-like" tiles (0x20..0x2F, or >=0x4F — the same
+    classification used inline four times below, matching the separately-
+    named leaf `_RIsItDirt` (seg5:26C4) byte-for-byte though this routine
+    never calls it, always inlining instead).  It builds a 4-bit bitmask of
+    which orthogonal neighbours are ALSO dirt-like (bit 1=north, 2=east,
+    4=south, 8=west; a neighbour off the 64x64 grid always counts as
+    "dirt"), and:
+
+    - any bit set: writes `bits + (0 or 0x2F, depending on whether the
+      centre tile was the 0x20-0x2F band or the >=0x4F band) + 0x1F` — a
+      classic 4-bit auto-tile edge/corner variant selector.
+    - no bits set (fully surrounded by non-dirt) and the centre was the
+      0x20-0x2F band: rerolls to a random 0..7 via `_SRand8` (advancing the
+      shared LFSR seed at `dgroup[SRAND_SEED_OFF]`).
+    - no bits set and the centre was the >=0x4F band: writes the literal
+      0x4E.
+    """
+    _smooth_edges(dgroup, MAP_PLANE_BASE[2], x, y)
+
+
+def smooth_edges_r(dgroup, x: int, y: int) -> None:
+    """The red-colony twin of `smooth_edges_b` (map plane 3).
+
+    Recovered from `_SmoothEdgesR` (SIMANTW.SYM seg5:26E4, args x=[bp+6],
+    y=[bp+8]).
+    """
+    _smooth_edges(dgroup, MAP_PLANE_BASE[3], x, y)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
