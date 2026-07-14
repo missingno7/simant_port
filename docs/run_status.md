@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.109) — /goal grind: _GetAlarmDir — ALARM-scent gradient direction
+- RECOVERED `get_alarm_dir` (`_GetAlarmDir`, seg7:0E54, FAR return, args
+  x/y/caste_low3) — third of the seg7 `_Get*Dir` family, and the simplest
+  so far: no colony argument at all — the ALARM scent grid
+  (`simant_data_group[0x52D2..)`) is shared by both colonies. Independently
+  disassembled the full 286-byte body.
+- Yard-edge handling: `_Bounce`'s formula compiled inline again (same as
+  `_GetNestDir`), ported as a `bounce()` call plus the `(r-1)&7`
+  conversion. Interior: scans the 8 compass neighbors for the highest
+  ALARM value (never checks the ant's own cell, unlike `_GetForageDir`;
+  ties keep the lowest index, no random tie-break seed, like
+  `_GetNestDir`) — falls back to a fresh `_SRand8()`-random mode-table
+  pick only when every neighbor is exactly zero.
+- 3 cases (an edge/corner, gradient-follow, all-neighbors-zero fallback)
+  — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1246 (+3). Three of the six-routine seg7 `_Get*Dir` family
+  now recovered (`_GetForageDir`/`_GetNestDir`/`_GetAlarmDir`); remaining:
+  `_GetRandDir`, `_GetDefendDir`, `_GetRedDefendDir`.
+
 ## 2026-07-14 (cont.108) — /goal grind: _GetNestDir — NEST-scent gradient / queen-homing
 - RECOVERED `get_nest_dir` (`_GetNestDir`, seg7:0C30, FAR return, args
   x/y/caste_low3/colony_flag) — second of the seg7 `_Get*Dir` family, and

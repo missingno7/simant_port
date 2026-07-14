@@ -2823,6 +2823,56 @@ def get_nest_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int,
     return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + roll(7)))
 
 
+def get_alarm_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int) -> int:
+    """Pick a direction away from danger: follow the gradient of the single,
+    colony-neutral ALARM scent grid around `(x, y)`'s half-res cell.
+
+    Recovered from `_GetAlarmDir` (SIMTWO.SYM seg7:0E54, args x=[bp+6],
+    y=[bp+8], caste_low3=[bp+10]; FAR return) — unlike `_GetForageDir`/
+    `_GetNestDir`, there is no colony argument at all; the ALARM grid at
+    `simant_data_group[0x52D2..)` is shared by both colonies.
+
+    Yard-edge handling is (like `_GetNestDir`) `_Bounce`'s own formula
+    compiled inline, ported the same way: a `bounce()` call plus the
+    `(r - 1) & 7` conversion.
+
+    Strictly interior: scans the 8 compass neighbors (never the ant's own
+    cell — there is no "own cell already best" check here, unlike
+    `_GetForageDir`) for the highest ALARM value, ties keeping the lowest
+    index (no random tie-break seed, same as `_GetNestDir`). If every
+    neighbor is zero, falls back to a fresh `_SRand8()`-random mode-table
+    pick; otherwise reads the mode table at the winning neighbor's index.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    edge = bounce(dgroup, x, y)
+    if edge != 0:
+        return (edge - 1) & 7
+
+    hx, hy = x >> 1, y >> 1
+    best_dir = 0
+    best_val = 0
+    for i in range(8):
+        dx = sx8(simant_data_group.rb(i))
+        dy = sx8(simant_data_group.rb(8 + i))
+        nx = (hx + dx) & 0x3F
+        ny = (hy + dy) & 0x1F
+        val = simant_data_group.rb(0x52D2 + (nx << 5) + ny)
+        if val > best_val:
+            best_val = val
+            best_dir = i
+
+    if best_val == 0:
+        seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + roll))
+    return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + best_dir))
+
+
 def do_dig_out_ant_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of a yard ant "digging out" — aging/mode-transition,
     or a move (with a natural-decay kill chance) toward a `_Bounce`-biased or

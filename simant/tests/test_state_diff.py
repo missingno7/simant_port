@@ -1359,6 +1359,63 @@ def test_getnestdir_homing_no_target_falls_back_matches_asm():
                     _getnestdir_seed(0, None, 0, 0x00, target_x=20, target_y=20))
 
 
+# ---- _GetAlarmDir (seg7:0E54) — ALARM-scent gradient direction ------------
+# No colony argument -- one shared ALARM grid. Edge handling is (like
+# _GetNestDir) _Bounce's own formula compiled inline.
+def _getalarmdir_seed(neighbor_dir, neighbor_scent):
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        m.mem.data[sdg + 0x52D2:sdg + 0x52D2 + 0x800] = bytes(0x800)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        if neighbor_dir is not None:
+            hx, hy = 20 >> 1, 20 >> 1
+            dx = _DX8[neighbor_dir]
+            dy = _DY8[neighbor_dir]
+            dx = dx - 0x100 if dx & 0x80 else dx
+            dy = dy - 0x100 if dy & 0x80 else dy
+            nx, ny = (hx + dx) & 0x3F, (hy + dy) & 0x1F
+            m.mem.wb(sdg, 0x52D2 + (nx << 5) + ny, neighbor_scent)
+    return seed
+
+
+def _run_getalarmdir(x, y, caste_low3, seed_val, seeder):
+    from simant.recovered.gameplay import get_alarm_dir
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+        seeder(m)
+
+    ax, m = _run_and_get_ax(7, 0xE54, (x, y, caste_low3), seed_fn=seed)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+
+    buf = bytearray(0x10000)
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg = m.seg_bases[_SDG]
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    rec_ax = get_alarm_dir(dgroup_view, sdg_view, x, y, caste_low3)
+
+    assert ax == (rec_ax & 0xFFFF), f"seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, f"seed={seed_val:#x}: seed mismatch"
+
+
+def test_getalarmdir_edge_matches_asm():
+    _run_getalarmdir(0x7F, 0x00, 5, 0x1234, lambda m: None)   # TR corner
+
+
+def test_getalarmdir_gradient_matches_asm():
+    _run_getalarmdir(20, 20, 5, 0x1234, _getalarmdir_seed(6, 40))
+
+
+def test_getalarmdir_no_scent_falls_back_matches_asm():
+    _run_getalarmdir(20, 20, 5, 0x1234, _getalarmdir_seed(None, 0))
+
+
 # ---- _DoDigOutAntA (seg6:1480) — second top-level `_Do*Ant*` routine -------
 # NEAR call/return, composes `_Bounce`, `_GetNewMode`, and (on a successful
 # move with a nonzero carried-dirt counter) `_JamScentBN`/`_JamScentRN`.
