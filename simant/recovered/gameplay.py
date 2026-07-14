@@ -1813,6 +1813,33 @@ def hole_border(dgroup, simant_data_group, x: int, y: int) -> None:
             dgroup.wb(idx, HOLE_EDGE_TILES[i])
 
 
+def get_from_a_list(dgroup, simant_data_group, pack, colony_bit: int) -> int:
+    """Find and remove the last (highest-slot) yard ant of the given colony
+    (`colony_bit`: caste's top bit, 0 or 1), searching backward.
+
+    Recovered from `_GetFromAlist` (SIMANTW.SYM seg5:2FFE, FAR return, arg:
+    colony_bit=[bp+6]). Skips dead/empty slots (`caste == 0`). Only
+    callee: the already-recovered `remove_from_a_list`.
+
+    A genuine quirk, ported literally rather than "fixed": if the search
+    lands on slot `0` — whether because THAT slot matched, or because the
+    list was exhausted without a match — the function returns `0` (as if
+    nothing were found) and does NOT remove anything. Slot 0 itself can
+    therefore never actually be returned as a match.
+    """
+    si = pack.rw(0x80F0)
+    while si > 0:
+        si -= 1
+        caste = simant_data_group.rb(0x2F62 + si)
+        if caste != 0 and (caste >> 7) == colony_bit:
+            break
+
+    if si == 0:
+        return 0
+    remove_from_a_list(pack, simant_data_group, dgroup, si)
+    return 1
+
+
 def pickup_food_a(dgroup, pack, x: int, y: int) -> None:
     """An ant picking up food from the YARD tile map at `(x, y)` — a
     genuine `_DoForageAnt` dependency.

@@ -3014,6 +3014,36 @@ def test_removefromalist_state_diff_matches_asm(slot, count):
             f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _GetFromAlist (seg5:2FFE) — find + remove the last matching-colony ---
+# yard ant; a genuine quirk (ported literally) means slot 0 can never match.
+@pytest.mark.parametrize("castes,colony_bit,label", [
+    ([0x10, 0x20, 0x30, 0x40, 0x50, 0x90], 1, "match at the top slot -> removed"),
+    ([0x90, 0x20, 0x30, 0x40, 0x50, 0x60], 1, "only slot 0 matches -> quirk returns 0, no removal"),
+    ([0x10, 0x20, 0x30, 0x40, 0x50, 0x60], 1, "no match at all -> 0"),
+    ([0x10, 0x00, 0x30, 0x00, 0x90, 0x60], 1, "dead/empty slots skipped -> match at slot 4"),
+])
+def test_getfromalist_state_diff_matches_asm(castes, colony_bit, label):
+    from simant.recovered.gameplay import get_from_a_list
+    count = len(castes)
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x80F0, count)
+        for i, caste in enumerate(castes):
+            m.mem.wb(sdg, 0x23A4 + i, (i * 3 + 1) & 0x3F)
+            m.mem.wb(sdg, 0x278E + i, (i * 5 + 2) & 0x1F)
+            m.mem.wb(sdg, 0x2B78 + i, (i * 7 + 3) & 0xFF)
+            m.mem.wb(sdg, 0x2F62 + i, caste)
+            m.mem.wb(sdg, 0x334C + i, (i * 13 + 5) & 0xFF)
+
+    results = _run_and_diff_segs(
+        5, 0x2FFE, (colony_bit,),
+        lambda d, s, p: get_from_a_list(d, s, p, colony_bit),
+        _REMOVEFROMA_REGIONS, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _REMOVEFROMA_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _MakeRedInitiator (seg6:967C) — convert an eligible yard ant ---------
 _MAKERED_REGIONS = [
     (_PACK, 0x8000, 0x9E00),      # covers [0x80F0] (count), [0x9D74] (pending)

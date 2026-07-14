@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.126) — /goal grind: _GetFromAlist — find + remove by colony
+- RECOVERED `get_from_a_list` (`_GetFromAlist`, seg5:2FFE, FAR return,
+  arg: colony_bit) — searches the yard A-list backward for the last ant
+  of a given colony (caste's top bit) and removes it. Only callee: the
+  already-recovered `remove_from_a_list`.
+- A genuine quirk, ported literally rather than "fixed": the ASM's own
+  found/not-found check is just "is the final slot index nonzero", so
+  if the search lands on slot `0` — whether because THAT slot matched or
+  because the list was exhausted — the function returns `0` (as if
+  nothing were found) and removes nothing. Slot 0 can therefore never
+  actually be returned as a match, confirmed by a dedicated test case
+  seeding a match ONLY at slot 0.
+- 4 cases (match at the top slot, the slot-0 quirk, no match at all,
+  dead/empty slots correctly skipped mid-search) — ALL GREEN ON THE
+  FIRST RUN.
+- Suite: simant 1382 (+4). Remaining from this round's batch:
+  `_PickupFoodB/R`, `_PlaceEggB/R`, `_MakeNewTailB/R`, `_ScanForAnts`,
+  `_RaidInB/R`.
+
 ## 2026-07-14 (cont.125) — /goal grind: _CanBeHouseHole + _HoleBorder — new batch, round 2 survey
 - Dispatched a THIRD research survey pass (the second candidate list
   closed out in cont.124) — found 14 more zero-blocker routines across

@@ -179,7 +179,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
-| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}`/`_PickupFoodA`/`_CanBeHouseHole`/`_HoleBorder` done | 77 / 169 | foundation **done** |
+| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}`/`_PickupFoodA`/`_CanBeHouseHole`/`_HoleBorder`/`_GetFromAlist` done | 78 / 169 | foundation **done** |
 | `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_SimEggA`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_RaidOutB/R`/`_QueenMoveB/R` done; forage/nest frontier | 59 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family done | 14 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
