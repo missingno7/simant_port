@@ -1040,6 +1040,89 @@ def test_dectsmell_state_diff_matches_asm(x, y, is_red, existing):
     assert asm_after == rec_after, _first_diff(asm_after, rec_after, base)
 
 
+# ---- _TileCanBeMovedOn (seg5:9342) — movement/self-exclusion predicate ----
+# Pure read (no mutation): the plane<=1 threshold flag lives behind the same
+# DGROUP pointer-global (0xC4AC) `_IsNotBarrier`/`_IsNotObstacle` read; seed it
+# alongside the target map tile (and, for the extended-band y==0 case, the
+# neighbour tile at (x, y+1) on the same plane).
+def _tilecanbemovedon_seed(plane, x, y, tile, inside, neighbor):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        world = m.mem.rw(dg, 0xC4AC)
+        m.mem.wb(world, 0x9B6E, 1 if inside else 0)
+        if plane <= 1:
+            in_range = 0 <= x <= 0x7F and 0 <= y <= 0x3F
+            base = 0x28E8
+        else:
+            in_range = 0 <= x <= 0x3F and 0 <= y <= 0x3F
+            base = 0x48E8 if plane == 2 else 0x58E8
+        if in_range:
+            m.mem.wb(dg, base + (x << 6) + y, tile)
+            if neighbor is not None:
+                m.mem.wb(dg, base + (x << 6) + y + 1, neighbor)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "plane,x,y,tile,inside,cand_plane,cand_x,cand_y,check_adjacent,neighbor", [
+    # plane<=1: threshold gate (0x53 / 0x90), trailing args unused
+    (0, 0x10, 0x10, 0x53, False, 0, 0, 0, False, None),
+    (0, 0x10, 0x10, 0x54, False, 0, 0, 0, False, None),
+    (1, 0x10, 0x10, 0x90, True, 0, 0, 0, False, None),
+    (1, 0x10, 0x10, 0x91, True, 0, 0, 0, False, None),
+    (0, 0x80, 0x10, 0x00, False, 0, 0, 0, False, None),   # x out of range
+    (0, 0x10, 0x40, 0x00, False, 0, 0, 0, False, None),   # y out of range
+    # plane>1 out of range
+    (2, 0x40, 0x10, 0x00, False, 0, 0, 0, False, None),
+    (3, 0x10, 0x40, 0x00, False, 0, 0, 0, False, None),
+    # not-clear tile -> 0 regardless of check_adjacent
+    (2, 0x10, 0x10, 0x19, False, 2, 0x10, 0x10, False, None),
+    (3, 0x10, 0x10, 0x2F, True, 3, 0x10, 0x10, False, None),
+    # hard-clear (<=0x18 or pebble), y>1 -> 1 unconditionally
+    (2, 0x10, 0x05, 0x00, False, 9, 0, 0, False, None),
+    (3, 0x10, 0x05, 0x30, False, 9, 0, 0, False, None),
+    (2, 0x10, 0x05, 0x31, False, 9, 0, 0, False, None),
+    # hard-clear, y<=1, cand_plane != plane -> 1
+    (2, 0x10, 0x00, 0x18, False, 3, 0, 0, False, None),
+    # hard-clear, y==0, check_adjacent=False
+    (2, 0x10, 0x00, 0x18, False, 2, 0x10, 0x00, False, None),  # match -> 1
+    (2, 0x10, 0x00, 0x18, False, 2, 0x11, 0x00, False, None),  # x mismatch -> 0
+    (2, 0x10, 0x00, 0x18, False, 2, 0x10, 0x05, False, None),  # cand_y!=0 -> 0
+    # hard-clear, y==1, check_adjacent=False
+    (2, 0x10, 0x01, 0x18, False, 2, 0x10, 0x00, False, None),  # x match -> 1
+    (2, 0x10, 0x01, 0x18, False, 2, 0x11, 0x05, False, None),  # cand_y!=0 -> 1
+    (2, 0x10, 0x01, 0x18, False, 2, 0x11, 0x00, False, None),  # neither -> 0
+    # hard-clear, check_adjacent=True, y!=0 -> 1
+    (2, 0x10, 0x01, 0x18, False, 2, 0x00, 0x00, True, None),
+    # hard-clear, check_adjacent=True, y==0
+    (2, 0x10, 0x00, 0x18, False, 2, 0x10, 0x00, True, None),   # match -> 1
+    (2, 0x10, 0x00, 0x18, False, 2, 0x11, 0x00, True, None),   # x mismatch -> 0
+    (2, 0x10, 0x00, 0x18, False, 2, 0x10, 0x05, True, None),   # cand_y!=0 -> 0
+    # extended (dirt band, check_adjacent=True)
+    (2, 0x10, 0x01, 0x20, True, 2, 0x11, 0x00, True, None),    # x mismatch -> 0
+    (2, 0x10, 0x01, 0x2E, True, 2, 0x10, 0x00, True, None),    # x match, y!=0 -> 1
+    (2, 0x10, 0x00, 0x1C, True, 2, 0x10, 0x00, True, 0x1F),    # y==0, neighbor in-band -> 0
+    (2, 0x10, 0x00, 0x1F, True, 2, 0x10, 0x00, True, 0x2E),    # y==0, neighbor in-band(edge) -> 0
+    (2, 0x10, 0x00, 0x20, True, 2, 0x10, 0x00, True, 0x18),    # y==0, neighbor out-of-band -> 1
+    (2, 0x10, 0x00, 0x2E, True, 2, 0x10, 0x00, True, 0x2F),    # y==0, neighbor just above band -> 1
+    (3, 0x05, 0x01, 0x1F, True, 3, 0x05, 0x00, True, None),    # red-colony plane, x match y!=0 -> 1
+])
+def test_tilecanbemovedon_matches_asm(plane, x, y, tile, inside, cand_plane,
+                                      cand_x, cand_y, check_adjacent, neighbor):
+    from simant.recovered.gameplay import tile_can_be_moved_on
+    ax, m = _run_and_get_ax(
+        5, 0x9342,
+        (plane, x, y, cand_plane, cand_x, cand_y, 1 if check_adjacent else 0),
+        seed_fn=_tilecanbemovedon_seed(plane, x, y, tile, inside, neighbor))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    expect = tile_can_be_moved_on(dg_view, inside, plane, x, y, cand_plane, cand_x,
+                                  cand_y, check_adjacent)
+    assert ax == (expect & 0xFFFF), (
+        f"(p={plane},{x:#x},{y:#x},t={tile:#x},in={inside},"
+        f"cand=({cand_plane},{cand_x:#x},{cand_y:#x}),adj={check_adjacent}): "
+        f"asm={ax:#06x} rec={expect:#06x}")
+
+
 # ---- _SmoothAlarm (seg6:9380) — 4-neighbour box blur of the alarm grid -----
 # Snapshots the live grid [0x52D2..) into a scratch buffer [0x4AD2..) first,
 # then blurs read-old/write-new; both bands are covered by one region.

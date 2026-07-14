@@ -338,6 +338,90 @@ def is_not_obstacle(plane: int, tile: int, inside: bool) -> int:
     return 1 if (tile <= 0x18 or 0x30 <= tile <= 0x31) else 0
 
 
+def tile_can_be_moved_on(dgroup, inside: bool, plane: int, x: int, y: int,
+                          cand_plane: int, cand_x: int, cand_y: int,
+                          check_adjacent: bool) -> int:
+    """Whether an ant considering a move can step onto map cell (plane, x, y).
+
+    Recovered from `_TileCanBeMovedOn` (SIMANTW.SYM seg5:9342, 7 args: plane,
+    x, y, cand_plane, cand_x, cand_y, check_adjacent).  Bounds-checked exactly
+    like `is_valid_a`/`is_valid_b`; out of range is never movable.
+
+    On the yard planes (`plane <= 1`) this is just `is_not_obstacle`'s
+    plane<=1 rule with a wider "inside" threshold (0x90 instead of 0x5F) —
+    the 7 trailing args are unused on this path.
+
+    On the nest planes (`plane > 1`; plane==2 selects the black-colony map,
+    every other value selects red) the tile is first classified "clear":
+    `tile <= 0x18` or a pebble (`0x30..0x31`) is unconditionally clear; when
+    `check_adjacent` is set, the wider dirt band `0x1C..0x2E` also counts as
+    clear (marked "extended" below) — a plain not-clear tile returns 0
+    immediately.  A clear cell is then checked against a second candidate
+    site (`cand_plane`/`cand_x`/`cand_y`) that the caller passes alongside
+    its own position — the ASM's control flow reads as "assume clear unless
+    this cell coincides with that other site", ported byte-exact below (the
+    caller, `_GetMyBestDirs`, always passes its own current position, so in
+    practice this excludes the ant's own square from being counted as a move
+    target — but this routine has no way to know that; it only compares
+    values):
+
+    - `y > 1`, or `cand_plane != plane`: clear -> 1 (never reaches the
+      candidate-site comparison).
+    - `check_adjacent` is False:
+        - `y == 0`: clear only if `x == cand_x and cand_y == 0`.
+        - `y == 1`: clear if `x == cand_x or cand_y != 0`.
+    - `check_adjacent` is True and NOT extended (hard-clear tile):
+        - `y != 0`: clear -> 1.
+        - `y == 0`: clear only if `x == cand_x and cand_y == 0`.
+    - `check_adjacent` is True and extended (dirt-band tile):
+        - `x != cand_x`: not clear -> 0.
+        - `y != 0`: clear -> 1.
+        - `y == 0`: reads the neighbour cell at `(x, y+1)` on the SAME plane;
+          clear only if that neighbour is OUTSIDE the dirt band `0x20..0x2E`.
+    """
+    if plane <= 1:
+        if not (0 <= x <= 0x7F and 0 <= y <= 0x3F):
+            return 0
+        tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+        threshold = 0x90 if inside else 0x53
+        return 1 if tile <= threshold else 0
+
+    if not (0 <= x <= 0x3F and 0 <= y <= 0x3F):
+        return 0
+    base = MAP_PLANE_BASE[2] if plane == 2 else MAP_PLANE_BASE[3]
+    idx = (x << 6) + y
+    tile = dgroup.rb(base + idx)
+
+    if tile <= 0x18 or 0x30 <= tile <= 0x31:
+        clear, extended = 1, False
+    elif check_adjacent and (0x1C <= tile <= 0x1F or 0x20 <= tile <= 0x2E):
+        clear, extended = 1, True
+    else:
+        clear, extended = 0, False
+    if not clear:
+        return 0
+
+    if y > 1 or cand_plane != plane:
+        return 1
+
+    if not check_adjacent:
+        if y == 0:
+            return 1 if (x == cand_x and cand_y == 0) else 0
+        return 1 if (x == cand_x or cand_y != 0) else 0
+
+    if extended:
+        if x != cand_x:
+            return 0
+        if y != 0:
+            return 1
+        neighbor = dgroup.rb(base + idx + 1)
+        return 0 if 0x20 <= neighbor <= 0x2E else 1
+
+    if y != 0:
+        return 1
+    return 1 if (x == cand_x and cand_y == 0) else 0
+
+
 def is_clear_tile(plane: int, map_tile: int, life_value: int) -> int:
     """Whether a cell is clear for an ant to step onto.
 

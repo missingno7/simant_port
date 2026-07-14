@@ -1,5 +1,56 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.85) — /goal grind: _TileCanBeMovedOn (yellow-ant pathfinding unlock)
+- Built a scratch linear disassembler (`dos_re.lift.decode.decode_one` for
+  static instruction lengths + the CPU's own `execute_opcode` capture for
+  mnemonic text, same trick as `win16_re/dos_re/tools/lindis.py` but pointed
+  at a throwaway `runtime.create_machine()` instead of a DOS snapshot dir —
+  win16 NE segments have no snapshot-loader equivalent). This actually
+  EXECUTES each instruction on a scratch machine (only for text capture; the
+  static length keeps the linear walk aligned regardless of what a branch
+  does), so it's throwaway-machine-only, never used against the real test
+  harness's machine.
+- RECOVERED `tile_can_be_moved_on` (seg5:9342, 7 args: plane, x, y,
+  cand_plane, cand_x, cand_y, check_adjacent; FAR return; PURE READ, no
+  mutation) — the routine flagged in cont.84's survey as the unlock for
+  `_GetMyBestDirs`/`_GetMyRandDirs`/`_GetRedBestDirs` (the yellow-ant/red-
+  colony pathfinding tier one level below the `_Do*Ant*` behaviors).
+  - `plane <= 1`: bounds-check like `is_valid_a`, read the yard map, and
+    return 1 if tile <= (0x90 if the `[0xC4AC]`-selector world flag is set,
+    else 0x53) — same selector `is_not_barrier`/`is_not_obstacle` already
+    read, confirmed by reusing their exact seeding idiom in the test
+    (`world = mem.rw(DG, 0xC4AC); wb(world, 0x9B6E, flag)`).
+  - `plane > 1`: bounds-check like `is_valid_b`; base is `MAP_PLANE_BASE[2]`
+    only when `plane == 2` exactly, else `MAP_PLANE_BASE[3]` for ANY other
+    plane value (not a 4-way dispatch like `_GetMap`'s `_cell_offset` — this
+    routine's own inline `cmp cx,2` is a straight 2-way branch, confirmed by
+    tracing the raw bytes rather than assuming symmetry with already-
+    recovered helpers). `tile <= 0x18` or a pebble (`0x30..0x31`) is
+    unconditionally "clear" (exactly `is_not_obstacle`'s plane>1 rule — a
+    useful cross-check that the decode was right); when `check_adjacent` is
+    set, the wider dirt band `0x1C..0x2E` also counts as clear ("extended").
+    A clear cell then runs a second comparison against a caller-supplied
+    second site (`cand_plane/x/y`) with intricate but now byte-exact-decoded
+    branching (documented in the function's docstring) — reads as "assume
+    clear unless this coincides with that other site" (`_GetMyBestDirs`
+    always passes its own position there, so in practice this is a self-
+    exclusion filter, though this routine itself has no way to know that).
+  - Went through the disassembly BY HAND twice: the first read of the
+    `dx`-return convention was backwards (assumed `jz -> 9499` meant "return
+    0", when 9499 is actually the generic "return whatever dx currently
+    holds" exit and only `9497`'s `xor dx,dx; ...` explicitly zeroes it) —
+    caught before writing any Python by re-tracing every exit target's
+    predecessor instruction rather than trusting the first pass.
+  - Once ported, all 31 hand-picked state-diff-adjacent cases (via the pure-
+    read `_run_and_get_ax` oracle, not a mutation diff — this routine writes
+    nothing) passed on the FIRST run, including 6 cases dedicated to the
+    "extended"/dirt-band/neighbour-tile sub-branch and full coverage of the
+    `check_adjacent` x `y==0/1/>1` x `cand_plane==/!=plane` combinatorics.
+- Suite: simant 969 (+31). Continuing per /goal — `_TileCanBeMovedOn` is
+  fully decoded now; next candidate is `_GetMyBestDirs` (seg6:8828), whose
+  only remaining unrecovered callee was this routine (its other 3 callees —
+  `_GetDis`, `_GetLife`, `_IsClearTile` — are already in `gameplay.py`).
+
 ## 2026-07-14 (cont.84) — /goal grind: _SmoothAlarm + _FloodNestB; README recovery-map refresh
 - Updated `README.md`'s "Recovery map" section (Mermaid graph + coverage table)
   to reflect this /goal session's actual progress: seg6 (SIMANT1) jumped
