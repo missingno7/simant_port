@@ -1,5 +1,21 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.64) — autonomous grind: 3 more compound map-query routines
+- Continued the compound map-query grind (oracle-guided residue).  Recovered:
+    _IsClearTile   (5:5B2C) map passable + no blocking ant (life not in {0,FE,FF});
+                   composes map_cell_offset + life_cell_offset.  Green first try.
+    _IsValidLocation (5:56DA) plane-aware validity (is_valid_a/is_valid_b); dx=ax.
+    _IsItDigable   (5:95C6) yard dig = dirt (delegates _IsItDirt) or grass 0x1C..0x1F.
+                   Oracle corrected the two out-of-range residues (coord-invalid
+                   returns early bx=0/dx=x; plane>3 reaches the grass sbb, dx=0).
+- With _IsNotObstacle (cont.63) this completes ALL of _GetBestDir's leaf deps
+  (_GetMap/_GetDis/_GetLife/_IsThisPebble/_IsNotObstacle/_IsClearTile) — the
+  pathfinding helper is now recoverable.  Islands 62 -> 67.  Suite: simant 638.
+- The oracle makes compound residue tractable: derive best-effort, one guided fix
+  per miss.  Remaining are harder (sub-call-residue chains / direction tables /
+  ds-swapping behaviors): _IsClear3x3 (9x _IsClearTile via dir tables), _IsItAHole
+  (delegates _IsItHole), _TileCanBeMovedOn (7 args), _GetExitDirB (RNG + ds swap).
+
 ## 2026-07-14 (cont.63) — recovered _IsNotObstacle (first compound map-query)
 - RECOVERED `_IsNotObstacle` (seg5:94C6), the first COMPOUND map-query predicate
   and a `_GetBestDir` (pathfinding) dependency.  It composes the recovered map
