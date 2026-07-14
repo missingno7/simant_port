@@ -2841,6 +2841,101 @@ def place_red_queen(dgroup, simant_data_group, pack) -> None:
     pack.ww(0x79DC, (pack.rw(0x79DC) + 1) & 0xFFFF)
 
 
+def place_black_queen(dgroup, simant_data_group, pack) -> None:
+    """Carve a tunnel from deep in the black nest up toward the surface
+    and found a black queen at its far end — the black-colony sibling of
+    `place_red_queen`, same overall shape but a GENUINELY DIFFERENT
+    wander mechanism (confirmed against an instrumented real-ASM trace,
+    not just a hand-derivation): each step first rolls `_SRand2()`, and
+    only on a `0` (50/50) does it reroll the x-drift via `_SRand1(3)-1`
+    — on the OTHER 50% of steps the drift is NOT reset to 0, it STAYS
+    at whatever value it last rolled (a genuinely STICKY/persistent
+    drift across iterations, initialized to `0` only once before the
+    loop starts) — `_PlaceRedQueen` instead rerolls a fresh drift every
+    single step. A hand-derivation from the disassembly alone assumed
+    the drift reset to 0 each non-reroll step; an instrumented trace of
+    the real ASM's register values caught the mistake directly (`di`
+    held a nonzero, unchanging drift across consecutive steps that
+    never re-entered the reroll branch).
+
+    Recovered from `_PlaceBlackQueen` (SIMANTW.SYM seg7:65CE, NO args;
+    FAR return).  Composes `dig_tile_b` (up to 15x) and
+    `add_ant_to_b_list` (2x).
+
+    - Rolls `_SRand4() + 7` (7..10) as a row count, then digs a
+      wandering vertical tunnel from `(x=0x20, y=1)` up to `y=count-1`:
+      each step digs the current cell, rolls `_SRand2()`, and only on a
+      `0` further rolls `_SRand1(3)-1` to REPLACE the sticky drift
+      (otherwise the drift carries over unchanged from the previous
+      step); the drift is applied only if it keeps `x` within
+      `8..0x38`.
+    - Digs 2 more cells stepping diagonally, then ONE more at the final
+      diagonal position — that final `(x, y)` is recorded into BOTH
+      `simant_data_group[0x8362]`/`[0x8364]` (the black-colony analogue
+      of `_PlaceRedQueen`'s `[0x8366]`/`[0x8368]`) AND `pack[0x9FEC]`/
+      `[0x9FEE]` (a PACK-resident pair `_PlaceRedQueen` does NOT write
+      at all — a genuine extra step, not just a renamed field).
+    - Digs ONE more cell at `x+2` (same y, a hardcoded offset), then
+      from that bumped `x`, digs 2 more cells offset by 1x and 2x the
+      FIXED compass-direction-6 delta.
+    - Appends two ant-list records anchored on the bumped `x+2`, with
+      LITERAL castes `0x62`/`0x6A` (the SAME low bits as
+      `_PlaceRedQueen`'s `0xE2`/`0xEA`, just the colony bit cleared).
+    - Finally increments the SAME `pack[0x78E8]` black-queen counter
+      `make_blk_queen` uses.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll4 = srand_pow2(seed, 3)
+    count = roll4 + 7
+
+    x = 0x20
+    drift = 0
+    for i in range(1, count):
+        dig_tile_b(dgroup, simant_data_group, pack, x, i)
+        seed, roll2 = srand_pow2(seed, 1)
+        if roll2 == 0:
+            seed, roll3 = srand1(seed, 3)
+            drift = roll3 - 1
+        nx = x + drift
+        if 8 <= nx <= 0x38:
+            x = nx
+    y = count
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    for _ in range(2):
+        dig_tile_b(dgroup, simant_data_group, pack, x, y)
+        x += 1
+        y += 1
+    dig_tile_b(dgroup, simant_data_group, pack, x, y)
+
+    simant_data_group.ww(0x8362, x & 0xFFFF)
+    simant_data_group.ww(0x8364, y & 0xFFFF)
+    pack.ww(0x9FEC, x & 0xFFFF)
+    pack.ww(0x9FEE, y & 0xFFFF)
+
+    x2 = x + 2
+    dig_tile_b(dgroup, simant_data_group, pack, x2, y)
+
+    dy6 = sx8(simant_data_group.rb(0x0E))
+    dx6 = sx8(simant_data_group.rb(0x06))
+
+    dig_tile_b(dgroup, simant_data_group, pack, x2 + dx6, y + dy6)
+    dig_tile_b(dgroup, simant_data_group, pack, x2 + 2 * dx6, y + 2 * dy6)
+
+    add_ant_to_b_list(pack, simant_data_group, dgroup, y=x2, x=y,
+                      caste=0x62, field_c=9, field_e=0)
+    add_ant_to_b_list(pack, simant_data_group, dgroup, y=x2 + dx6, x=y + dy6,
+                      caste=0x6A, field_c=9, field_e=0)
+
+    pack.ww(0x78E8, (pack.rw(0x78E8) + 1) & 0xFFFF)
+
+
 def _add_ants(dgroup, simant_data_group, pack, count: int, x_range, caste_bonus: int) -> None:
     """Shared body of `add_black_ants`/`add_red_ants`: scan the yard for
     empty walkable cells in a fixed `y=0x10..0x2F` middle band, and for

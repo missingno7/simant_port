@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.155) — /goal grind: _PlaceBlackQueen — scenario-init black queen founding
+- User asked mid-turn whether "readme coverage" needed updating; clarified
+  there are two separate metrics — the "Coverage by segment" table
+  (recovered+state-diff-verified, kept current after every commit this
+  session, already pushed) vs. the "native-port progress" table
+  (tied to `hooks._ISLANDS`, a live-runtime-hook registry, currently 69
+  entries and untouched this session since none of this session's work
+  involved wiring functions into the live hook system). User confirmed
+  they meant the first (already current) — nothing further needed there.
+- RECOVERED `place_black_queen` (`_PlaceBlackQueen`, seg7:65CE, NO args,
+  FAR return) — the black-colony sibling of `place_red_queen`, same
+  overall dig-a-tunnel-then-found-a-queen shape.
+- Caught a genuine hand-derivation bug via instrumented tracing, not
+  just re-reading the disassembly harder: assumed the wander loop's
+  x-drift reset to `0` on any step where `_SRand2()` didn't roll a
+  reroll, matching a naive first read of the ASM. An instrumented trace
+  of the real ASM's register values showed `di` (the drift) holding a
+  STICKY, unchanging nonzero value across several consecutive steps
+  that never re-entered the reroll branch — the drift is genuinely
+  persistent across iterations (initialized to `0` once before the
+  loop, only ever REPLACED by a reroll, never reset). This is a
+  different flavor of bug than `_PlaceRedQueen`'s earlier `+2`-offset
+  miss, but the SAME fix discipline caught it: don't trust a hand
+  trace's confidence, verify against real register values before
+  writing the test.
+- 3 cases (matching `_PlaceRedQueen`'s own test shape: default seed,
+  a seed producing different wander/count rolls, and near the B-list
+  500-slot cap) — green after the fix.
+- Suite: simant 1603 (+3), full suite green.
+
 ## 2026-07-14 (cont.154) — /goal grind: _DoNestFightB/_DoNestFightR — nest combat tick
 - RECOVERED `do_nest_fight_b`/`do_nest_fight_r` (`_DoNestFightB`/
   `_DoNestFightR`, seg6:3A54/6072, args x=[bp+6], y=[bp+8], FAR

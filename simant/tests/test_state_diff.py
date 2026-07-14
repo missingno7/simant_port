@@ -620,6 +620,45 @@ def test_placeredqueen_state_diff_matches_asm(seed_val, count_r):
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _PlaceBlackQueen (seg7:65CE) — dig a tunnel + found a black queen ----
+# NO args.  Same shape as _PlaceRedQueen but a genuinely different wander
+# mechanism (SRand2-gated drift) and 2 extra PACK writes.
+_PLACEBLACKQUEEN_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x48E8, 0xCBF4),
+    (_SDG, 0, 0x8400),   # dig tables + B-list fields + the [0x8362]/[0x8364] scratch
+    (_PACK, 0x7200, 0xA000),
+]
+
+
+def _placeblackqueen_seed(seed_val, count_b):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        for off in (0x72C8, 0x8104, 0x8106, 0x811A, 0x811C,
+                    0x9DDC, 0x9DDE, 0x9DE2, 0x9DE4):
+            m.mem.ww(pack, off, 0)
+        m.mem.ww(pack, 0x99D4, count_b)
+        m.mem.ww(pack, 0x78E8, 3)
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,count_b", [
+    (0x1234, 0),
+    (0x0001, 5),          # different SRand4/SRand2/SRand1 rolls -> different wander/count
+    (0xBEEF, 0x1F3),       # near the B-list 500-slot cap
+])
+def test_placeblackqueen_state_diff_matches_asm(seed_val, count_b):
+    from simant.recovered.gameplay import place_black_queen
+    results = _run_and_diff_segs(
+        7, 0x65CE, (),
+        lambda d, s, p: place_black_queen(d, s, p),
+        _PLACEBLACKQUEEN_REGIONS, seed_fn=_placeblackqueen_seed(seed_val, count_b))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _PLACEBLACKQUEEN_REGIONS):
+        assert asm_after == rec_after, (
+            f"seed={seed_val:#x} count_b={count_b} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _AddBlackAnts/_AddRedAnts (seg7:6C5A/6CFE) — scenario-init yard ants --
 _ADDANTS_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map + yard life plane + SRand seed
