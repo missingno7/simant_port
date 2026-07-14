@@ -6261,3 +6261,58 @@ def test_maintainswarm_state_diff_matches_asm(b_val, r_val, b_floor, r_floor,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _MAINTAINSWARM_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _FeedAnts (seg6:0474) — hunger-decay food-supply tick ---------------
+_FEEDANTS_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC86, 0xAC8A),
+    (_SDG, 0x8A00, 0x8A70),
+    (_PACK, 0x80B0, 0x9E90),
+]
+
+
+def _feedants_seed(no_starve, ac86, ac88, pack_80b4, food_count, threshold):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(sdg, 0x8A60, no_starve)
+        m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
+        m.mem.ww(dg, 0xAC88, ac88 & 0xFFFF)
+        m.mem.ww(pack, 0x80B4, pack_80b4)
+        m.mem.ww(pack, 0x9E84, food_count & 0xFFFF)
+        m.mem.ww(sdg, 0x8A62, threshold & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize("no_starve,ac86,ac88,pack_80b4,food_count,"
+                         "threshold,label", [
+    (0, 5, 5, 0, 100, 5, "both-decrement-no-food-drop"),
+    (1, 5, 5, 0, 100, 5, "no-starve-skips-black-decrement"),
+    (0, 0, 0, 0, 100, 5, "already-zero-clamps"),
+    (0, 5, 5, 3, 0, 100, "pack80b4-3-skips-food-check"),
+])
+def test_feedants_state_diff_matches_asm(no_starve, ac86, ac88, pack_80b4,
+                                         food_count, threshold, label):
+    from simant.recovered.gameplay import feed_ants
+    results = _run_and_diff_segs(
+        6, 0x474, (), lambda d, s, p: feed_ants(d, s, p), _FEEDANTS_REGIONS,
+        near=True,
+        seed_fn=_feedants_seed(no_starve, ac86, ac88, pack_80b4, food_count,
+                               threshold))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _FEEDANTS_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_feedants_addfood_gate_raises():
+    from simant.recovered.gameplay import feed_ants
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    dgv, sdgv, packv = ByteBackend(dg, 0), ByteBackend(sdg, 0), ByteBackend(pack, 0)
+    sdgv.ww(0x8A60, 1)
+    packv.ww(0x80B4, 0)
+    packv.ww(0x9E84, 0)
+    sdgv.ww(0x8A62, 100)
+    with pytest.raises(NotImplementedError):
+        feed_ants(dgv, sdgv, packv)

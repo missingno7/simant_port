@@ -7575,3 +7575,45 @@ def maintain_swarm(dgroup, pack) -> None:
 
     r_val = clamp(decay(_sx16(pack.rw(0x9C26))), _sx16(dgroup.rw(0xAC8E)))
     pack.ww(0x9C26, r_val & 0xFFFF)
+
+
+def feed_ants(dgroup, simant_data_group, pack) -> None:
+    """Age both colonies' hunger-decay food supplies by one tick (the
+    SAME `dgroup[0xAC86]`/`[0xAC88]` counters `dec_eat_b`/`dec_eat_r`
+    drain, floored at `0`; the black side's decrement is skipped
+    entirely while `simant_data_group[0x8A60]` — the SAME "no-starve"
+    cheat flag `dec_eat_b` gates on — is set), then occasionally drops
+    a fresh food pile once the map's live food count falls behind a
+    rolling threshold.
+
+    Recovered from `_FeedAnts` (SIMANTW.SYM seg6:0474, NO args; NEAR
+    return, 100 bytes). `pack[0x80B4] == 3` skips the food-drop check
+    entirely. Otherwise: while `pack[0x9E84]` (the SAME per-drop
+    counter `food_fall`/`drop_food_a` bump) is still below
+    `simant_data_group[0x8A62]` (a rolling threshold), calls the
+    UNRECOVERED `_AddFood(1, 0x96)` — per this project's fail-loud
+    rule, raises `NotImplementedError` rather than a silently-wrong
+    guess, since `_AddFood`'s own internal `_SRand*` consumption (if
+    any) would make the REAL ASM's subsequent `_SRand1(50)`-based
+    threshold reseed unpredictable without first recovering it.
+    """
+    if simant_data_group.rw(0x8A60) == 0:
+        val = (dgroup.rw(0xAC86) - 1) & 0xFFFF
+        dgroup.ww(0xAC86, val)
+        if _sx16(val) < 0:
+            dgroup.ww(0xAC86, 0)
+
+    val = (dgroup.rw(0xAC88) - 1) & 0xFFFF
+    dgroup.ww(0xAC88, val)
+    if _sx16(val) < 0:
+        dgroup.ww(0xAC88, 0)
+
+    if pack.rw(0x80B4) == 3:
+        return
+
+    threshold = simant_data_group.rw(0x8A62)
+    if _sx16(pack.rw(0x9E84)) >= _sx16(threshold):
+        return
+
+    raise NotImplementedError(
+        "feed_ants: _AddFood branch reached (not recovered)")

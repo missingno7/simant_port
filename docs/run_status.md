@@ -1,5 +1,38 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.172) — /goal grind: _FeedAnts — hunger-decay food tick
+- Deferred `_GetStrategy`/`_GstrB`/`_GstrR` after a first look:
+  `_GetStrategy` (seg7:0, 460 bytes) is genuinely the master orchestrator
+  the survey's guess had backwards — it CALLS `_GstrR` internally (not
+  the other way around) and sets `pack[0x9B8A]`/`[0x7690]`, the EXACT
+  two fields `get_new_mode` reads to pick a colony's active mode table.
+  It also calls two more not-yet-examined near targets (seg7:026E,
+  seg7:0326) past the point already mapped. A genuinely bigger
+  undertaking than the byte count suggested — good next-session
+  candidate, not attempted further this entry.
+- RECOVERED `feed_ants` (`_FeedAnts`, SIMANTW.SYM seg6:0474, NO args;
+  NEAR return, 100 bytes) instead — this one turned out tractable
+  despite depending on the UNRECOVERED `_AddFood` (514 bytes), because
+  `_AddFood`'s call site discards its return value entirely. Ages both
+  colonies' hunger-decay food supplies by one tick (the SAME
+  `dgroup[0xAC86]`/`[0xAC88]` counters `dec_eat_b`/`dec_eat_r` drain,
+  floored at `0`; black's decrement is skipped while
+  `simant_data_group[0x8A60]` — the SAME "no-starve" cheat flag
+  `dec_eat_b` gates on — is set), then, unless `pack[0x80B4] == 3`,
+  occasionally drops a fresh food pile once `pack[0x9E84]` (the SAME
+  per-drop counter `food_fall`/`drop_food_a` bump) falls behind a
+  rolling threshold at `simant_data_group[0x8A62]`.
+  - The `_AddFood` branch raises `NotImplementedError` rather than a
+    silently-wrong guess — NOT just because `_AddFood` itself is
+    unrecovered, but because its unknown internal `_SRand*`
+    consumption would make the REAL ASM's subsequent
+    `_SRand1(50)`-based threshold reseed unpredictable even if the
+    call's OWN return value didn't matter.
+- 5 cases (both-decrement, no-starve-skip, zero-floor-clamp,
+  pack80B4-skip, plus the `_AddFood`-gate raise check) — ALL GREEN ON
+  THE FIRST REAL-ASM RUN.
+- Suite: simant 1735 (+5), full suite green.
+
 ## 2026-07-15 (cont.171) — /goal grind: _MaintainSwarm — swarm-size decay
 - RECOVERED `maintain_swarm` (`_MaintainSwarm`, SIMANTW.SYM seg7:3580,
   NO args; FAR return, 120 bytes) — self-contained, no dependencies.
