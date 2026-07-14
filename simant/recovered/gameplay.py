@@ -1348,6 +1348,96 @@ def find_life_index(pack, simant_data_group, list_type: int, field0: int,
     return 0xFFFF
 
 
+def find_life_at(pack, simant_data_group, dgroup, list_type: int, x: int,
+                 y: int) -> tuple:
+    """Locate whatever ant occupies `(x, y)` on `list_type`'s life-plane,
+    trusting a direct tile read when possible and falling back to a
+    list search otherwise. Returns `(slot, caste)`, or `(0xFFFF,
+    0xFFFF)` if nothing is found either way.
+
+    Recovered from `_FindLifeAt` (SIMANTW.SYM seg5:8A96, args
+    OUT_slot_ptr=[bp+6] (far pointer — ported as the first element of
+    the returned tuple instead), list_type=[bp+10], x=[bp+12],
+    y=[bp+14]; FAR return).  Composes the already-recovered
+    `is_yellow_ant`, `find_ant_index`, `find_life_index`, and
+    `get_ant_index`.
+
+    If `(x, y)` is valid for `list_type`'s bounds AND `list_type` is in
+    `0..3`, reads the life-plane tile there directly. A tile of `0`
+    (empty) or one that IS the player's yellow-ant sentinel is NOT
+    trusted — same "trust the encoded value UNLESS it's the yellow-ant
+    marker" idiom the `_LostHead*` family already established.
+
+    A trusted direct tile: looks up its exact slot via
+    `find_ant_index(list_type, x, y, tile)` (returning `0xFFFF` if not
+    found) and returns `(slot, tile)` regardless — no further fallback
+    is attempted once a real tile was read.
+
+    Otherwise (invalid position, empty cell, or the yellow-ant marker):
+    falls back to `find_life_index(list_type, x, y, lo=1, hi=0x7F,
+    mask=0x7F)` (any nonzero low-7-bits caste); on a match, fetches its
+    full record via `get_ant_index` and returns `(slot, caste)`; on no
+    match, returns `(0xFFFF, 0xFFFF)`.
+    """
+    if list_type <= 1:
+        valid = 0 <= x <= 0x7F and 0 <= y <= 0x3F
+    else:
+        valid = 0 <= x <= 0x3F and 0 <= y <= 0x3F
+
+    tile = None
+    if valid and 0 <= list_type <= 3:
+        raw = dgroup.rb(LIFE_PLANE_BASE[list_type] + (x << 6) + y)
+        if raw != 0 and is_yellow_ant(raw) == 0:
+            tile = raw
+
+    if tile is not None:
+        slot = find_ant_index(pack, simant_data_group, list_type, x, y, tile)
+        return (slot, tile)
+
+    slot = find_life_index(pack, simant_data_group, list_type, x, y, 1, 0x7F, 0x7F)
+    if slot == 0xFFFF:
+        return (0xFFFF, 0xFFFF)
+    result = get_ant_index(pack, simant_data_group, list_type, slot)
+    return (slot, result[2])
+
+
+def find_egg_at(pack, simant_data_group, dgroup, list_type: int, x: int,
+                y: int) -> tuple:
+    """The egg/larva-specific twin of `find_life_at` — same shape, but
+    ALSO requires the tile's `(caste & 0x7F)` to be in `1..7` (the egg/
+    larva growth-stage range `sim_egg_b`/`r` operate on) before trusting
+    a direct read, and narrows the list-fallback range to that SAME
+    `1..7` band instead of `find_life_at`'s general `1..0x7F`.
+
+    Recovered from `_FindEggAt` (SIMANTW.SYM seg5:88A2, args
+    OUT_slot_ptr=[bp+6], list_type=[bp+10], x=[bp+12], y=[bp+14]; FAR
+    return).  Confirmed a genuine, narrowly-scoped twin by independent
+    disassembly — everything else (bounds check, yellow-ant distrust,
+    `find_ant_index`/`find_life_index`/`get_ant_index` composition)
+    matches `find_life_at` field-for-field.
+    """
+    tile = None
+    if list_type <= 1:
+        valid = 0 <= x <= 0x7F and 0 <= y <= 0x3F
+    else:
+        valid = 0 <= x <= 0x3F and 0 <= y <= 0x3F
+
+    if valid and 0 <= list_type <= 3:
+        raw = dgroup.rb(LIFE_PLANE_BASE[list_type] + (x << 6) + y)
+        if raw != 0 and 1 <= (raw & 0x7F) <= 7 and is_yellow_ant(raw) == 0:
+            tile = raw
+
+    if tile is not None:
+        slot = find_ant_index(pack, simant_data_group, list_type, x, y, tile)
+        return (slot, tile)
+
+    slot = find_life_index(pack, simant_data_group, list_type, x, y, 1, 7, 0x7F)
+    if slot == 0xFFFF:
+        return (0xFFFF, 0xFFFF)
+    result = get_ant_index(pack, simant_data_group, list_type, slot)
+    return (slot, result[2])
+
+
 def s_found_ant(dgroup, simant_data_group, pack) -> int:
     """Locate an ant near the current attack-marker target
     (`dgroup[0xAC7C]`/`[0xAC7E]`, the SAME fixed-point `>>4` target

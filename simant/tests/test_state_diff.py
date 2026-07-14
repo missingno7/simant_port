@@ -4201,6 +4201,70 @@ def test_getantindex_matches_asm(list_type, slot, count, fields):
             f"list_type={list_type} slot={slot}: asm={asm_out} rec={list(expect)}")
 
 
+# ---- _FindLifeAt/_FindEggAt (seg5:8A96/88A2) — locate an ant at (x,y) ------
+# Pure predicates with ONE far-pointer OUT param (the found slot).
+_FINDLIFEAT_OUT_OFFSET = 0xF010
+_LIFE_BASE_BY_TYPE = {0: 0x68E8, 1: 0x68E8, 2: 0x88E8, 3: 0x98E8}
+_ALIST_FIELDS_BY_TYPE = {
+    0: (0x80F0, 0x23A4, 0x278E, 0x2F62),
+    1: (0x80F0, 0x23A4, 0x278E, 0x2F62),
+    2: (0x99D4, 0x3736, 0x392C, 0x3D18),
+}
+_RLIST_FIELDS = (0x72CC, 0x4104, 0x42FA, 0x46E6)
+
+
+def _findat_seed(list_type, x, y, tile, alist_slots):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        life_base = _LIFE_BASE_BY_TYPE.get(list_type, 0x68E8)
+        if 0 <= list_type <= 3:
+            m.mem.wb(dg, life_base + (x << 6) + y, tile)
+        count_off, f0, f1, c = _ALIST_FIELDS_BY_TYPE.get(list_type, _RLIST_FIELDS)
+        m.mem.ww(pack, count_off, len(alist_slots))
+        for slot, (sf0, sf1, sc) in enumerate(alist_slots):
+            m.mem.wb(sdg, f0 + slot, sf0)
+            m.mem.wb(sdg, f1 + slot, sf1)
+            m.mem.wb(sdg, c + slot, sc)
+        m.mem.ww(dg, _FINDLIFEAT_OUT_OFFSET, 0xDEAD)
+    return seed
+
+
+@pytest.mark.parametrize("which,off,fn_name", [
+    ("_FindLifeAt", 0x8A96, "find_life_at"),
+    ("_FindEggAt", 0x88A2, "find_egg_at"),
+])
+@pytest.mark.parametrize("list_type,x,y,tile,alist_slots,label", [
+    (0, 10, 20, 0x03, [(10, 20, 0x03)], "direct-tile-found-in-list"),
+    (0, 10, 20, 0x03, [], "direct-tile-not-in-list"),
+    (0, 10, 20, 0xFE, [(10, 20, 0x81)], "yellow-sentinel-falls-back"),
+    (0, 10, 20, 0x00, [(10, 20, 0x81)], "empty-cell-falls-back"),
+    (0, 10, 20, 0x00, [], "empty-cell-and-empty-list-notfound"),
+    (2, 10, 20, 0x03, [(10, 20, 0x03)], "blist-direct-found"),
+    (5, 10, 20, 0x03, [(10, 20, 0x03)], "rlist-direct-found"),
+])
+def test_findat_matches_asm(which, off, fn_name, list_type, x, y, tile,
+                            alist_slots, label):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    args = (_FINDLIFEAT_OUT_OFFSET, _DG_SELECTOR, list_type, x, y)
+    ax, m = _run_and_get_ax(5, off, args,
+                            seed_fn=_findat_seed(list_type, x, y, tile, alist_slots))
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    asm_slot = m.mem.rw(dg, _FINDLIFEAT_OUT_OFFSET)
+
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    rec_slot, rec_caste = fn(pack_view, sdg_view, dgroup_view, list_type, x, y)
+
+    assert ax == (rec_caste & 0xFFFF), (
+        f"{which} {label}: caste asm={ax:#06x} rec={rec_caste & 0xFFFF:#06x}")
+    assert asm_slot == (rec_slot & 0xFFFF), (
+        f"{which} {label}: slot asm={asm_slot:#06x} rec={rec_slot & 0xFFFF:#06x}")
+
+
 # ---- _FindLifeIndex (seg5:5922) — find_ant_index variant, masked caste ----
 # range instead of an exact match.
 @pytest.mark.parametrize("list_type,count_off,f0_off,f1_off,c_off", [

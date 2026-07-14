@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.158) — /goal grind: _FindLifeAt/_FindEggAt — locate an ant at (x,y)
+- Deferred `_GetMyDir` after a first pass: it's turning out comparably
+  large/branchy to `_GetMyBestDir` (composing `check_my_best_dirs`,
+  `get_dir`, `get_my_best_dirs`, `get_my_rand_dirs` across several
+  nested dispatch levels) — picked the smaller `_FindLifeAt`/
+  `_FindEggAt` pair instead to keep the "smallest tractable target
+  first" discipline; `_GetMyDir` remains a good next-session candidate.
+- RECOVERED `find_life_at`/`find_egg_at` (`_FindLifeAt`/`_FindEggAt`,
+  seg5:8A96/88A2, args OUT_slot_ptr=[bp+6] (far pointer — ported as the
+  first element of a returned tuple), list_type=[bp+10], x=[bp+12],
+  y=[bp+14], FAR return) — composes `is_yellow_ant`, `find_ant_index`,
+  `find_life_index`, `get_ant_index`, all already recovered, no new
+  primitives needed for either. Locates whatever ant occupies `(x, y)`:
+  trusts a direct life-plane tile read (unless it's empty or the
+  player's yellow-ant marker — same "distrust the yellow sentinel"
+  idiom as `_LostHead*`), falling back to a list search + full-record
+  fetch otherwise. `_FindEggAt` is a narrowly-scoped twin, confirmed by
+  independent disassembly: it ALSO requires the tile's masked caste to
+  be in the egg/larva growth-stage range `1..7` (`sim_egg_b`/`r`'s own
+  range) before trusting a direct read, and narrows the list-fallback
+  search to that same range instead of `find_life_at`'s general
+  `1..0x7F`.
+- 14 cases (7 scenarios × both routines: direct-tile success both
+  found-and-not-found in the list, the yellow-sentinel and empty-cell
+  fallback triggers, empty-cell-plus-empty-list total failure, and
+  direct hits on both the B-list and R-list) — ALL GREEN ON THE FIRST
+  RUN.
+- Suite: simant 1626 (+14), full suite green.
+
 ## 2026-07-14 (cont.157) — /goal grind: _GetMyBestDir — stuck-sentinel gate + probe walk
 - RECOVERED `get_my_best_dir` (`_GetMyBestDir`, seg6:8D3A, args
   plane=[bp+6], cur_x=[bp+8], cur_y=[bp+10], tgt_x=[bp+12],
