@@ -5565,3 +5565,107 @@ def _first_diff(a, b, base=0):
     return (f"{len(d)} differing bytes; first at "
             + ", ".join(f"{i + base:#06x}(asm={a[i]:#04x} rec={b[i]:#04x})"
                         for i in d[:6]))
+
+
+# ---- _DoNestingB/_DoNestingR (seg6:44A8/690A) — nest dig/tend tick --------
+# The largest orchestrators recovered this session. Composes get_enter_dir_b/r,
+# get_exit_dir_b, place_egg_b/r, find_in_b/r_list, get_new_mode_b/r, and
+# try_move_dir_b/r — all already recovered. Reuses _DONESTFIGHT_REGIONS'
+# windows (wide enough for all of these) plus the mode-table seeding
+# `_donestfight_seed` established and `_place_egg`'s own PACK dependencies
+# (for the branch that spawns a fresh egg).
+def _donesting_seed(x, y, slot, field_e_off, tile, tile_base, map_tile,
+                    map_base, ac_food, ac_rate, ac_rate2, seed_val,
+                    mode_base_hi=2, mode_base_lo=3, gate_flag=0,
+                    tbl2=0x25, tbl6=0x30, tbl_direct=0x40, tbl_word=0x1122):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        life_idx = (x << 6) + y
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(dg, tile_base + life_idx, tile)
+        m.mem.wb(dg, map_base + life_idx, map_tile)
+        m.mem.ww(dg, ac_food, 0)
+        m.mem.ww(dg, ac_rate, 0)
+        m.mem.ww(dg, ac_rate2, 0)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, field_e_off + slot, 0)   # overwritten by the caller below
+        m.mem.ww(pack, 0x7690, mode_base_hi)
+        m.mem.ww(pack, 0x9B8A, mode_base_lo)
+        m.mem.ww(pack, 0x9FCE, gate_flag)
+        for i in range(8):
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_hi << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_lo << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_hi << 3) + i), tbl6)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_lo << 3) + i), tbl6)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, tbl_direct)
+        m.mem.ww(sdg, 0x8A58, tbl_word)
+        # _PlaceEggB/R's own dependencies (egg-spawn branch only, harmless
+        # elsewhere): dig_tile_b/r + add_ant_to_b/r_list inputs.
+        m.mem.ww(pack, 0x72C8, 3)
+        m.mem.ww(pack, 0x7A56, 2)
+        m.mem.ww(pack, 0x8104, 100)
+        m.mem.ww(pack, 0x8106, 0)
+        m.mem.ww(pack, 0x811A, 200)
+        m.mem.ww(pack, 0x811C, 0)
+        m.mem.ww(pack, 0x9DDC, 50)
+        m.mem.ww(pack, 0x9DDE, 0)
+        m.mem.ww(pack, 0x9DE2, 75)
+        m.mem.ww(pack, 0x9DE4, 0)
+        m.mem.ww(pack, 0x99D4, 5)   # B-list count
+        m.mem.ww(pack, 0x72CC, 5)   # R-list count
+        m.mem.wb(sdg, field_e_off + slot, 0)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,slot,sub,mode,field_e,tile,map_tile,ac_val,"
+                         "seed_val,label", [
+    (20, 25, 0, 0, 3, 0x00, 0x00, 0x00, 99, 0x1234, "sub0-erosion-skipped"),
+    (20, 25, 0, 0, 3, 0x00, 0x00, 0x10, 0, 0x1234, "sub0-erosion-refill"),
+    (20, 25, 1, 1, 3, 0x00, 0x00, 0x00, 0, 0x1234, "sub1-subfield0-enterdir"),
+    (20, 25, 1, 1, 3, 0x08, 0x00, 0x00, 0, 0x1234, "sub1-subfield1-tile0-eggspawn"),
+    (20, 25, 1, 1, 3, 0x08, 0x03, 0x00, 0, 0x1234, "sub1-subfield1-tile3-noSpawn"),
+    (20, 25, 2, 2, 3, 0x08, 0x00, 0x00, 0, 0x1234, "sub2-subfield1"),
+    (20, 25, 2, 2, 3, 0x00, 0x03, 0x00, 0, 0x1234, "sub2-subfield0-tile3-notfound"),
+    (20, 25, 2, 2, 3, 0x00, 0x00, 0x00, 0, 0x1234, "sub2-subfield0-tile0-erosionOrRefresh"),
+    (20, 25, 0, 5, 3, 0x00, 0x00, 0x00, 0, 0xBEEF, "sub-other-default"),
+])
+def test_donestingb_state_diff_matches_asm(x, y, slot, sub, mode, field_e,
+                                           tile, map_tile, ac_val, seed_val,
+                                           label):
+    import simant.recovered.gameplay as G
+    life_base, map_base = 0x88E8, 0x48E8
+    results = _run_and_diff_segs(
+        6, 0x44A8, (x, y, mode, sub),
+        lambda d, s, p: G.do_nesting_b(d, s, p, x, y, mode, sub),
+        _DONESTFIGHT_REGIONS,
+        seed_fn=_donesting_seed(x, y, slot, 0x3F0E, tile, life_base, map_tile,
+                                map_base, 0xAC86, 0xAC82, 0xAC98, seed_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DONESTFIGHT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("x,y,slot,sub,mode,field_e,tile,map_tile,ac_val,"
+                         "seed_val,label", [
+    (20, 25, 0, 1, 3, 0x00, 0x00, 0x00, 0, 0x1234, "sub1-digroll"),
+    (20, 25, 0, 1, 3, 0x00, 0x00, 0x00, 0, 0x0001, "sub1-altseed"),
+    (20, 25, 1, 2, 3, 0x00, 0x03, 0x00, 0, 0x1234, "sub2-tile-search"),
+    (20, 25, 1, 2, 3, 0x00, 0x00, 0x00, 0, 0x1234, "sub2-erosion-or-refresh"),
+    (20, 25, 0, 5, 3, 0x00, 0x00, 0x00, 0, 0xBEEF, "sub-other-default"),
+])
+def test_donestingr_state_diff_matches_asm(x, y, slot, sub, mode, field_e,
+                                           tile, map_tile, ac_val, seed_val,
+                                           label):
+    import simant.recovered.gameplay as G
+    life_base, map_base = 0x98E8, 0x58E8
+    results = _run_and_diff_segs(
+        6, 0x690A, (x, y, mode, sub),
+        lambda d, s, p: G.do_nesting_r(d, s, p, x, y, mode, sub),
+        _DONESTFIGHT_REGIONS,
+        seed_fn=_donesting_seed(x, y, slot, 0x48DC, tile, life_base, map_tile,
+                                map_base, 0xAC88, 0xAC84, 0xACA4, seed_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DONESTFIGHT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

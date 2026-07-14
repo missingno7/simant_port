@@ -6352,3 +6352,323 @@ def dec_eat_r(dgroup, pack) -> None:
         pack.ww(0x7C8E, (_sx16(dgroup.rw(0xAC84)) >> 5) & 0xFFFF)
         if _sx16(dgroup.rw(0xAC88)) > 0:
             dgroup.ww(0xAC88, (dgroup.rw(0xAC88) - 1) & 0xFFFF)
+
+
+def do_nesting_b(dgroup, simant_data_group, pack, x: int, y: int, mode: int,
+                 sub: int) -> int:
+    """Tick a black ant that is digging/tending the nest at `(x, y)` — the
+    largest orchestrator recovered this session. Dispatches on `sub` (0/1/2)
+    into three genuinely different behaviors, then always finishes by
+    attempting a move via `try_move_dir_b` (retrying once with a fresh
+    `_SRand8()` direction if the first attempt is rejected).
+
+    Recovered from `_DoNestingB` (SIMANTW.SYM seg6:44A8, args x=[bp+6],
+    y=[bp+8], mode=[bp+10], sub=[bp+12]; FAR return). Composes
+    `get_enter_dir_b`, `get_exit_dir_b`, `place_egg_b`, `find_in_b_list`,
+    `get_new_mode_b`, and `try_move_dir_b` — all already recovered.
+
+    Up front (regardless of `sub`): reads the acting ant's own
+    `simant_data_group[0x3F0E+slot]` ("field_e") once, splitting it into a
+    low-3-bit `mode2` and a `field_e >> 3` "sub_field" gate, and the current
+    B-nest life-plane tile at `(x, y)`.
+
+    `sub == 1`: if `sub_field == 0`, tries `get_enter_dir_b`; success moves
+    that way, failure stamps `field_e = mode2 | 8` and attempts a no-op
+    move. Otherwise (`sub_field != 0`): if the tile is `0` or `> 8` (empty
+    or a stale stage), bumps the acting ant's own caste `+8`, calls
+    `place_egg_b(mode2)`, re-stamps the life-plane tile with the resulting
+    caste, sets `field_e = 8`, and refreshes `field_c` via
+    `get_new_mode_b`; either way then tries `get_exit_dir_b` — success
+    moves that way, failure burns one `_SRand8()` roll and falls back to
+    `mode`.
+
+    `sub == 2`: if `sub_field != 0`, a `_SRand8()` roll of `0` clears
+    `field_e` to `0`, then (regardless) tries `get_exit_dir_b` the same
+    way `sub == 1`'s tail does. If `sub_field == 0` AND the tile is in
+    `1..7`: looks the tile up via `find_in_b_list` (coordinate-role-swap
+    convention: the callee's `y` gets THIS routine's `x` and vice versa);
+    a hit clears that slot's caste, subtracts `8` from the ACTING ant's own
+    caste, stamps its `field_e` to the tile value, and returns immediately
+    — `0x5E00 | tile`, a genuine AH-clobber artifact (the compiler loads
+    `AX = 0x5EF3`, the PACK segment literal, right before the final
+    byte-only `mov al,...` and never clears AH before this early
+    `ret far`; independently confirmed via the raw disassembly, not
+    guessed). A tile in `1..7` that ISN'T found in the list falls straight
+    to `mode` with no erosion/refresh at all. Only `sub_field == 0` with
+    tile `0` or `>= 8` reaches a shared `_SRand1(100)`-gated "hole
+    erosion" step (below) — if it doesn't fire, a `_SRand16()` roll of `0`
+    refreshes `field_c` via `get_new_mode_b` instead (the two are
+    mutually exclusive here, unlike `sub == 0`'s unconditional refresh).
+
+    `sub == 0` (or any other value, the default): the SAME hole-erosion
+    step always runs, followed by an UNCONDITIONAL `_SRand8()`-gated
+    `field_c` refresh (both may fire in the same tick, unlike `sub == 2`'s
+    either/or). The hole-erosion step itself: on a `_SRand1(100)` roll
+    exceeding `dgroup[0xAC86]`, and only if the B-nest MAP tile at
+    `(x, y)` is `0x10..0x13`: replaces a `0x10` tile with a fresh
+    `_SRand8()` roll or decrements any other in-range tile by `1`, then
+    ages a small dig-progress/food-supply state machine
+    (`pack[0x9EA4]`/`pack[0x7402]`/`dgroup[0xAC82]`/`dgroup[0xAC98]`,
+    capping `dgroup[0xAC86]` at `100` — the SAME food-supply counter
+    `dec_eat_b` drains).
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    mode7 = mode & 7
+    slot = pack.rw(0x9B6A)
+    field_e = simant_data_group.rb(0x3F0E + slot)
+    mode2 = field_e & 7
+    sub_field = field_e >> 3
+    life_idx = (x << 6) + y
+    tile = dgroup.rb(LIFE_PLANE_BASE[2] + life_idx)
+
+    def roll100_over_threshold():
+        seed, roll100 = srand1(dgroup.rw(SRAND_SEED_OFF), 100)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return roll100 > dgroup.rw(0xAC86)
+
+    def erode_hole():
+        map_tile = dgroup.rb(MAP_PLANE_BASE[2] + life_idx)
+        if not (0x10 <= map_tile <= 0x13):
+            return
+        if map_tile == 0x10:
+            seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            dgroup.wb(MAP_PLANE_BASE[2] + life_idx, roll8)
+        else:
+            dgroup.wb(MAP_PLANE_BASE[2] + life_idx, (map_tile - 1) & 0xFF)
+        if pack.rw(0x9EA4) > 0:
+            pack.ww(0x9EA4, (pack.rw(0x9EA4) - 1) & 0xFFFF)
+        threshold = (dgroup.rw(0xAC82) + dgroup.rw(0xAC98)) >> 4
+        pack.ww(0x7402, (pack.rw(0x7402) + 5) & 0xFFFF)
+        if threshold < pack.rw(0x7402):
+            pack.ww(0x7402, 0)
+            if dgroup.rw(0xAC86) < 0x64:
+                dgroup.ww(0xAC86, (dgroup.rw(0xAC86) + 1) & 0xFFFF)
+
+    def refresh_field_c(mask):
+        seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), mask)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        if roll == 0:
+            cur_slot = pack.rw(0x9B6A)
+            field_c = get_new_mode_b(dgroup, simant_data_group, pack, sub)
+            simant_data_group.wb(0x3B22 + cur_slot, field_c & 0xFF)
+
+    def burn_srand8():
+        seed, _ = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+
+    def finish(direction):
+        result = try_move_dir_b(dgroup, simant_data_group, pack, x, y, direction)
+        if result != 0:
+            return result
+        seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return try_move_dir_b(dgroup, simant_data_group, pack, x, y, roll8)
+
+    if sub == 1:
+        if sub_field == 0:
+            direction = get_enter_dir_b(dgroup, simant_data_group, x, y, mode7)
+            if direction < 0:
+                simant_data_group.wb(0x3F0E + slot, (mode2 | 8) & 0xFF)
+            return finish(direction)
+
+        if not (1 <= tile <= 8):
+            new_caste = (simant_data_group.rb(0x3D18 + slot) + 8) & 0xFF
+            simant_data_group.wb(0x3D18 + slot, new_caste)
+            place_egg_b(dgroup, simant_data_group, pack, x, y, mode2)
+            slot2 = pack.rw(0x9B6A)
+            caste_now = simant_data_group.rb(0x3D18 + slot2)
+            dgroup.wb(LIFE_PLANE_BASE[2] + life_idx, caste_now)
+            simant_data_group.wb(0x3F0E + slot2, 8)
+            field_c = get_new_mode_b(dgroup, simant_data_group, pack, sub)
+            simant_data_group.wb(0x3B22 + slot2, field_c & 0xFF)
+
+        exit_dir = get_exit_dir_b(dgroup, simant_data_group, x, y, mode7)
+        if exit_dir != 0:
+            return finish(exit_dir - 1)
+        burn_srand8()
+        return finish(mode7)
+
+    if sub == 2:
+        if sub_field != 0:
+            seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            if roll8 == 0:
+                simant_data_group.wb(0x3F0E + slot, 0)
+            exit_dir = get_exit_dir_b(dgroup, simant_data_group, x, y, mode7)
+            if exit_dir != 0:
+                return finish(exit_dir - 1)
+            burn_srand8()
+            return finish(mode7)
+
+        if 1 <= tile <= 7:
+            found = find_in_b_list(pack, simant_data_group, y=x, x=y, caste=tile)
+            if found != 0xFFFF:
+                simant_data_group.wb(0x3D18 + found, 0)
+                cur_slot = pack.rw(0x9B6A)
+                simant_data_group.wb(
+                    0x3D18 + cur_slot,
+                    (simant_data_group.rb(0x3D18 + cur_slot) - 8) & 0xFF)
+                simant_data_group.wb(0x3F0E + cur_slot, tile & 0xFF)
+                return 0x5E00 | (tile & 0xFF)
+            return finish(mode7)
+
+        if roll100_over_threshold():
+            erode_hole()
+        else:
+            refresh_field_c(15)
+        return finish(mode7)
+
+    # sub == 0 (or any other value): the default path.
+    if roll100_over_threshold():
+        erode_hole()
+    refresh_field_c(7)
+    return finish(mode7)
+
+
+def do_nesting_r(dgroup, simant_data_group, pack, x: int, y: int, mode: int,
+                 sub: int) -> int:
+    """The red-colony twin of `do_nesting_b` — NOT a mechanical
+    table-swap: every branch is independently, differently shaped (no
+    upfront `field_e`/`sub_field`/tile read shared across cases, a THIRD
+    `_SRand4()` gate B never rolls, an unconditional single `get_new_mode_r`
+    refresh on the default path where B does a two-step erosion-then-roll,
+    and a genuinely clean early-return value instead of B's AH-clobber
+    artifact) — confirmed by independent disassembly, not assumed
+    symmetric.
+
+    Recovered from `_DoNestingR` (SIMANTW.SYM seg6:690A, args x=[bp+6],
+    y=[bp+8], mode=[bp+10], sub=[bp+12]; FAR return). Composes
+    `get_enter_dir_r`, `place_egg_r`, `find_in_r_list`, `get_new_mode_r`,
+    and `try_move_dir_r` — all already recovered. Finishes the same way
+    `do_nesting_b` does: `try_move_dir_r`, retried once with a fresh
+    `_SRand8()` direction on a `0` result.
+
+    `sub == 1`: a `_SRand4()` roll of `0`, AND the R-nest MAP tile at
+    `(x, y)` being `< 0x10`, digs a fresh egg in place — bumps the acting
+    ant's own caste `+8`, stamps the life-plane tile with it, calls
+    `place_egg_r(caste=0x82)`, resets `field_e` to `0`, and returns
+    `get_new_mode_r(sub)`'s result DIRECTLY (an early, clean return — no
+    move attempt at all). Otherwise: a second independent `_SRand4()` roll
+    of `0` tries `get_enter_dir_r`; a non-negative result finishes with
+    it, anything else (either roll failing, or a negative result) falls
+    back to a fresh `_SRand8()` roll as the direction.
+
+    `sub == 2`: a `_SRand4()` roll of `0` gates everything below — on a
+    miss, no erosion/refresh/search runs at all, straight to the final
+    gate. On a hit: if the R-nest life-plane tile at `(x, y)` is `0` OR
+    `(tile & 0x7F) >= 8`, runs the SAME `_SRand1(100)`-gated hole-erosion
+    step `do_nesting_b`'s default path uses (own R-side counters:
+    `pack[0x72DE]`/`pack[0x7C8E]`/`dgroup[0xAC84]`/`dgroup[0xACA4]`/
+    `dgroup[0xAC88]`), mutually exclusive with an UNCONDITIONAL (no extra
+    dice roll) `get_new_mode_r` refresh when the erosion roll itself
+    doesn't clear the threshold. Otherwise (tile nonzero and `< 8`), looks
+    the tile up via `find_in_r_list` (same coordinate-role-swap
+    convention as `do_nesting_b`'s); a hit clears that slot's caste,
+    subtracts `8` from the acting ant's own caste, and returns the found
+    slot index DIRECTLY (early return, genuinely no clobber quirk here —
+    R never reloads a segment via a literal immediate in this branch); a
+    MISS runs neither erosion nor refresh, falling straight to the final
+    gate. That final gate: a THIRD `_SRand4()` roll of `0` picks a fresh
+    `_SRand8()` direction, otherwise falls back to `mode`.
+
+    `sub == 0` (or any other value): no erosion step at all — just an
+    unconditional `get_new_mode_r(sub)` refresh, then finishes with
+    `mode` untouched.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    mode7 = mode & 7
+
+    def finish(direction):
+        result = try_move_dir_r(dgroup, simant_data_group, pack, x, y, direction)
+        if result != 0:
+            return result
+        seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return try_move_dir_r(dgroup, simant_data_group, pack, x, y, roll8)
+
+    def roll4_zero():
+        seed, roll4 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 3)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return roll4 == 0
+
+    def fresh_srand8_dir():
+        seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return roll8
+
+    def erode_or_refresh():
+        seed, roll100 = srand1(dgroup.rw(SRAND_SEED_OFF), 100)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        life_idx = (x << 6) + y
+        if roll100 > dgroup.rw(0xAC88):
+            map_tile = dgroup.rb(MAP_PLANE_BASE[3] + life_idx)
+            if 0x10 <= map_tile <= 0x13:
+                if map_tile == 0x10:
+                    seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+                    dgroup.ww(SRAND_SEED_OFF, seed)
+                    dgroup.wb(MAP_PLANE_BASE[3] + life_idx, roll8)
+                else:
+                    dgroup.wb(MAP_PLANE_BASE[3] + life_idx, (map_tile - 1) & 0xFF)
+                if pack.rw(0x72DE) > 0:
+                    pack.ww(0x72DE, (pack.rw(0x72DE) - 1) & 0xFFFF)
+                threshold = (dgroup.rw(0xAC84) + dgroup.rw(0xACA4)) >> 4
+                pack.ww(0x7C8E, (pack.rw(0x7C8E) + 5) & 0xFFFF)
+                if threshold < pack.rw(0x7C8E):
+                    pack.ww(0x7C8E, 0)
+                    if dgroup.rw(0xAC88) < 0x64:
+                        dgroup.ww(0xAC88, (dgroup.rw(0xAC88) + 1) & 0xFFFF)
+        else:
+            field_c = get_new_mode_r(dgroup, simant_data_group, pack, sub)
+            slot = pack.rw(0x9B6A)
+            simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
+
+    if sub == 1:
+        life_idx = (x << 6) + y
+        if roll4_zero() and dgroup.rb(MAP_PLANE_BASE[3] + life_idx) < 0x10:
+            slot = pack.rw(0x9B6A)
+            new_caste = (simant_data_group.rb(0x46E6 + slot) + 8) & 0xFF
+            simant_data_group.wb(0x46E6 + slot, new_caste)
+            dgroup.wb(LIFE_PLANE_BASE[3] + life_idx, new_caste)
+            place_egg_r(dgroup, simant_data_group, pack, x, y, 0x82)
+            slot = pack.rw(0x9B6A)
+            simant_data_group.wb(0x48DC + slot, 0)
+            field_c = get_new_mode_r(dgroup, simant_data_group, pack, sub)
+            slot = pack.rw(0x9B6A)
+            simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
+            return field_c
+
+        if roll4_zero():
+            direction = get_enter_dir_r(dgroup, simant_data_group, x, y, mode7)
+            if direction >= 0:
+                return finish(direction)
+        return finish(fresh_srand8_dir())
+
+    if sub == 2:
+        if roll4_zero():
+            life_idx = (x << 6) + y
+            tile = dgroup.rb(LIFE_PLANE_BASE[3] + life_idx)
+            if tile == 0 or (tile & 0x7F) >= 8:
+                erode_or_refresh()
+            else:
+                found = find_in_r_list(pack, simant_data_group, y=x, x=y,
+                                       caste=tile)
+                if found != 0xFFFF:
+                    simant_data_group.wb(0x46E6 + found, 0)
+                    slot = pack.rw(0x9B6A)
+                    simant_data_group.wb(
+                        0x46E6 + slot,
+                        (simant_data_group.rb(0x46E6 + slot) - 8) & 0xFF)
+                    return found
+                # not found: no erosion/refresh, fall to the final gate below
+        if roll4_zero():
+            return finish(fresh_srand8_dir())
+        return finish(mode7)
+
+    # sub == 0 (or any other value): the default path.
+    field_c = get_new_mode_r(dgroup, simant_data_group, pack, sub)
+    slot = pack.rw(0x9B6A)
+    simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
+    return finish(mode7)

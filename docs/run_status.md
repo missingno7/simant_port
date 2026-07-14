@@ -1,5 +1,40 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.159) — /goal grind: _DoNestingB/_DoNestingR — nest dig/tend tick
+- RECOVERED `do_nesting_b`/`do_nesting_r` (`_DoNestingB`/`_DoNestingR`,
+  seg6:44A8/690A, args x=[bp+6], y=[bp+8], mode=[bp+10], sub=[bp+12];
+  FAR return) — the largest orchestrators recovered this session
+  (0x31E/0x22E bytes). Composes `get_enter_dir_b/r`, `get_exit_dir_b`,
+  `place_egg_b/r`, `find_in_b/r_list`, `get_new_mode_b/r`, and
+  `try_move_dir_b/r`, all already recovered — no new primitives needed.
+  Confirmed by independent disassembly that R is NOT a mechanical
+  table-swap of B: genuinely different branch shapes (a third `_SRand4`
+  gate B never rolls, an unconditional single `get_new_mode_r` refresh
+  where B does a two-step erosion-then-roll, and a clean early-return
+  value in R's list-search-hit branch vs B's AH-clobber artifact — B's
+  compiler loads `AX = 0x5EF3` right before a byte-only `mov al,...`
+  and never clears AH before an early `ret far`, independently
+  confirmed via the raw disassembly).
+- Caught a real bug via the instrumented-exploration-before-testing
+  discipline: mistranscribed the epilogue's retry roll as
+  `_SRand1(100)` in both `finish()` closures when it's actually
+  `_SRand8()` (far call target `2F99:15EE`, not `2F99:158A`) — caught
+  immediately by a scratch exploration script (not yet the real ASM
+  oracle) when `try_move_dir_b`'s `GET_BEST_DIR_DY[direction]` raised
+  `IndexError` for a roll in `0..99` used where a `0..7` compass index
+  was required. Also caught and fixed (before ANY test run) two
+  "erosion/refresh block runs on a list-search-miss" control-flow bugs
+  in the initial draft of both routines' `sub == 2` branches — the ASM
+  has the "not found in list" case skip erosion/refresh entirely and
+  fall straight to the default direction, which an early sloppy
+  fall-through in my first draft didn't honor.
+- 14 cases (9 for B, 5 for R) spanning every `sub` value's major
+  sub-branches (entry/exit-dir success and failure, egg-spawn vs
+  skip-spawn, list-search hit and miss, hole-erosion vs `field_c`
+  refresh, and the numeric-default fallback) — ALL GREEN ON THE FIRST
+  REAL-ASM RUN (after the exploration-script fixes above).
+- Suite: simant 1640 (+14), full suite green.
+
 ## 2026-07-14 (cont.158) — /goal grind: _FindLifeAt/_FindEggAt — locate an ant at (x,y)
 - Deferred `_GetMyDir` after a first pass: it's turning out comparably
   large/branchy to `_GetMyBestDir` (composing `check_my_best_dirs`,
