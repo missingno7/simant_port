@@ -737,6 +737,44 @@ def drown_r_list(pack, simant_data_group, x: int) -> None:
     _drown_list(pack, simant_data_group, 0x72CC, 0x42FA, 0x46E6, 0x44F0, x)
 
 
+def _fill_holes(simant_data_group, dgroup, hole_x_off: int, scent_base: int) -> None:
+    """Shared body of fill_holes_bn/rn: refresh a colony's NEST home-scent
+    beacon at each row's tracked hole position.  For each row `si` (0..63): if
+    a hole X-position is tracked at that row (`simant_data_group[hole_x_off +
+    si] != 0`), check whether the yard map cell at (hole_x, si) — plane 0,
+    the OFFICIAL x=*64/y=+1 map convention — is still a hole tile (0x51); if
+    so, jam the colony-smell grid cell there (half-res: `((hole_x & 0xFFFE)
+    << 4) + (si >> 1)`, on `scent_base`) to the maximum (0xFF); if the hole
+    has been filled in, clear that scent cell to 0.
+    """
+    for si in range(0x40):
+        hole_x = simant_data_group.rb(hole_x_off + si)
+        if hole_x == 0:
+            continue
+        tile = dgroup.rb(MAP_PLANE_BASE[0] + (hole_x << 6) + si)
+        idx = ((hole_x & 0xFFFE) << 4) + (si >> 1)
+        simant_data_group.wb(scent_base + idx, 0xFF if tile == 0x51 else 0)
+
+
+def fill_holes_bn(simant_data_group, dgroup) -> None:
+    """Refresh the black colony's NEST home-scent beacons at tracked hole
+    positions (hole-X array at 0x82D2; scent grid at 0x62D2 — see
+    `_fill_holes`).
+
+    Recovered from `_FillHolesBN` (SIMANTW.SYM seg6:91DE, no args).
+    """
+    _fill_holes(simant_data_group, dgroup, 0x82D2, 0x62D2)
+
+
+def fill_holes_rn(simant_data_group, dgroup) -> None:
+    """The red-colony twin of `fill_holes_bn` (hole-X array at 0x8312; scent
+    grid at 0x72D2).
+
+    Recovered from `_FillHolesRN` (SIMANTW.SYM seg6:9244, no args).
+    """
+    _fill_holes(simant_data_group, dgroup, 0x8312, 0x72D2)
+
+
 def clear_list_b(pack) -> None:
     """Empty the black colony's ant list (just resets the count to 0 — the
     per-slot arrays are left as-is, matching `compact_list_b`'s "the count is

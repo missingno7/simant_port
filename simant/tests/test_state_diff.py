@@ -679,6 +679,39 @@ def test_removefromalist_state_diff_matches_asm(slot, count):
             f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _FillHolesBN / _FillHolesRN (seg6:91DE / 9244) — hole-scent refresh --
+@pytest.mark.parametrize("routine,off,hole_x_off,scent_base,fn_name", [
+    ("_FillHolesBN", 0x91DE, 0x82D2, 0x62D2, "fill_holes_bn"),
+    ("_FillHolesRN", 0x9244, 0x8312, 0x72D2, "fill_holes_rn"),
+])
+def test_fillholes_state_diff_matches_asm(routine, off, hole_x_off, scent_base,
+                                          fn_name):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    m = runtime.create_machine()
+    dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+    # row 0: no tracked hole (0) -> skipped; row 1: hole tracked, map cell IS
+    # a hole (0x51) -> jam to 0xFF; row 2: hole tracked, map cell filled in
+    # (0x20) -> clear to 0; rows 3.. left at 0 (no-op).
+    for si in range(0x40):
+        m.mem.wb(sdg, hole_x_off + si, 0)
+    m.mem.wb(sdg, hole_x_off + 1, 10)
+    m.mem.wb(dg, 0x28E8 + (10 << 6) + 1, 0x51)
+    m.mem.wb(sdg, hole_x_off + 2, 20)
+    m.mem.wb(dg, 0x28E8 + (20 << 6) + 2, 0x20)
+    for i in range(0x800):
+        m.mem.wb(sdg, scent_base + i, 0x77)   # poison the whole scent grid
+
+    sdg_lo = min(hole_x_off, scent_base)
+    sdg_hi = max(hole_x_off + 0x40, scent_base + 0x800)
+    regions = [(hooks.DG_SEG_INDEX, 0x28E8, 0x28E8 + _YARD_SPAN),
+              (_SDG, sdg_lo, sdg_hi)]
+    results = _run_and_diff_segs(6, off, (), lambda d, s: fn(s, d), regions,
+                                 near=True)
+    for (label, asm_after, rec_after), (_si, rlo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, f"{routine} {label}: {_first_diff(asm_after, rec_after, rlo)}"
+
+
 # ---- _DrownBList / _DrownRList (seg5:2D16 / 2D66) — mark drowning ants ----
 @pytest.mark.parametrize("routine,off,count_off,x_off,caste_off,mark_off,fn_name", [
     ("_DrownBList", 0x2D16, 0x99D4, 0x392C, 0x3D18, 0x3B22, "drown_b_list"),
