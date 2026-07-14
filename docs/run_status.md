@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.108) — /goal grind: _GetNestDir — NEST-scent gradient / queen-homing
+- RECOVERED `get_nest_dir` (`_GetNestDir`, seg7:0C30, FAR return, args
+  x/y/caste_low3/colony_flag) — second of the seg7 `_Get*Dir` family, and
+  meaningfully more involved than `_GetForageDir`. Independently
+  disassembled the full 548-byte body.
+- Yard-edge handling here is genuinely `_Bounce`'s OWN formula, compiled
+  INLINE (not a call) — confirmed byte-identical offset-per-edge/corner to
+  `bounce()`, so ported as a literal `bounce()` call plus the `(r-1)&7`
+  conversion `_DoDigOutAntA` already applies to its own `_Bounce` result
+  (code reuse the ASM itself didn't have available to it).
+- Interior: if the ant's own NEST-grid cell has ANY scent, scans its 8
+  neighbors for the best gradient direction (same shape as
+  `_GetForageDir`, but no random tie-break seed) — and, surprisingly,
+  rolls a `_SRand2()` whose VALUE never affects the outcome at all: both
+  of its branches independently compute and return the identical
+  mode-table read. Verified this wasn't a misread by testing the SAME
+  scenario at two different seeds landing on `_SRand2()==0` and `==1`
+  respectively — both matched the real ASM byte-for-byte, confirming it's
+  a genuine dead-code artifact of the original compile (the roll still
+  has to be reproduced for its LFSR-advancing side effect, or later
+  chained `_SRand*` calls in the same tick would desync).
+- If the own cell has NO scent, skips the neighbor scan and instead calls
+  the already-recovered `get_dir` toward the colony's stored queen/nest-
+  entrance target (`simant_data_group` words at `[0x835E]`/`[0x8360]` red,
+  `[0x835A]`/`[0x835C]` black) — on `get_dir`'s result of `0` or a failed
+  `_SRand4()` roll, falls back to a fresh `_SRand8()`-random mode-table
+  pick, matching `_GetForageDir`'s fallback shape. Noted that the ASM
+  indexes the mode table through a `[0x23 + ...]` base with `get_dir`'s
+  native `1..8` result rather than `[0x24 + ...]` with a `-1` adjustment —
+  byte-address-identical, ported as the latter for consistency with the
+  rest of this module.
+- 7 cases (an edge/corner, the gradient path at both `_SRand2` outcomes,
+  the homing path for both colonies, the `_SRand4`-fails fallback, and the
+  `get_dir==0` fallback) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1243 (+7).
+
 ## 2026-07-14 (cont.107) — /goal grind: _GetForageDir — TRAIL-scent gradient direction
 - RECOVERED `get_forage_dir` (`_GetForageDir`, seg7:0AB0, FAR return, args
   x/y/caste_low3/colony_flag) — first of the seg7 `_Get*Dir` family.

@@ -1278,6 +1278,87 @@ def test_getforagedir_interior_matches_asm(own_scent, neighbor_dir,
     assert dgroup_view.rw(0xCBF2) == asm_seed_after, f"{label}: seed mismatch"
 
 
+# ---- _GetNestDir (seg7:0C30) — NEST-scent gradient / queen-homing direction
+# Yard-edge handling is `_Bounce`'s own formula, compiled inline (not a
+# call) -- ported as a literal `bounce()` call + the `(r-1)&7` conversion.
+def _getnestdir_seed(own_scent, neighbor_dir, neighbor_scent, colony_flag,
+                     target_x=None, target_y=None):
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        nest_base = 0x72D2 if colony_flag & 0x80 else 0x62D2
+        m.mem.data[sdg + nest_base:sdg + nest_base + 0x800] = bytes(0x800)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        hx, hy = 20 >> 1, 20 >> 1
+        m.mem.wb(sdg, nest_base + (hx << 5) + hy, own_scent)
+        if neighbor_dir is not None:
+            dx = _DX8[neighbor_dir]
+            dy = _DY8[neighbor_dir]
+            dx = dx - 0x100 if dx & 0x80 else dx
+            dy = dy - 0x100 if dy & 0x80 else dy
+            nx, ny = (hx + dx) & 0x3F, (hy + dy) & 0x1F
+            m.mem.wb(sdg, nest_base + (nx << 5) + ny, neighbor_scent)
+        if target_x is not None:
+            tx_off, ty_off = (0x835E, 0x8360) if colony_flag & 0x80 else (0x835A, 0x835C)
+            m.mem.ww(sdg, tx_off, target_x & 0xFFFF)
+            m.mem.ww(sdg, ty_off, target_y & 0xFFFF)
+    return seed
+
+
+def _run_getnestdir(x, y, caste_low3, colony_flag, seed_val, seeder):
+    from simant.recovered.gameplay import get_nest_dir
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+        seeder(m)
+
+    ax, m = _run_and_get_ax(7, 0xC30, (x, y, caste_low3, colony_flag), seed_fn=seed)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+
+    buf = bytearray(0x10000)
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg = m.seg_bases[_SDG]
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    rec_ax = get_nest_dir(dgroup_view, sdg_view, x, y, caste_low3, colony_flag)
+
+    assert ax == (rec_ax & 0xFFFF), f"seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, f"seed={seed_val:#x}: seed mismatch"
+
+
+def test_getnestdir_edge_matches_asm():
+    _run_getnestdir(0x00, 0x00, 5, 0x00, 0x1234, lambda m: None)   # TL corner
+
+
+@pytest.mark.parametrize("seed_val", [0x0, 0x8000])   # SRand2 roll = 0, then = 1
+def test_getnestdir_gradient_matches_asm(seed_val):
+    _run_getnestdir(20, 20, 5, 0x00, seed_val,
+                    _getnestdir_seed(1, 3, 50, 0x00))
+
+
+@pytest.mark.parametrize("colony_flag,seed_val", [(0x00, 0x1), (0x80, 0x1)])
+def test_getnestdir_homing_matches_asm(colony_flag, seed_val):
+    # own cell has no scent -> get_dir toward the colony's stored target;
+    # seed_val=0x1 gives a nonzero _SRand4 roll, so the homing dir is used.
+    _run_getnestdir(20, 20, 5, colony_flag, seed_val,
+                    _getnestdir_seed(0, None, 0, colony_flag,
+                                     target_x=25, target_y=20))
+
+
+def test_getnestdir_homing_srand4_zero_falls_back_matches_asm():
+    _run_getnestdir(20, 20, 5, 0x00, 0x0,   # SRand4 roll == 0 -> fallback
+                    _getnestdir_seed(0, None, 0, 0x00, target_x=25, target_y=20))
+
+
+def test_getnestdir_homing_no_target_falls_back_matches_asm():
+    _run_getnestdir(20, 20, 5, 0x00, 0x1234,   # get_dir==0 (target==self) -> fallback
+                    _getnestdir_seed(0, None, 0, 0x00, target_x=20, target_y=20))
+
+
 # ---- _DoDigOutAntA (seg6:1480) — second top-level `_Do*Ant*` routine -------
 # NEAR call/return, composes `_Bounce`, `_GetNewMode`, and (on a successful
 # move with a nonzero carried-dirt counter) `_JamScentBN`/`_JamScentRN`.

@@ -103,6 +103,7 @@ flowchart TD
     inobs["_IsNotObstacle"]
     bnc["_Bounce"]
     gfd["_GetForageDir"]
+    gnd["_GetNestDir"]
   end
   subgraph L4["leaves — the foundation"]
     iva["_IsValidA"]
@@ -118,6 +119,7 @@ flowchart TD
   daa -.-> dfa & ddoa
   dfa --> gnm & dah & srand
   ddoa --> gnm & bnc & jsc & srand
+  gnd --> bnc
   dnb --> ddig & iyel & srand
   dfor --> iva & iyel & srand
   dfor -.-> fial & aal & csd
@@ -144,7 +146,7 @@ flowchart TD
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
   classDef front fill:#5c564b,stroke:#a99e86,color:#f3ece0,stroke-dasharray:5 4;
-  class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs,bnc,gfd done;
+  class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs,bnc,gfd,gnd done;
   class iva,idirt,iyel,srand load;
   class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
@@ -160,7 +162,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
 | `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA` top-level behaviors done; forage/nest frontier | 39 / 123 | movement **done** |
-| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`/`_Bounce`/`_GetForageDir` done | 9 / 282 | mostly rendering |
+| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`/`_Bounce`/`_Get*Dir` (forage/nest) done | 10 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
 The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88

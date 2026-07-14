@@ -2737,6 +2737,92 @@ def get_forage_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int,
     return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + best_dir))
 
 
+def get_nest_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int,
+                  colony_flag: int) -> int:
+    """Pick a nest-ward direction: follow the gradient of the caller's
+    colony NEST scent grid around `(x, y)`'s half-res cell if it has any
+    scent at all, else steer straight toward the colony's queen/nest-
+    entrance target via `get_dir`.
+
+    Recovered from `_GetNestDir` (SIMTWO.SYM seg7:0C30, args x=[bp+6],
+    y=[bp+8], caste_low3=[bp+10], colony_flag=[bp+12]; FAR return).
+
+    Unlike `_GetForageDir`, the yard-edge handling here is `_Bounce`'s
+    OWN formula, compiled inline rather than called (confirmed
+    byte-identical offset-per-edge/corner to `bounce()` by independent
+    disassembly) — ported as a literal `bounce()` call plus the same
+    `(result - 1) & 7` conversion `_DoDigOutAntA` applies to its own
+    `_Bounce` result.
+
+    Strictly interior: if the ant's own NEST-grid cell (`[0x62D2..)` black /
+    `[0x72D2..)` red, same grids `jam_scent_bn`/`rn` write) is nonzero,
+    scans its 8 compass neighbors for the highest-scent direction (ties
+    keep the lowest index — no random tie-break seed this time, unlike
+    `_GetForageDir`), rolls a `_SRand2()` purely for its LFSR-advancing
+    side effect (the roll's VALUE never affects the outcome — both its
+    branches converge on the identical mode-table read, a genuine
+    dead-code artifact of the original compile, reproduced here only to
+    keep the LFSR in sync with later calls), then reads the mode table at
+    the found direction.
+
+    If the own cell has NO scent at all, it skips the neighbor scan
+    entirely and instead calls the already-recovered `get_dir` toward the
+    colony's stored queen/nest-entrance position (`simant_data_group`
+    words at `[0x835E]`/`[0x8360]` for red, `[0x835A]`/`[0x835C]` for
+    black); on a `get_dir` result of `0` (already there) or a failed
+    `_SRand4()` roll (1-in-4), falls back to a fresh `_SRand8()`-random
+    mode-table pick, matching `_GetForageDir`'s and `_DoDigOutAntA`'s
+    fallback shape.  The mode table itself is the SAME one `get_forage_dir`
+    uses (`simant_data_group[0x24 + ...]`) — the ASM reads it through a
+    `[0x23 + ...]` base with `get_dir`'s native `1..8` result instead of
+    `[0x24 + ...]` with a `- 1` adjustment, which is byte-address-identical
+    and ported here as the latter for consistency with the rest of this
+    module.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def roll(mask: int) -> int:
+        seed, r = srand_pow2(dgroup.rw(SRAND_SEED_OFF), mask)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return r
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    edge = bounce(dgroup, x, y)
+    if edge != 0:
+        return (edge - 1) & 7
+
+    hx, hy = x >> 1, y >> 1
+    colony_r = colony_flag & 0x80
+    nest_base = 0x72D2 if colony_r else 0x62D2
+    own_scent = simant_data_group.rb(nest_base + (hx << 5) + hy)
+
+    if own_scent != 0:
+        best_dir = 0
+        best_val = 0
+        for i in range(8):
+            dx = sx8(simant_data_group.rb(i))
+            dy = sx8(simant_data_group.rb(8 + i))
+            nx = (hx + dx) & 0x3F
+            ny = (hy + dy) & 0x1F
+            val = simant_data_group.rb(nest_base + (nx << 5) + ny)
+            if val > best_val:
+                best_val = val
+                best_dir = i
+        roll(1)   # _SRand2 -- consumed for its seed advance only, result unused
+        return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + best_dir))
+
+    tx_off, ty_off = (0x835E, 0x8360) if colony_r else (0x835A, 0x835C)
+    target_x = simant_data_group.rw(tx_off)
+    target_y = simant_data_group.rw(ty_off)
+    dir_result = get_dir(x, y, target_x, target_y)
+    if dir_result != 0 and roll(3) != 0:
+        return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + (dir_result - 1)))
+    return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + roll(7)))
+
+
 def do_dig_out_ant_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of a yard ant "digging out" — aging/mode-transition,
     or a move (with a natural-decay kill chance) toward a `_Bounce`-biased or
