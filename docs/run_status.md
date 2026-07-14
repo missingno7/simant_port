@@ -1,6 +1,47 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.81) — /goal grind: _DrownBList/RList, _ClearListB/R, _KillSpider
+## 2026-07-14 (cont.82) — CRITICAL harness bug found+fixed; caught a real logic bug
+- Recovered 5 more routines this stretch (`_MakeRedInitiator`, `_ClrModePop`,
+  `_FillHolesBN`/`RN`, and confirmed `_TallyModePop`/`_DrownBList` neighbors) —
+  but while writing `_MakeRedInitiator`'s test, caught a SERIOUS bug in the
+  test-harness pattern used across ~13 prior commits this session.
+- THE BUG: `_run_and_diff_segs`/`_run_and_get_ax` each create their OWN internal
+  `runtime.create_machine()`.  Every test that did `m = runtime.create_machine();
+  m.mem.wb(m.seg_bases[...], off, val); results = _run_and_diff_segs(...)` was
+  seeding a THROWAWAY machine — `create_machine()` returns an INDEPENDENT memory
+  image each call (verified empirically: writes to one instance never appear in
+  another), so the ASM/recovered comparison ran against UNSEEDED (mostly-zero)
+  boot data instead of the intended parametrized values.  This did NOT invalidate
+  the core state-diff PROOF (both ASM and recovered code still ran against the
+  SAME real starting state, so a passing test still proved byte-exact agreement
+  for THAT state) — but it meant most parametrized "different x/y/caste/etc."
+  test cases silently collapsed onto the SAME default data, so test coverage was
+  far narrower than the test names/parameters claimed.
+- FIX: added a `seed_fn(m)` hook to `_run_and_diff_segs` (mirroring
+  `_run_and_diff`'s existing correct pattern) and `_run_and_get_ax`, which runs
+  against the function's OWN internal machine before the pre-state snapshot.
+  Rewrote EVERY affected test (~19 of them: SetMyHealth, DecEatB/R, KillTailB/R,
+  ColonySmell x4, JamScent x4, AlarmHere/2, AddAntTo*List x3, DropFoodB/R,
+  RemoveFromAList, ClrModePop, FillHoles x2, DrownList x2, ClearList x2,
+  KillSpider, CompactList x3, SetAntIndex) to seed via `seed_fn` instead.
+- THE PAYOFF: re-running with CORRECTED seeding immediately caught a REAL LOGIC
+  BUG in `_fill_holes` (fill_holes_bn/rn) — I had the branch condition EXACTLY
+  BACKWARDS (jam-to-0xFF when hole intact / clear-to-0 when filled, when the ASM
+  actually does the OPPOSITE: clear-to-0 while the hole is STILL OPEN, jam-to-
+  0xFF once it's FILLED IN).  Fixed and reverified byte-exact.  This validates
+  the whole exercise: a broken harness would have LET this bug through
+  silently forever (both sides trivially "matched" on unseeded zero data).
+- Also recovered along the way: `_MakeRedInitiator` (convert an eligible yard
+  ant to a red-colony initiator, gated on the black colony's hunger reset-rate),
+  `_ClrModePop` (reset mode-population tally arrays).
+- Suite: simant 922 (237 in test_state_diff.py alone).  ALL PACK/SIMANT_DATA_GROUP
+  seeding across the whole file now correctly reaches the machine the ASM
+  actually runs on.
+- LESSON for future work: when adding a new `_run_and_diff_segs`/
+  `_run_and_get_ax` test, ALWAYS use `seed_fn=`, NEVER seed a separately
+  constructed `m`.  Consider auditing test_hooks.py's older patterns too if a
+  similar double-machine mistake seems possible there (not yet checked).
+
 - RECOVERED `drown_b_list`/`r_list` (seg5:2D16/2D66): sweep a colony's list
   BACKWARD for ants standing at a given X column, marking them "drowning"
   (field 0x3B22/0x44F0 <- 0x11) when their caste's bits [6:3] (a 4-bit

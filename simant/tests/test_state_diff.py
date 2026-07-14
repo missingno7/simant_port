@@ -13,6 +13,13 @@ bootstrapped here on leaf mutators: `_SetMap` (one map-cell write), `_DropWater`
 SIMANT_DATA_GROUP, PACK — via `hooks.SIMANT_DATA_GROUP_SEG_INDEX` / `PACK_SEG_INDEX`;
 `_run_and_diff_segs` generalizes the single-DGROUP harness to N named segment
 windows for this case).
+
+IMPORTANT (see cont.82 in the journal): `runtime.create_machine()` returns an
+INDEPENDENT memory image every call.  `_run_and_diff_segs`/`_run_and_get_ax` each
+create their OWN internal machine — writing to a machine created outside those
+functions has NO effect on the one the ASM actually runs on.  Seed via the
+`seed`/`seed_fn` parameters (which run against the function's own internal
+machine), never via a separately-constructed `m`.
 """
 from __future__ import annotations
 
@@ -32,6 +39,9 @@ DGROUP_SIZE = 0x10000
 # (the highest field seen is ~0xC4A0), so diff only [0, SIM_HI) and leave the
 # stack band — execution scaffolding, not sim state — out of the comparison.
 SIM_HI = 0xF000
+
+_SDG = hooks.SIMANT_DATA_GROUP_SEG_INDEX
+_PACK = hooks.PACK_SEG_INDEX
 
 
 def _far_return_stub(cpu):
@@ -90,21 +100,24 @@ def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, seed_fn=None,
 
 
 def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
-                       near=False):
+                       near=False, seed_fn=None):
     """Like `_run_and_diff`, but for a routine that mutates through MULTIPLE
     fixed NE data segments (e.g. via a DGROUP pointer-global into
     SIMANT_DATA_GROUP/PACK — see `hooks.SIMANT_DATA_GROUP_SEG_INDEX`/
     `PACK_SEG_INDEX`).  `regions` is [(seg_index, lo, hi), ...]: the byte window
-    of each touched segment to snapshot/diff (real load-time data, not seeded —
-    these are fixed segments, not per-test scratch).  `apply_recovered` receives
-    one `ByteBackend` per region, positional, in `regions` order, each addressed
-    by the SAME real offsets the ASM uses (so `view.rw(0x8A5E)` reads the byte at
+    of each touched segment to snapshot/diff.  `apply_recovered` receives one
+    `ByteBackend` per region, positional, in `regions` order, each addressed by
+    the SAME real offsets the ASM uses (so `view.rw(0x8A5E)` reads the byte at
     that real offset within its segment, not window-relative index 0).
 
     `near=True` for a routine that returns via a NEAR `ret` (pops only IP, CS
     unchanged) rather than a far `retf` — common for calls between routines in
     the SAME NE segment.  A near-return routine only needs SENT_IP pushed (no
     return CS slot), and the completion check is IP-only (CS never changes).
+
+    `seed_fn(m)`, if given, runs on THIS function's own internal machine
+    before the pre-state snapshot — the only correct way to seed PACK/
+    SIMANT_DATA_GROUP/etc. beyond the `seed` dict (DGROUP words only).
 
     Returns a list of (label, asm_window, recovered_window) for each region.
     """
@@ -115,6 +128,8 @@ def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
     s.ds = dg
     for o, v in (seed or {}).items():
         m.mem.ww(dg, o, v & 0xFFFF)
+    if seed_fn is not None:
+        seed_fn(m)
 
     befores = [bytes(m.mem.block(m.seg_bases[si], lo, hi - lo))
               for si, lo, hi in regions]
@@ -143,6 +158,34 @@ def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
 
     return [(f"seg{si}[{lo:#06x}:{hi:#06x}]", asm_after, bytes(rec))
             for (si, lo, hi), asm_after, rec in zip(regions, asm_afters, recs)]
+
+
+def _run_and_get_ax(seg, off, args, *, seed_fn=None, near=False):
+    """Pure-read-predicate variant: seed a fresh machine (via `seed_fn(m)`), run
+    the ASM to return, and return (ax, m) so the caller can feed the SAME
+    machine's post-seed memory to the recovered function for comparison."""
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if seed_fn is not None:
+        seed_fn(m)
+    s = m.cpu.s
+    s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[seg], off
+    sp = s.sp
+    tail = (SENT_IP,) if near else (SENT_CS, SENT_IP)
+    for v in (*reversed(args), *tail):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    target = (s.cs & 0xFFFF, SENT_IP) if near else (SENT_CS, SENT_IP)
+    for _ in range(50_000):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == target:
+            break
+    else:
+        raise AssertionError(f"ASM {seg}:{off:#06x} did not return")
+    return s.ax, m
 
 
 # ---- _SetMap (seg5:617A) — one map-cell write ------------------------------
@@ -174,8 +217,6 @@ def test_setmap_state_diff_matches_asm(plane, x, y, value):
 # [0x9AF2] (+ reads PACK:[0x9BEC]).  These are REAL, permanent segments — not
 # seeded pointers — so the test uses their actual NE segment indices, only
 # seeding the god-mode flag and the current-health input within them.
-_SDG = hooks.SIMANT_DATA_GROUP_SEG_INDEX
-_PACK = hooks.PACK_SEG_INDEX
 _HEALTH_REGIONS = [
     (hooks.DG_SEG_INDEX, 0xAC00, 0xAD00),   # covers [0xAC8A]
     (_SDG, 0x8A00, 0x8B00),                 # covers [0x8A5E] (god-mode flag)
@@ -190,15 +231,15 @@ _HEALTH_REGIONS = [
 ])
 def test_setmyhealth_state_diff_matches_asm(new_health, current, god):
     from simant.recovered.gameplay import set_my_health
-    m = runtime.create_machine()
-    god_base, current_base = m.seg_bases[_SDG], m.seg_bases[_PACK]
-    m.mem.wb(god_base, 0x8A5E, 1 if god else 0)
-    m.mem.ww(current_base, 0x9BEC, current & 0xFFFF)
+
+    def seed(m):
+        m.mem.wb(m.seg_bases[_SDG], 0x8A5E, 1 if god else 0)
+        m.mem.ww(m.seg_bases[_PACK], 0x9BEC, current & 0xFFFF)
 
     results = _run_and_diff_segs(
         5, 0x8C70, (new_health,),
         lambda dg, sdg, pack: set_my_health(dg, sdg, pack, _sx(new_health)),
-        _HEALTH_REGIONS)
+        _HEALTH_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _HEALTH_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -259,16 +300,15 @@ _DECEATR_REGIONS = [
 ])
 def test_deceatb_state_diff_matches_asm(timer, reset_rate, food, no_starve):
     from simant.recovered.gameplay import dec_eat_b
-    m = runtime.create_machine()
-    dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
-                     m.seg_bases[_PACK])
-    m.mem.ww(pack, 0x7402, timer & 0xFFFF)
-    m.mem.ww(dg, 0xAC82, reset_rate & 0xFFFF)
-    m.mem.ww(dg, 0xAC86, food & 0xFFFF)
-    m.mem.wb(sdg, 0x8A60, 1 if no_starve else 0)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], 0x7402, timer & 0xFFFF)
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xAC82, reset_rate & 0xFFFF)
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xAC86, food & 0xFFFF)
+        m.mem.wb(m.seg_bases[_SDG], 0x8A60, 1 if no_starve else 0)
 
     results = _run_and_diff_segs(6, 0x48F8, (), lambda d, s, p: dec_eat_b(d, s, p),
-                                 _DECEATB_REGIONS)
+                                 _DECEATB_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DECEATB_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -279,14 +319,14 @@ def test_deceatb_state_diff_matches_asm(timer, reset_rate, food, no_starve):
 ])
 def test_deceatr_state_diff_matches_asm(timer, reset_rate, food):
     from simant.recovered.gameplay import dec_eat_r
-    m = runtime.create_machine()
-    dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
-    m.mem.ww(pack, 0x7C8E, timer & 0xFFFF)
-    m.mem.ww(dg, 0xAC84, reset_rate & 0xFFFF)
-    m.mem.ww(dg, 0xAC88, food & 0xFFFF)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], 0x7C8E, timer & 0xFFFF)
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xAC84, reset_rate & 0xFFFF)
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xAC88, food & 0xFFFF)
 
     results = _run_and_diff_segs(6, 0x6C6A, (), lambda d, p: dec_eat_r(d, p),
-                                 _DECEATR_REGIONS)
+                                 _DECEATR_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DECEATR_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -313,15 +353,16 @@ _KILLTAILR_REGIONS = [
 ])
 def test_killtailb_state_diff_matches_asm(ant_idx, x, y, flag):
     from simant.recovered.gameplay import kill_tail_b
-    m = runtime.create_machine()
-    sdg = m.seg_bases[_SDG]
-    m.mem.wb(sdg, 0x3D18 + ant_idx, flag)
-    m.mem.wb(sdg, 0x392C + ant_idx, x)
-    m.mem.ww(sdg, 0x3736 + ant_idx, y)      # low byte is what matters
+
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        m.mem.wb(sdg, 0x3D18 + ant_idx, flag)
+        m.mem.wb(sdg, 0x392C + ant_idx, x)
+        m.mem.ww(sdg, 0x3736 + ant_idx, y)      # low byte is what matters
 
     results = _run_and_diff_segs(6, 0x42B0, (ant_idx,),
                                  lambda d, s: kill_tail_b(d, s, ant_idx),
-                                 _KILLTAILB_REGIONS)
+                                 _KILLTAILB_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _KILLTAILB_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -332,15 +373,16 @@ def test_killtailb_state_diff_matches_asm(ant_idx, x, y, flag):
 ])
 def test_killtailr_state_diff_matches_asm(ant_idx, x, y, flag):
     from simant.recovered.gameplay import kill_tail_r
-    m = runtime.create_machine()
-    sdg = m.seg_bases[_SDG]
-    m.mem.wb(sdg, 0x46E6 + ant_idx, flag)
-    m.mem.wb(sdg, 0x42FA + ant_idx, x)
-    m.mem.ww(sdg, 0x4104 + ant_idx, y)
+
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        m.mem.wb(sdg, 0x46E6 + ant_idx, flag)
+        m.mem.wb(sdg, 0x42FA + ant_idx, x)
+        m.mem.ww(sdg, 0x4104 + ant_idx, y)
 
     results = _run_and_diff_segs(6, 0x6762, (ant_idx,),
                                  lambda d, s: kill_tail_r(d, s, ant_idx),
-                                 _KILLTAILR_REGIONS)
+                                 _KILLTAILR_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _KILLTAILR_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -359,15 +401,17 @@ _SCENT_SPAN = 0x800
 def test_colonysmell_decay_state_diff_matches_asm(routine, off, base, fn_name):
     import simant.recovered.gameplay as G
     fn = getattr(G, fn_name)
-    m = runtime.create_machine()
-    sdg = m.seg_bases[_SDG]
-    # a mixed pattern: zeros, small values (<8), and larger values, covering
-    # every branch of both the linear and exponential decay curves.
-    for i in range(_SCENT_SPAN):
-        m.mem.wb(sdg, base + i, [0, 1, 7, 8, 9, 100, 255, 3][i % 8])
+
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        # a mixed pattern: zeros, small values (<8), and larger values, covering
+        # every branch of both the linear and exponential decay curves.
+        for i in range(_SCENT_SPAN):
+            m.mem.wb(sdg, base + i, [0, 1, 7, 8, 9, 100, 255, 3][i % 8])
 
     results = _run_and_diff_segs(6, off, (), lambda s: fn(s),
-                                 [(_SDG, base, base + _SCENT_SPAN)], near=True)
+                                 [(_SDG, base, base + _SCENT_SPAN)], near=True,
+                                 seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, f"{routine}: {_first_diff(asm_after, rec_after, base)}"
 
@@ -391,14 +435,15 @@ def test_jamscent_state_diff_matches_asm(routine, off, base, fn_name, near,
                                          x, y, value, existing):
     import simant.recovered.gameplay as G
     fn = getattr(G, fn_name)
-    m = runtime.create_machine()
-    sdg = m.seg_bases[_SDG]
     idx = ((x & 0xFFFE) << 4) + (y >> 1)
-    m.mem.wb(sdg, base + idx, existing)
+
+    def seed(m):
+        m.mem.wb(m.seg_bases[_SDG], base + idx, existing)
 
     results = _run_and_diff_segs(6, off, (x, y, value),
                                  lambda s: fn(s, x, y, value),
-                                 [(_SDG, base, base + _JAM_REGION_SPAN)], near=near)
+                                 [(_SDG, base, base + _JAM_REGION_SPAN)], near=near,
+                                 seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, f"{routine}: {_first_diff(asm_after, rec_after, base)}"
 
@@ -413,15 +458,15 @@ _ALARM_BASE = 0x52D2
 ])
 def test_alarmhere_state_diff_matches_asm(x, y, delta, existing):
     from simant.recovered.gameplay import alarm_here
-    m = runtime.create_machine()
-    sdg = m.seg_bases[_SDG]
     idx = ((x >> 1) << 5) + (y >> 1)
-    m.mem.wb(sdg, _ALARM_BASE + idx, existing)
+
+    def seed(m):
+        m.mem.wb(m.seg_bases[_SDG], _ALARM_BASE + idx, existing)
 
     results = _run_and_diff_segs(6, 0x943C, (x, y, delta),
                                  lambda s: alarm_here(s, x, y, delta),
                                  [(_SDG, _ALARM_BASE, _ALARM_BASE + _JAM_REGION_SPAN)],
-                                 near=True)
+                                 near=True, seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, _first_diff(asm_after, rec_after, _ALARM_BASE)
 
@@ -432,45 +477,23 @@ def test_alarmhere_state_diff_matches_asm(x, y, delta, existing):
 ])
 def test_alarmhere2_state_diff_matches_asm(x, y, value, existing):
     from simant.recovered.gameplay import alarm_here2
-    m = runtime.create_machine()
-    sdg = m.seg_bases[_SDG]
     idx = ((x >> 1) << 5) + (y >> 1)
-    m.mem.wb(sdg, _ALARM_BASE + idx, existing)
+
+    def seed(m):
+        m.mem.wb(m.seg_bases[_SDG], _ALARM_BASE + idx, existing)
 
     results = _run_and_diff_segs(6, 0x947E, (x, y, value),
                                  lambda s: alarm_here2(s, x, y, value),
                                  [(_SDG, _ALARM_BASE, _ALARM_BASE + _JAM_REGION_SPAN)],
-                                 near=True)
+                                 near=True, seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, _first_diff(asm_after, rec_after, _ALARM_BASE)
 
 
 # ---- _FindInAList/BList/RList (seg5:2C42/2C86/2CCE) — pure list search -----
-# Read-only predicates (no state mutation): seed ONE machine, run the ASM to
-# return and capture AX, then feed the SAME machine's (still-seeded, untouched
-# since nothing was written) memory to the recovered function via ByteBackend
-# and compare.  reuses this file's PACK/SIMANT_DATA_GROUP segment indices.
-def _run_and_get_ax(m, seg, off, args, near=False):
-    s = m.cpu.s
-    s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
-    s.sp = 0xFF00
-    s.cs, s.ip = m.seg_bases[seg], off
-    sp = s.sp
-    tail = (SENT_IP,) if near else (SENT_CS, SENT_IP)
-    for v in (*reversed(args), *tail):
-        sp = (sp - 2) & 0xFFFF
-        m.mem.ww(s.ss, sp, v & 0xFFFF)
-    s.sp = sp
-    target = (s.cs & 0xFFFF, SENT_IP) if near else (SENT_CS, SENT_IP)
-    for _ in range(50_000):
-        m.cpu.step()
-        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == target:
-            break
-    else:
-        raise AssertionError(f"ASM {seg}:{off:#06x} did not return")
-    return s.ax
-
-
+# Read-only predicates (no state mutation): seed via `_run_and_get_ax`'s own
+# internal machine, capture AX, then feed that SAME machine's (still-seeded,
+# untouched since nothing was written) memory to the recovered function.
 @pytest.mark.parametrize("count,slots,target0,target1", [
     (5, [(0, 10, 20, 1), (1, 10, 20, 1)], 10, 20),        # 2 matches -> last wins
     (5, [(2, 7, 8, 1)], 7, 8),                             # single match mid-list
@@ -480,16 +503,17 @@ def _run_and_get_ax(m, seg, off, args, near=False):
 ])
 def test_findinalist_matches_asm(count, slots, target0, target1):
     from simant.recovered.gameplay import find_in_a_list
-    m = runtime.create_machine()
-    m.cpu.trace_enabled = False
-    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
-    m.mem.ww(pack, 0x80F0, count)
-    for slot, f0, f1, f2 in slots:
-        m.mem.wb(sdg, 0x23A4 + slot, f0)
-        m.mem.wb(sdg, 0x278E + slot, f1)
-        m.mem.wb(sdg, 0x2F62 + slot, f2)
 
-    ax = _run_and_get_ax(m, 5, 0x2C42, (target0, target1))
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x80F0, count)
+        for slot, f0, f1, f2 in slots:
+            m.mem.wb(sdg, 0x23A4 + slot, f0)
+            m.mem.wb(sdg, 0x278E + slot, f1)
+            m.mem.wb(sdg, 0x2F62 + slot, f2)
+
+    ax, m = _run_and_get_ax(5, 0x2C42, (target0, target1), seed_fn=seed)
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
     pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
     sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
     expect = find_in_a_list(pack_view, sdg_view, target0, target1)
@@ -510,16 +534,17 @@ def test_findinlist_matches_asm(routine, off, count_off, y_off, x_off, c_off,
                                 fn_name, count, slots, ty, tx, tc):
     import simant.recovered.gameplay as G
     fn = getattr(G, fn_name)
-    m = runtime.create_machine()
-    m.cpu.trace_enabled = False
-    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
-    m.mem.ww(pack, count_off, count)
-    for slot, y, x, caste in slots:
-        m.mem.wb(sdg, y_off + slot, y)
-        m.mem.wb(sdg, x_off + slot, x)
-        m.mem.wb(sdg, c_off + slot, caste)
 
-    ax = _run_and_get_ax(m, 5, off, (ty, tx, tc))
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, count_off, count)
+        for slot, y, x, caste in slots:
+            m.mem.wb(sdg, y_off + slot, y)
+            m.mem.wb(sdg, x_off + slot, x)
+            m.mem.wb(sdg, c_off + slot, caste)
+
+    ax, m = _run_and_get_ax(5, off, (ty, tx, tc), seed_fn=seed)
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
     pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
     sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
     expect = fn(pack_view, sdg_view, ty, tx, tc)
@@ -549,13 +574,14 @@ _ADDANTR_REGIONS = [
 def test_addanttoalist_state_diff_matches_asm(count):
     from simant.recovered.gameplay import add_ant_to_a_list
     t0, t1, caste, fc, fe = 5, 9, 3, 7, 11
-    m = runtime.create_machine()
-    m.mem.ww(m.seg_bases[_PACK], 0x80F0, count)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], 0x80F0, count)
 
     results = _run_and_diff_segs(
         5, 0x2EF0, (t0, t1, caste, fc, fe),
         lambda d, s, p: add_ant_to_a_list(p, s, d, t0, t1, caste, fc, fe),
-        _ADDANTA_REGIONS)
+        _ADDANTA_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTA_REGIONS):
         assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -564,13 +590,14 @@ def test_addanttoalist_state_diff_matches_asm(count):
 def test_addanttoblist_state_diff_matches_asm(count):
     from simant.recovered.gameplay import add_ant_to_b_list
     y, x, caste, fc, fe = 40, 20, 4, 8, 12
-    m = runtime.create_machine()
-    m.mem.ww(m.seg_bases[_PACK], 0x99D4, count)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], 0x99D4, count)
 
     results = _run_and_diff_segs(
         5, 0x2F4A, (y, x, caste, fc, fe),
         lambda d, s, p: add_ant_to_b_list(p, s, d, y, x, caste, fc, fe),
-        _ADDANTB_REGIONS)
+        _ADDANTB_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTB_REGIONS):
         assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -579,13 +606,14 @@ def test_addanttoblist_state_diff_matches_asm(count):
 def test_addanttorlist_state_diff_matches_asm(count):
     from simant.recovered.gameplay import add_ant_to_r_list
     y, x, caste, fc, fe = 50, 30, 6, 10, 14
-    m = runtime.create_machine()
-    m.mem.ww(m.seg_bases[_PACK], 0x72CC, count)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], 0x72CC, count)
 
     results = _run_and_diff_segs(
         5, 0x2FA4, (y, x, caste, fc, fe),
         lambda d, s, p: add_ant_to_r_list(p, s, d, y, x, caste, fc, fe),
-        _ADDANTR_REGIONS)
+        _ADDANTR_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTR_REGIONS):
         assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -612,16 +640,17 @@ _DROPFOODR_REGIONS = [
 ])
 def test_dropfoodb_state_diff_matches_asm(x, y, tile, ant_idx, caste):
     from simant.recovered.gameplay import drop_food_b
-    m = runtime.create_machine()
-    dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
-                     m.seg_bases[_SDG])
-    m.mem.wb(dg, 0x48E8 + (x << 6) + y, tile)
-    m.mem.ww(pack, 0x9B6A, ant_idx)
-    m.mem.wb(sdg, 0x3D18 + ant_idx, caste)
+
+    def seed(m):
+        dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
+                         m.seg_bases[_SDG])
+        m.mem.wb(dg, 0x48E8 + (x << 6) + y, tile)
+        m.mem.ww(pack, 0x9B6A, ant_idx)
+        m.mem.wb(sdg, 0x3D18 + ant_idx, caste)
 
     results = _run_and_diff_segs(6, 0x3C3C, (x, y),
                                  lambda d, p, s: drop_food_b(d, p, s, x, y),
-                                 _DROPFOODB_REGIONS)
+                                 _DROPFOODB_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DROPFOODB_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -632,16 +661,17 @@ def test_dropfoodb_state_diff_matches_asm(x, y, tile, ant_idx, caste):
 ])
 def test_dropfoodr_state_diff_matches_asm(x, y, tile, ant_idx, caste):
     from simant.recovered.gameplay import drop_food_r
-    m = runtime.create_machine()
-    dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
-                     m.seg_bases[_SDG])
-    m.mem.wb(dg, 0x58E8 + (x << 6) + y, tile)
-    m.mem.ww(pack, 0x9B6A, ant_idx)
-    m.mem.wb(sdg, 0x46E6 + ant_idx, caste)
+
+    def seed(m):
+        dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
+                         m.seg_bases[_SDG])
+        m.mem.wb(dg, 0x58E8 + (x << 6) + y, tile)
+        m.mem.ww(pack, 0x9B6A, ant_idx)
+        m.mem.wb(sdg, 0x46E6 + ant_idx, caste)
 
     results = _run_and_diff_segs(6, 0x6242, (x, y),
                                  lambda d, p, s: drop_food_r(d, p, s, x, y),
-                                 _DROPFOODR_REGIONS)
+                                 _DROPFOODR_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DROPFOODR_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
@@ -660,39 +690,93 @@ _REMOVEFROMA_REGIONS = [
 @pytest.mark.parametrize("slot,count", [(0, 6), (2, 6), (5, 6), (0, 1)])
 def test_removefromalist_state_diff_matches_asm(slot, count):
     from simant.recovered.gameplay import remove_from_a_list
-    m = runtime.create_machine()
-    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
-    m.mem.ww(pack, 0x80F0, count)
-    for i in range(count):
-        m.mem.wb(sdg, 0x23A4 + i, (i * 3 + 1) & 0x3F)     # keep target0 in 0..63
-        m.mem.wb(sdg, 0x278E + i, (i * 5 + 2) & 0x1F)     # keep target1 small
-        m.mem.wb(sdg, 0x2B78 + i, (i * 7 + 3) & 0xFF)
-        m.mem.wb(sdg, 0x2F62 + i, (i * 11 + 4) & 0xFF)
-        m.mem.wb(sdg, 0x334C + i, (i * 13 + 5) & 0xFF)
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x80F0, count)
+        for i in range(count):
+            m.mem.wb(sdg, 0x23A4 + i, (i * 3 + 1) & 0x3F)     # keep target0 in 0..63
+            m.mem.wb(sdg, 0x278E + i, (i * 5 + 2) & 0x1F)     # keep target1 small
+            m.mem.wb(sdg, 0x2B78 + i, (i * 7 + 3) & 0xFF)
+            m.mem.wb(sdg, 0x2F62 + i, (i * 11 + 4) & 0xFF)
+            m.mem.wb(sdg, 0x334C + i, (i * 13 + 5) & 0xFF)
 
     results = _run_and_diff_segs(
         5, 0x2B42, (slot,),
         lambda d, s, p: remove_from_a_list(p, s, d, slot),
-        _REMOVEFROMA_REGIONS)
+        _REMOVEFROMA_REGIONS, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _REMOVEFROMA_REGIONS):
         assert asm_after == rec_after, (
             f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
+# ---- _MakeRedInitiator (seg6:967C) — convert an eligible yard ant ---------
+_MAKERED_REGIONS = [
+    (_PACK, 0x8000, 0x9E00),      # covers [0x80F0] (count), [0x9D74] (pending)
+    (_SDG, 0x2B00, 0x8B00),       # covers 0x2F62/2B78/334C (A-fields), 0x8A64 (flag)
+]
+
+
+@pytest.mark.parametrize("rate,slots", [
+    (0x1E, [0x10, 0x81]),         # gate passes; last (slot1) is eligible
+    (0x1D, [0x81]),                # gate fails (rate<0x1E) -> no-op regardless
+    (0x1E, [0x10, 0x20]),          # gate passes; no eligible candidate
+    (0x1E, []),                     # gate passes; empty list
+    (0x1E, [0x81, 0x82, 0x10]),     # multiple eligible; LAST-found (highest slot with bit7) wins
+])
+def test_makeredinitiator_state_diff_matches_asm(rate, slots):
+    from simant.recovered.gameplay import make_red_initiator
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.wb(sdg, 0x8A64, 0xEE)   # poison the success flag
+        m.mem.ww(pack, 0x9D74, 0xCAFE & 0xFFFF)
+        m.mem.ww(pack, 0x80F0, len(slots))
+        for i, caste in enumerate(slots):
+            m.mem.wb(sdg, 0x2F62 + i, caste)
+            m.mem.wb(sdg, 0x2B78 + i, 0x55)
+            m.mem.wb(sdg, 0x334C + i, 0x66)
+
+    # make_red_initiator reads DGROUP[0xAC82] but never writes DGROUP, so it
+    # is not one of _MAKERED_REGIONS's diffed windows; the lambda needs SOME
+    # dgroup-like object for its `dgroup` arg.  A tiny read-only stand-in
+    # returning the seeded `rate` is sufficient and avoids adding a fourth
+    # (read-only, unverified) region just to construct a real view.
+    dg_ro = _ConstWordView(rate & 0xFFFF)
+    results = _run_and_diff_segs(
+        6, 0x967C, (), lambda p, s: make_red_initiator(dg_ro, p, s),
+        _MAKERED_REGIONS, seed={0xAC82: rate}, seed_fn=seed)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKERED_REGIONS):
+        assert asm_after == rec_after, (
+            f"rate={rate} slots={slots} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
+class _ConstWordView:
+    """A read-only stand-in that always returns the same word — used where a
+    test needs a `dgroup`-like object but the recovered function only ever
+    READS one fixed value from it (see `test_makeredinitiator...` above)."""
+    def __init__(self, value):
+        self._value = value
+
+    def rw(self, _off):
+        return self._value
 
 
 # ---- _ClrModePop (seg6:034A) — reset mode-population tally arrays ---------
 @pytest.mark.parametrize("c1,c2", [(0, 0), (1, 1), (5, 0), (0, 9), (100, 200)])
 def test_clrmodepop_state_diff_matches_asm(c1, c2):
     from simant.recovered.gameplay import clr_mode_pop
-    m = runtime.create_machine()
-    pack = m.seg_bases[_PACK]
-    for i in range(0x14):
-        m.mem.ww(pack, 0x7BE4 + 2 * i, 0xBEEF)
-        m.mem.ww(pack, 0x786A + 2 * i, 0xDEAD)
-    m.mem.ww(pack, 0x7C44, c1)
-    m.mem.ww(pack, 0x8078, c2)
+
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        for i in range(0x14):
+            m.mem.ww(pack, 0x7BE4 + 2 * i, 0xBEEF)
+            m.mem.ww(pack, 0x786A + 2 * i, 0xDEAD)
+        m.mem.ww(pack, 0x7C44, c1)
+        m.mem.ww(pack, 0x8078, c2)
 
     results = _run_and_diff_segs(6, 0x034A, (), lambda p: clr_mode_pop(p),
-                                 [(_PACK, 0x7800, 0x8100)], near=True)
+                                 [(_PACK, 0x7800, 0x8100)], near=True, seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, f"c1={c1} c2={c2}: {_first_diff(asm_after, rec_after, 0x7800)}"
 
@@ -706,26 +790,27 @@ def test_fillholes_state_diff_matches_asm(routine, off, hole_x_off, scent_base,
                                           fn_name):
     import simant.recovered.gameplay as G
     fn = getattr(G, fn_name)
-    m = runtime.create_machine()
-    dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
-    # row 0: no tracked hole (0) -> skipped; row 1: hole tracked, map cell IS
-    # a hole (0x51) -> jam to 0xFF; row 2: hole tracked, map cell filled in
-    # (0x20) -> clear to 0; rows 3.. left at 0 (no-op).
-    for si in range(0x40):
-        m.mem.wb(sdg, hole_x_off + si, 0)
-    m.mem.wb(sdg, hole_x_off + 1, 10)
-    m.mem.wb(dg, 0x28E8 + (10 << 6) + 1, 0x51)
-    m.mem.wb(sdg, hole_x_off + 2, 20)
-    m.mem.wb(dg, 0x28E8 + (20 << 6) + 2, 0x20)
-    for i in range(0x800):
-        m.mem.wb(sdg, scent_base + i, 0x77)   # poison the whole scent grid
+
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        # row 0: no tracked hole (0) -> skipped; row 1: hole tracked, map cell IS
+        # a hole (0x51) -> jam to 0xFF; row 2: hole tracked, map cell filled in
+        # (0x20) -> clear to 0; rows 3.. left at 0 (no-op).
+        for si in range(0x40):
+            m.mem.wb(sdg, hole_x_off + si, 0)
+        m.mem.wb(sdg, hole_x_off + 1, 10)
+        m.mem.wb(dg, 0x28E8 + (10 << 6) + 1, 0x51)
+        m.mem.wb(sdg, hole_x_off + 2, 20)
+        m.mem.wb(dg, 0x28E8 + (20 << 6) + 2, 0x20)
+        for i in range(0x800):
+            m.mem.wb(sdg, scent_base + i, 0x77)   # poison the whole scent grid
 
     sdg_lo = min(hole_x_off, scent_base)
     sdg_hi = max(hole_x_off + 0x40, scent_base + 0x800)
     regions = [(hooks.DG_SEG_INDEX, 0x28E8, 0x28E8 + _YARD_SPAN),
               (_SDG, sdg_lo, sdg_hi)]
     results = _run_and_diff_segs(6, off, (), lambda d, s: fn(s, d), regions,
-                                 near=True)
+                                 near=True, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, rlo, _hi) in zip(results, regions):
         assert asm_after == rec_after, f"{routine} {label}: {_first_diff(asm_after, rec_after, rlo)}"
 
@@ -747,19 +832,21 @@ def test_drownlist_state_diff_matches_asm(routine, off, count_off, x_off,
                                           caste_off, mark_off, fn_name, x, slots):
     import simant.recovered.gameplay as G
     fn = getattr(G, fn_name)
-    m = runtime.create_machine()
-    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
-    m.mem.ww(pack, count_off, len(slots))
-    for i, (sx, caste) in enumerate(slots):
-        m.mem.wb(sdg, x_off + i, sx)
-        m.mem.wb(sdg, caste_off + i, caste)
-        m.mem.wb(sdg, mark_off + i, 0xAA)     # poison the mark field
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, count_off, len(slots))
+        for i, (sx, caste) in enumerate(slots):
+            m.mem.wb(sdg, x_off + i, sx)
+            m.mem.wb(sdg, caste_off + i, caste)
+            m.mem.wb(sdg, mark_off + i, 0xAA)     # poison the mark field
 
     lo, hi = min(x_off, caste_off, mark_off), max(x_off, caste_off, mark_off) + 0x10
     pack_lo, pack_hi = count_off & ~0xFF, (count_off & ~0xFF) + 0x100
     regions = [(_SDG, lo, hi), (_PACK, pack_lo, pack_hi)]
 
-    results = _run_and_diff_segs(5, off, (x,), lambda s, p: fn(p, s, x), regions)
+    results = _run_and_diff_segs(5, off, (x,), lambda s, p: fn(p, s, x), regions,
+                                 seed_fn=seed)
     for (label, asm_after, rec_after), (_si, rlo, _hi) in zip(results, regions):
         assert asm_after == rec_after, (
             f"{routine} x={x} slots={slots} {label}: {_first_diff(asm_after, rec_after, rlo)}")
@@ -774,22 +861,27 @@ def test_drownlist_state_diff_matches_asm(routine, off, count_off, x_off,
 def test_clearlist_state_diff_matches_asm(routine, off, count_off, fn_name, initial):
     import simant.recovered.gameplay as G
     fn = getattr(G, fn_name)
-    m = runtime.create_machine()
-    m.mem.ww(m.seg_bases[_PACK], count_off, initial)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], count_off, initial)
+
     lo, hi = count_off & ~0xFF, (count_off & ~0xFF) + 0x100
-    results = _run_and_diff_segs(5, off, (), lambda p: fn(p), [(_PACK, lo, hi)])
+    results = _run_and_diff_segs(5, off, (), lambda p: fn(p), [(_PACK, lo, hi)],
+                                 seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, f"{routine}: {_first_diff(asm_after, rec_after, lo)}"
 
 
 def test_killspider_state_diff_matches_asm():
     from simant.recovered.gameplay import kill_spider
-    m = runtime.create_machine()
-    for off in (0x729E, 0x72E0, 0x7290):
-        m.mem.ww(m.seg_bases[_PACK], off, 0xBEEF & 0xFFFF)
+
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        for off in (0x729E, 0x72E0, 0x7290):
+            m.mem.ww(pack, off, 0xBEEF & 0xFFFF)
 
     results = _run_and_diff_segs(5, 0x53D4, (), lambda p: kill_spider(p),
-                                 [(_PACK, 0x7200, 0x7300)])
+                                 [(_PACK, 0x7200, 0x7300)], seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, _first_diff(asm_after, rec_after, 0x7200)
 
@@ -815,19 +907,21 @@ def test_compactlist_state_diff_matches_asm(routine, off, count_off, caste_off,
     import simant.recovered.gameplay as G
     fn = getattr(G, fn_name)
     count = len(castes)
-    m = runtime.create_machine()
-    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
-    m.mem.ww(pack, count_off, count)
-    for i, caste in enumerate(castes):
-        m.mem.wb(sdg, caste_off + i, caste)
-        m.mem.wb(sdg, f0 + i, (i * 3 + 1) & 0xFF)
-        m.mem.wb(sdg, f1 + i, (i * 5 + 2) & 0xFF)
-        m.mem.wb(sdg, fc + i, (i * 7 + 3) & 0xFF)
-        m.mem.wb(sdg, fe + i, (i * 11 + 4) & 0xFF)
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, count_off, count)
+        for i, caste in enumerate(castes):
+            m.mem.wb(sdg, caste_off + i, caste)
+            m.mem.wb(sdg, f0 + i, (i * 3 + 1) & 0xFF)
+            m.mem.wb(sdg, f1 + i, (i * 5 + 2) & 0xFF)
+            m.mem.wb(sdg, fc + i, (i * 7 + 3) & 0xFF)
+            m.mem.wb(sdg, fe + i, (i * 11 + 4) & 0xFF)
 
     regions = [(_SDG, min(caste_off, f0, f1, fc, fe), max(caste_off, f0, f1, fc, fe) + 0x10),
               (_PACK, count_off & ~0xFF, (count_off & ~0xFF) + 0x100)]
-    results = _run_and_diff_segs(5, off, (), lambda s, p: fn(p, s), regions)
+    results = _run_and_diff_segs(5, off, (), lambda s, p: fn(p, s), regions,
+                                 seed_fn=seed)
     for (label, asm_after, rec_after), (_si, rlo, _hi) in zip(results, regions):
         assert asm_after == rec_after, (
             f"{routine} castes={castes} {label}: {_first_diff(asm_after, rec_after, rlo)}")
@@ -846,13 +940,14 @@ def test_setantindex_state_diff_matches_asm(list_type, which, slot, count):
     pack_region = {"a": _ADDANTA_REGIONS[2], "b": _ADDANTB_REGIONS[2],
                   "r": _ADDANTR_REGIONS[2]}[which]
     regions = [sdg_region, pack_region]
-    m = runtime.create_machine()
-    m.mem.ww(m.seg_bases[_PACK], count_off, count)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], count_off, count)
 
     results = _run_and_diff_segs(
         5, 0x584A, (list_type, slot, t0, t1, caste, fc, fe),
         lambda s, p: set_ant_index(p, s, list_type, slot, t0, t1, caste, fc, fe),
-        regions)
+        regions, seed_fn=seed)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
         assert asm_after == rec_after, (
             f"list_type={list_type} slot={slot} count={count} {label}: "
@@ -860,25 +955,24 @@ def test_setantindex_state_diff_matches_asm(list_type, which, slot, count):
 
 
 # ---- _GetSmellT (seg6:9612) — read the trail-scent grid via a direction ----
-# Pure read (no mutation): seed the whole trail grid with a distinguishable
-# pattern, run to return, compare AX against the recovered fn on the same
-# (still-seeded) machine.  The direction-delta tables are real game data, read
-# live — not overridden here (only the destination grid is seeded).
+# Pure read (no mutation): seed via `_run_and_get_ax`'s own internal machine,
+# capture AX, then feed that SAME machine's data to the recovered function.
 @pytest.mark.parametrize("p,q,direction,is_red", [
     (10, 10, 0, 0), (10, 10, 1, 0), (10, 10, 3, 1), (0, 0, 2, 0),
     (63, 31, 5, 1), (5, 5, 8, 0), (0, 0, 0, 1),
 ])
 def test_getsmellt_matches_asm(p, q, direction, is_red):
     from simant.recovered.gameplay import get_smell_t
-    m = runtime.create_machine()
-    m.cpu.trace_enabled = False
-    sdg_base = m.seg_bases[_SDG]
-    for i in range(0x800):
-        m.mem.wb(sdg_base, 0x6AD2 + i, (i * 3 + 7) & 0xFF)
-        m.mem.wb(sdg_base, 0x7AD2 + i, (i * 5 + 11) & 0xFF)
 
-    ax = _run_and_get_ax(m, 6, 0x9612, (p, q, direction, is_red), near=True)
-    sdg_view = ByteBackend(m.mem.block(sdg_base, 0, 0x10000), 0)
+    def seed(m):
+        sdg_base = m.seg_bases[_SDG]
+        for i in range(0x800):
+            m.mem.wb(sdg_base, 0x6AD2 + i, (i * 3 + 7) & 0xFF)
+            m.mem.wb(sdg_base, 0x7AD2 + i, (i * 5 + 11) & 0xFF)
+
+    ax, m = _run_and_get_ax(6, 0x9612, (p, q, direction, is_red), seed_fn=seed,
+                            near=True)
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
     expect = get_smell_t(sdg_view, p, q, direction, is_red)
     assert ax == (expect & 0xFFFF), f"asm={ax:#06x} rec={expect:#06x}"
 
@@ -890,15 +984,16 @@ def test_getsmellt_matches_asm(p, q, direction, is_red):
 ])
 def test_dectsmell_state_diff_matches_asm(x, y, is_red, existing):
     from simant.recovered.gameplay import dec_t_smell
-    m = runtime.create_machine()
-    sdg = m.seg_bases[_SDG]
     idx = ((x >> 1) << 5) + (y >> 1)
     base = 0x7AD2 if is_red else 0x6AD2
-    m.mem.wb(sdg, base + idx, existing)
+
+    def seed(m):
+        m.mem.wb(m.seg_bases[_SDG], base + idx, existing)
 
     results = _run_and_diff_segs(6, 0x95B6, (x, y, is_red),
                                  lambda s: dec_t_smell(s, x, y, is_red),
-                                 [(_SDG, base, base + _JAM_REGION_SPAN)], near=True)
+                                 [(_SDG, base, base + _JAM_REGION_SPAN)], near=True,
+                                 seed_fn=seed)
     (label, asm_after, rec_after), = results
     assert asm_after == rec_after, _first_diff(asm_after, rec_after, base)
 

@@ -743,9 +743,11 @@ def _fill_holes(simant_data_group, dgroup, hole_x_off: int, scent_base: int) -> 
     a hole X-position is tracked at that row (`simant_data_group[hole_x_off +
     si] != 0`), check whether the yard map cell at (hole_x, si) — plane 0,
     the OFFICIAL x=*64/y=+1 map convention — is still a hole tile (0x51); if
-    so, jam the colony-smell grid cell there (half-res: `((hole_x & 0xFFFE)
-    << 4) + (si >> 1)`, on `scent_base`) to the maximum (0xFF); if the hole
-    has been filled in, clear that scent cell to 0.
+    the hole is STILL OPEN (tile == 0x51), CLEAR the colony-smell grid cell
+    there (half-res: `((hole_x & 0xFFFE) << 4) + (si >> 1)`, on `scent_base`)
+    to 0; if the hole has been FILLED IN (any other tile), JAM that scent cell
+    to the maximum (0xFF).  (Byte-exact fixed after a state-diff regression
+    caught the branches reversed in an earlier draft — see cont.82.)
     """
     for si in range(0x40):
         hole_x = simant_data_group.rb(hole_x_off + si)
@@ -753,7 +755,7 @@ def _fill_holes(simant_data_group, dgroup, hole_x_off: int, scent_base: int) -> 
             continue
         tile = dgroup.rb(MAP_PLANE_BASE[0] + (hole_x << 6) + si)
         idx = ((hole_x & 0xFFFE) << 4) + (si >> 1)
-        simant_data_group.wb(scent_base + idx, 0xFF if tile == 0x51 else 0)
+        simant_data_group.wb(scent_base + idx, 0 if tile == 0x51 else 0xFF)
 
 
 def fill_holes_bn(simant_data_group, dgroup) -> None:
@@ -773,6 +775,36 @@ def fill_holes_rn(simant_data_group, dgroup) -> None:
     Recovered from `_FillHolesRN` (SIMANTW.SYM seg6:9244, no args).
     """
     _fill_holes(simant_data_group, dgroup, 0x8312, 0x72D2)
+
+
+def make_red_initiator(dgroup, pack, simant_data_group) -> None:
+    """Convert the last-found eligible yard ant (caste bit 0x80 set) into a
+    red-colony initiator, if the black colony's hunger-decay reset-rate
+    (`dgroup[0xAC82]`, see `dec_eat_b`) is at least 30 (0x1E) — a "well-fed
+    enough" gate.
+
+    Recovered from `_MakeRedInitiator` (SIMANTW.SYM seg6:967C, no args).
+    Clears `simant_data_group[0x8A64]` (a success flag) unconditionally at the
+    start.  If the gate passes, searches the yard ("A") list BACKWARD (same
+    per-slot arrays as `find_in_a_list`) for the last ant whose caste
+    (0x2F62) has bit 0x80 set; when found, overwrites that ant's caste to
+    0xB0, field_c (0x2B78) to 0x13, field_e (0x334C) to 0, clears
+    `pack[0x9D74]` (a "pending initiator" slot), and sets
+    `simant_data_group[0x8A64] = 1` (success).  If the gate fails, the list
+    is empty, or no candidate is found, the success flag is left at 0.
+    """
+    simant_data_group.wb(0x8A64, 0)
+    if _sx16(dgroup.rw(0xAC82)) < 0x1E:
+        return
+    count = pack.rw(0x80F0)
+    for slot in range(count - 1, -1, -1):
+        if simant_data_group.rb(0x2F62 + slot) > 0x7F:
+            simant_data_group.wb(0x2F62 + slot, 0xB0)
+            simant_data_group.wb(0x2B78 + slot, 0x13)
+            simant_data_group.wb(0x334C + slot, 0)
+            pack.ww(0x9D74, 0)
+            simant_data_group.wb(0x8A64, 1)
+            return
 
 
 def clr_mode_pop(pack) -> None:
