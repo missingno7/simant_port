@@ -2541,6 +2541,63 @@ def get_new_mode_r(dgroup, simant_data_group, pack, sub: int) -> int:
     return get_new_mode(dgroup, simant_data_group, pack, sub, 0x80)
 
 
+def get_winner(dgroup, simant_data_group, pack, arg_a: int, arg_b: int) -> int:
+    """Resolve a one-on-one combat matchup between two caste/mode bytes,
+    returning whichever of `arg_a`/`arg_b` wins, and bumping the winner's
+    colony win-count stats along the way.
+
+    Recovered from `_GetWinner` (SIMANTW.SYM seg6:26F4, args arg_a=[bp+4],
+    arg_b=[bp+6]; NEAR return).
+
+    A test/cheat gate first: if `simant_data_group[0x8A5C] == 1`, skips the
+    real calculation entirely — bumps `pack[0x9E96]` (dword) and returns
+    `arg_b` if `arg_a`'s colony bit (`0x80`) is set, else `arg_a` (i.e. the
+    non-colony-bit-set side always "wins" without ever consulting strength).
+
+    Otherwise: looks each side's "sub" (`(v & 0x78) >> 3`) up in a per-caste
+    strength table (`dgroup[0x8902 + sub]`, direct DGROUP — no pointer-
+    global indirection, unlike everything else this session), combines them
+    (`strength_a*4 + strength_b`) into an outcome-probability table
+    (`dgroup[0x8918 + ...]`), and rolls `_RRand(10)` (the C-runtime
+    generator, NOT the `_SRand*` LFSR — genuinely unpredictable) against
+    it: `roll >= outcome` -> `arg_b` wins, else `arg_a` wins. Either way,
+    bumps the SAME pair of PACK win-count stats, keyed only on the winner's
+    own colony bit: `[0x79E4]` (word) + `[0x99E0]` (dword) for red
+    (`0x80` set), or `[0xA0E4]` (word) + `[0x9E96]` (dword) for black — the
+    two branches are otherwise byte-identical, ported as one shared tail.
+    """
+    from .crt_math import RAND_STATE_OFF
+    from .simone import r_rand
+
+    def inc_dword(view, off: int) -> None:
+        v = (view.rw(off) | (view.rw(off + 2) << 16)) + 1
+        view.ww(off, v & 0xFFFF)
+        view.ww(off + 2, (v >> 16) & 0xFFFF)
+
+    if simant_data_group.rb(0x8A5C) == 1:
+        inc_dword(pack, 0x9E96)
+        return arg_b if arg_a & 0x80 else arg_a
+
+    def strength(v: int) -> int:
+        return dgroup.rb(0x8902 + ((v & 0x78) >> 3))
+
+    outcome = dgroup.rb(0x8918 + (strength(arg_a) << 2) + strength(arg_b))
+
+    state = dgroup.rw(RAND_STATE_OFF) | (dgroup.rw(RAND_STATE_OFF + 2) << 16)
+    state, roll = r_rand(state, 10)
+    dgroup.ww(RAND_STATE_OFF, state & 0xFFFF)
+    dgroup.ww(RAND_STATE_OFF + 2, (state >> 16) & 0xFFFF)
+
+    winner = arg_b if roll >= outcome else arg_a
+    if winner & 0x80:
+        pack.ww(0x79E4, (pack.rw(0x79E4) + 1) & 0xFFFF)
+        inc_dword(pack, 0x99E0)
+    else:
+        pack.ww(0xA0E4, (pack.rw(0xA0E4) + 1) & 0xFFFF)
+        inc_dword(pack, 0x9E96)
+    return winner
+
+
 def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of combat for a yard ("A"-list) ant: jitter its
     caste, and on a 1-in-16 roll, kill it — recovered from SIMANT1's

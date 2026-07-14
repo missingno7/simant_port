@@ -1,5 +1,31 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.113) — /goal grind: _GetWinner — one-on-one combat matchup resolution
+- RECOVERED `get_winner` (`_GetWinner`, seg6:26F4, NEAR return, args
+  arg_a/arg_b, plus `pack`) — found while investigating `_StartFightA`
+  (seg6:266A)'s own dependencies. Independently disassembled the full
+  242-byte body — first correcting my own size estimate (an earlier
+  symbol-table scan had computed `_GetWinner`'s span assuming the next
+  NAMED symbol, `_RandTurn`, was adjacent, missing that the already-
+  recovered `_DoFightA` sits un-filtered in between; `_GetWinner`'s real
+  span is 0x26F4-0x27E6, not the ~800 bytes first assumed).
+- A test/cheat gate first: if `simant_data_group[0x8A5C] == 1`, skips the
+  real calculation and returns whichever side does NOT have colony bit
+  `0x80` set (bumping one win-count stat). Otherwise: looks each side's
+  "sub" up in a per-caste strength table (`dgroup[0x8902 + sub]`, a
+  genuinely DIRECT DGROUP read with no pointer-global indirection —
+  notably different from every other table lookup this project has
+  recovered), combines them into an outcome-probability table
+  (`dgroup[0x8918 + strength_a*4 + strength_b]`), and rolls `_RRand(10)`
+  (the C-runtime generator via `RAND_STATE_OFF`, NOT the `_SRand*` LFSR)
+  against it. Bumps a colony-keyed pair of PACK win-count stats for
+  whichever side wins — the two win-paths in the ASM are byte-identical
+  except which side's colony bit gates them, ported as one shared tail.
+- 4 cases (both cheat-gate branches, both real-calculation outcomes) —
+  ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1268 (+4). `_StartFightA` (its only remaining dependency
+  before it can be completed) is next.
+
 ## 2026-07-14 (cont.112) — /goal grind: _GetRedDefendDir — seg7 `_Get*Dir` family COMPLETE
 - RECOVERED `get_red_defend_dir` (`_GetRedDefendDir`, seg7:1194, FAR
   return, args x/y/caste_low3, plus `pack`) — the sixth and last of the

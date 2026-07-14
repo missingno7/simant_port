@@ -28,6 +28,7 @@ import pytest
 import simant.hooks as hooks
 from simant import runtime
 from simant.bridge.dgroup_view import ByteBackend
+from simant.recovered.crt_math import RAND_STATE_OFF
 
 pytestmark = pytest.mark.skipif(not runtime.assets_present(),
                                 reason="SimAnt assets not present")
@@ -1079,6 +1080,49 @@ def test_getnewmoder_state_diff_matches_asm(sub, seed_val, mode_base_hi, tbl2,
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GETNEWMODE_REGIONS):
         assert asm_after == rec_after, (
             f"sub={sub} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
+# ---- _GetWinner (seg6:26F4) — one-on-one combat matchup resolution --------
+# NEAR call/return. Uses _RRand (the C-runtime generator, RAND_STATE_OFF in
+# DGROUP), NOT the _SRand* LFSR.
+_GETWINNER_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x8900, 0xAE40),   # strength/outcome tables + RAND_STATE_OFF
+    (_SDG, 0x8A00, 0x8B00),                 # cheat-gate flag [0x8A5C]
+    (_PACK, 0x7900, 0xA100),   # win-count stats [0x79E4]/[0x9E96]/[0x99E0]/[0xA0E4]
+]
+
+
+def _getwinner_seed(cheat_flag, rand_state, strength_tbl, outcome_tbl):
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        m.mem.wb(sdg, 0x8A5C, cheat_flag)
+        m.mem.ww(dg, RAND_STATE_OFF, rand_state & 0xFFFF)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, (rand_state >> 16) & 0xFFFF)
+        for sub, v in strength_tbl.items():
+            m.mem.wb(dg, 0x8902 + sub, v)
+        for idx, v in outcome_tbl.items():
+            m.mem.wb(dg, 0x8918 + idx, v)
+    return seed
+
+
+@pytest.mark.parametrize("cheat_flag,arg_a,arg_b,rand_state,strength_tbl,outcome_tbl", [
+    (1, 0x08, 0x88, 0, {}, {}),         # cheat gate, arg_a's 0x80 clear -> arg_b wins
+    (1, 0x88, 0x08, 0, {}, {}),         # cheat gate, arg_a's 0x80 set -> arg_a wins
+    (0, 0x08, 0x88, 0, {1: 1}, {5: 5}),   # roll(state=0)=8 >= outcome=5 -> arg_b (colony R) wins
+    (0, 0x08, 0x88, 1, {1: 1}, {5: 5}),   # roll(state=1)=1 <  outcome=5 -> arg_a (colony B) wins
+])
+def test_getwinner_state_diff_matches_asm(cheat_flag, arg_a, arg_b, rand_state,
+                                          strength_tbl, outcome_tbl):
+    from simant.recovered.gameplay import get_winner
+    results = _run_and_diff_segs(
+        6, 0x26F4, (arg_a, arg_b),
+        lambda d, s, p: get_winner(d, s, p, arg_a, arg_b),
+        _GETWINNER_REGIONS, near=True,
+        seed_fn=_getwinner_seed(cheat_flag, rand_state, strength_tbl, outcome_tbl))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GETWINNER_REGIONS):
+        assert asm_after == rec_after, (
+            f"arg_a={arg_a:#x} arg_b={arg_b:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
 
 
 # ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
