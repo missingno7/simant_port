@@ -1,5 +1,68 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.98) — /goal grind: _MakeNewHoleB — three real bugs caught
+- RECOVERED `make_new_hole_b` (seg5:1B06, arg: col; FAR return) — by far
+  the trickiest single routine this session. Searches up to 34 candidate
+  positions (`row = ((_SRand1(31) roll + i) % 32) + 2`) for a place to
+  open a new above-ground exit hole near yard column `col`, using ONE of
+  two totally different acceptance tests depending on PACK's `[0x9B6E]`
+  "inside" flag:
+  - flag SET: classify the yard map tile at each candidate into a
+    priority/marker byte via a small lookup (tile `0`->`0x86`; `2`/`3`->
+    `0x8A`; `0x5E..0x61`->`tile+0x22`; `0x66`->`0x85`; `0x68`->`0x84`;
+    else not usable) — first usable candidate wins, write its marker.
+  - flag CLEAR: instead calls the real `_IsClear3x3` (via the new
+    `_clear_3x3(dgroup, plane, x, y)` VM-touching counterpart of the
+    already-pure `is_clear_3x3(cells_clear)`) — first candidate whose
+    whole 3x3 block is clear wins, writes the canonical hole tile `0x50`.
+  On success either way: records the found position into SIMANT_DATA_GROUP
+  scratch fields and `_FillHolesBN`'s per-row hole-tracking array
+  (`[0x82D2 + col]`), then calls `dig_tile_b(col, 1)` to dig the
+  connecting nest tunnel. The "flag CLEAR" success path ALSO carves an
+  8-neighbour edge pattern (`HOLE_EDGE_TILES`, one fixed tile per compass
+  direction) — confirmed via disassembly that the "flag SET" path jumps
+  PAST this carve step entirely, an asymmetry easy to miss.
+- Caught THREE real bugs in this one routine, each via a dedicated state-
+  diff test case, none by re-reading the disassembly cold:
+  1. **Decimal-vs-hex transcription**: the scratch disassembler renders
+     `cmp reg,imm` operands in hex (`0062h`) but a nearby `lea dx,[si+34]`
+     in bare DECIMAL — misread `34` as `0x34` when it's `0x22`. A
+     dedicated tile-in-`[0x5E,0x61]`-band test case caught the wrong
+     marker value immediately. Lesson: when a disassembler mixes
+     notations, check every immediate's radix explicitly, especially
+     `lea`'s displacement operand — don't assume consistency across
+     instruction forms.
+  2. **Control-flow bypass missed on first read**: the "flag SET" success
+     path doesn't fall through into the 8-neighbour carve loop the way the
+     "flag CLEAR" path does — it jumps straight past it to the shared
+     tail. The first port ran the carve unconditionally for both paths;
+     caught via full-suite diffs on the "inside=True" scenarios once the
+     first bug's fix cleared the way to see it.
+  3. **8-bit vs 16-bit sign extension**: the carve loop's compass delta
+     bytes need 8-bit sign extension (`0xFF` -> `-1`) before use, but the
+     first port used the module's `_sx16` helper on the raw byte read —
+     `_sx16(0xFF)` treats it as the SMALL POSITIVE value `255`, not `-1`,
+     since 16-bit sign extension only flips on bit 15, never bit 7. This
+     silently produced wildly out-of-range neighbour coordinates that
+     failed the bounds check on every direction, so the carve loop
+     appeared to run but wrote nothing — no exception, no obvious symptom,
+     just quietly wrong. Caught by manually re-deriving the ACTUAL
+     candidate row a specific test seeded (empirically, via an
+     instrumented CPU trace matching real register values against my
+     assumption) and finding my own port's carve loop produced nonsense
+     coordinates for it. Fixed by using the same local `sbyte(off)`
+     8-bit-sign-extension closure `_fix_exit_map`/`get_smell_t` already
+     established as the house style for this exact situation — the bug
+     was deviating from an established pattern, not lacking one.
+  - 10 scenarios (all 5 marker bands for the "inside" path, search-
+    advance-past-a-rejected-candidate for both flag states, the "every
+    candidate excluded" no-op, and both x-boundary cases) — all green
+    after the three fixes.
+- Suite: simant 1143 (+10). Continuing per /goal — `_MakeNewHoleR`
+  (seg5:1D02, likely the red-colony twin with a similarly asymmetric
+  carve-loop reachability) is next, then `_DigTileThemB/R` (the last
+  layer before `_TryMoveDirB/R` <-> `_GetOutB/R` becomes attemptable).
+
 ## 2026-07-14 (cont.97) — /goal grind: _DigTileR + a shared reroll/track helper
 - RECOVERED `dig_tile_r` (seg5:21DE, args x, y; FAR return) — the red-
   colony twin of `_DigTileB`'s core dig logic, but genuinely simpler: no

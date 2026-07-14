@@ -515,6 +515,72 @@ def test_digtiler_state_diff_matches_asm(x, y, tile, seed_val, count):
             f"{label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _MakeNewHoleB (seg5:1B06) — search + carve a new above-ground hole ---
+_MAKENEWHOLEB_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed
+    (_SDG, 0, 0x9000),                       # delta tables, exit-map arrays, scratch fields
+    (_PACK, 0x7200, 0xA000),                 # inside flag + both colonies' dig accumulators
+]
+
+
+def _makenewholeb_seed(col, seed_val, inside, row_tiles, blocked_rows):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        # blanket-clear a thin strip (map+life) around every candidate row so
+        # _IsClear3x3 (inside=False path) sees a deterministic neighbourhood.
+        for row in range(0, 36):
+            for c in (col - 1, col, col + 1):
+                if not (0 <= c <= 0x3F):
+                    continue
+                m.mem.wb(dg, 0x28E8 + (row << 6) + c, 0x00)
+                m.mem.wb(dg, 0x68E8 + (row << 6) + c, 0x00)
+        for row in range(2, 34):
+            if row in row_tiles:
+                m.mem.wb(dg, 0x28E8 + (row << 6) + col, row_tiles[row])
+            elif inside:
+                m.mem.wb(dg, 0x28E8 + (row << 6) + col, 0x10)   # never a marker tile
+            if row in blocked_rows:
+                m.mem.wb(dg, 0x28E8 + (row << 6) + col, 0xFF)
+    return seed
+
+
+@pytest.mark.parametrize("col,seed_val,inside,row_tiles,blocked_rows", [
+    # inside=True, roll=0 (seed=0) -> first candidate row=2; tile 0 -> marker 0x86
+    (10, 0, True, {2: 0x00}, ()),
+    # tile 2 -> marker 0x8A
+    (10, 0, True, {2: 0x02}, ()),
+    # tile in [0x5E,0x61] -> marker = tile+0x22
+    (10, 0, True, {2: 0x5E}, ()),
+    # tile 0x66 -> marker 0x85
+    (10, 0, True, {2: 0x66}, ()),
+    # row 2 not usable, row 3 (next candidate) is -> search advances
+    (10, 0, True, {2: 0x10, 3: 0x00}, ()),
+    # every candidate excluded -> no-op
+    (10, 0, True, {}, ()),
+    # inside=False: row 2's 3x3 is clear -> writes 0x50 + edges + dig_tile_b
+    (10, 0, False, {}, ()),
+    # inside=False: row 2 blocked, row 3 clear -> search advances
+    (10, 0, False, {}, (2,)),
+    # boundary column
+    (0, 0, False, {}, ()),
+    (0x3F, 0, False, {}, ()),
+])
+def test_makenewholeb_state_diff_matches_asm(col, seed_val, inside, row_tiles,
+                                             blocked_rows):
+    from simant.recovered.gameplay import make_new_hole_b
+    results = _run_and_diff_segs(
+        5, 0x1B06, (col,),
+        lambda d, s, p: make_new_hole_b(d, s, p, col),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_makenewholeb_seed(col, seed_val, inside, row_tiles, blocked_rows))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, (
+            f"col={col} seed={seed_val:#x} inside={inside} tiles={row_tiles} "
+            f"blocked={blocked_rows} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only

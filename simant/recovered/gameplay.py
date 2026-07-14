@@ -1845,6 +1845,139 @@ def dig_tile_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
     fix_exit_map_r(dgroup, simant_data_group, x, y)
 
 
+HOLE_EDGE_TILES = (0x19, 0x1A, 0x1C, 0x1F, 0x1E, 0x1D, 0x1B, 0x18)  # dgroup[0x230C..)
+
+
+def _clear_3x3(dgroup, plane: int, x: int, y: int) -> int:
+    """Read the real map+life state for `is_clear_3x3`'s 9 cells (centre
+    then its 8 compass neighbours) and evaluate it — the VM-touching
+    counterpart of the already-pure `is_clear_3x3(cells_clear)`.  A cell
+    off the grid counts as "not clear" (confirmed by the existing
+    `_IsClear3x3` island test's corner cases)."""
+    cells = [(x, y)] + [(x + dx, y + dy) for dx, dy in zip(CLEAR_3X3_DX, CLEAR_3X3_DY)]
+    results = []
+    for cx, cy in cells:
+        moff = map_cell_offset(plane, cx, cy)
+        loff = life_cell_offset(plane, cx, cy)
+        if moff is None or loff is None:
+            results.append(0)
+            continue
+        results.append(is_clear_tile(plane, dgroup.rb(moff), dgroup.rb(loff)))
+    return is_clear_3x3(results)
+
+
+def make_new_hole_b(dgroup, simant_data_group, pack, col: int) -> None:
+    """Search for a new above-ground exit-hole position near yard column
+    `col`, mark it, carve its 8-neighbour edge pattern, record it for
+    `_FillHolesBN`, and trigger the connecting nest dig.
+
+    Recovered from `_MakeNewHoleB` (SIMANTW.SYM seg5:1B06, arg: col;
+    FAR return).  `col` plays two different coordinate roles in different
+    parts of this routine (confirmed by tracing each address formula
+    independently, not assumed): it is the fixed "row" in the yard-map
+    search below, but also the value written into `_FillHolesBN`'s
+    per-row hole-tracking array and the "x" argument of the final
+    `dig_tile_b` call — ported byte-exact under both roles rather than
+    forced into one consistent name.
+
+    Rolls a `_SRand1(31)` starting offset once, then tries up to 34
+    candidate positions `row = ((roll + i) % 32) + 2` for `i` in `0..33`:
+
+    - PACK's `[0x9B6E]` "inside" flag SET: reads the yard map tile at
+      `(row, col)` and classifies it into a priority/marker byte (0 means
+      "not usable" — the search keeps going): tile `0` -> `0x86`; tile `2`
+      or `3` -> `0x8A`; tile `0x5E..0x61` -> `tile + 0x22`; tile `0x66` ->
+      `0x85`; tile `0x68` -> `0x84`; anything else -> not usable.  The
+      first usable `row` wins; its marker byte is written to the yard map
+      at `(row, col)`, and `(row, col)` is recorded into SIMANT_DATA_GROUP
+      scratch fields `[0x8352]`/`[0x835A]`/`[0x835C]` (a "last placed hole"
+      record whose fields' individual roles aren't further disambiguated
+      here) with `[0x8354]` cleared.
+    - "inside" flag CLEAR: instead calls `_IsClear3x3` for real (plane 1,
+      centre `(row, col)`) and takes the first `row` where the whole 3x3
+      block is clear; on success writes the literal tile `0x50` (the
+      canonical hole marker) at `(row, col)` and the same SDG scratch
+      fields (`[0x835A]`=row, `[0x835C]`=col this time, `[0x8352]`=col).
+
+    Either way, on success: carves the 8-neighbour edge pattern
+    (`HOLE_EDGE_TILES`, one fixed tile per compass direction) into any
+    in-bounds yard-map neighbour whose current tile is `< 0x50`, records
+    `row` into `_FillHolesBN`'s per-row hole-tracking array at
+    `simant_data_group[0x82D2 + col]`, and calls `dig_tile_b(col, 1)` to
+    dig the connecting nest tunnel segment.  Exhausting all candidates
+    without success is a silent no-op.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 0x1F)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    inside = pack.rw(0x9B6E) != 0
+    found_row = None
+    marker = None
+
+    if inside:
+        for i in range(0x22):
+            row = ((roll + i) % 0x20) + 2
+            tile = dgroup.rb(MAP_PLANE_BASE[0] + (row << 6) + col)
+            if tile == 0:
+                m = 0x86
+            elif tile in (2, 3):
+                m = 0x8A
+            elif 0x5E <= tile <= 0x61:
+                m = (tile + 0x22) & 0xFF          # ASM's `lea dx,[si+34]` -- decimal 34
+            elif tile == 0x66:
+                m = 0x85
+            elif tile == 0x68:
+                m = 0x84
+            else:
+                m = 0
+            if m:
+                found_row, marker = row, m
+                break
+        if found_row is not None:
+            dgroup.wb(MAP_PLANE_BASE[0] + (found_row << 6) + col, marker & 0xFF)
+            simant_data_group.ww(0x835A, found_row)
+            simant_data_group.ww(0x835C, col)
+            simant_data_group.ww(0x8352, col)
+            simant_data_group.ww(0x8354, 0)
+    else:
+        for i in range(0x22):
+            row = ((roll + i) % 0x20) + 2
+            if _clear_3x3(dgroup, 1, row, col):
+                found_row = row
+                break
+        if found_row is None:
+            return
+        dgroup.wb(MAP_PLANE_BASE[0] + (found_row << 6) + col, 0x50)
+        simant_data_group.ww(0x835A, found_row)
+        simant_data_group.ww(0x835C, col)
+        simant_data_group.ww(0x8352, col)
+        simant_data_group.ww(0x8354, 0)
+
+        # The 8-neighbour edge carve is reached ONLY on this "not inside"
+        # success path (the ASM's "inside" success path jumps straight past
+        # it) -- confirmed empirically, not assumed, after an initial port
+        # ran it unconditionally and a state-diff test caught the divergence.
+        def sbyte(off):
+            v = simant_data_group.rb(off)
+            return v - 0x100 if v & 0x80 else v
+
+        for di in range(8):
+            ny = sbyte(8 + di) + col
+            nx = sbyte(0 + di) + found_row
+            if not (0 <= nx <= 0x7F and 0 <= ny <= 0x3F):
+                continue
+            off = MAP_PLANE_BASE[0] + (nx << 6) + ny
+            if dgroup.rb(off) < 0x50:
+                dgroup.wb(off, HOLE_EDGE_TILES[di])
+
+    if found_row is None:
+        return
+    simant_data_group.wb(0x82D2 + col, found_row & 0xFF)
+    dig_tile_b(dgroup, simant_data_group, pack, col, 1)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
