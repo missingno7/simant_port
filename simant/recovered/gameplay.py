@@ -222,6 +222,26 @@ def set_map(view, plane: int, x: int, y: int, value: int) -> int | None:
     return off
 
 
+def set_my_health(view, new_health: int) -> int:
+    """Set the player ant's health, with the game's clamp + status flags.
+
+    Recovered from `_SetMyHealth` (SIMANTW.SYM seg5:8C70).  In "god mode"
+    (`[0x8A5E]` set) health is forced to 100.  A positive health clears the
+    dead flag (`[0x9CF0]`); the value is then clamped to 0..100 and stored at
+    `[0xAC8A]`.  A status flag (`[0x9AF2]`) records the change: 0 when actually
+    healing (old health `[0x9BEC]` < new and new >= 10), 1 otherwise (damage,
+    no change, or a near-death heal).  `view` is a DGROUP word view (rw/ww).
+    Returns the stored (clamped) health.
+    """
+    h = 0x64 if view.rw(0x8A5E) != 0 else new_health
+    if h > 0:
+        view.ww(0x9CF0, 0)                  # alive -> clear the "dead" flag
+    h = 0 if h < 0 else (0x64 if h > 0x64 else h)       # clamp to 0..100
+    view.ww(0xAC8A, h)                       # store the health value
+    view.ww(0x9AF2, 0 if (view.rw(0x9BEC) < h and h >= 0x0A) else 1)
+    return h
+
+
 def life_cell_offset(plane: int, x: int, y: int) -> int | None:
     """DGROUP byte offset of life-grid cell (plane, x, y), or None if out of range.
 

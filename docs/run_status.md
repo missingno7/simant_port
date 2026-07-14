@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.69) — state-diff oracle generalized; recover _SetMyHealth
+- Generalized the state-diff harness to the correct design: run the ASM mutator
+  over the REAL DGROUP (side calls stubbed), then apply the recovered Python
+  mutator to a COPY of that same pre-state and require byte-identical images.
+  Both start from the identical pre-state, so only the mutation must match —
+  fixes the earlier fresh-bytearray approach (which failed on all the real game
+  data).  Diff excludes the top stack band (ss==ds==DGROUP for a small-model app,
+  so the call frame lives at the top of DGROUP; sim state is all < ~0xC4A0).
+- RECOVERED `_SetMyHealth` (seg5:8C70) — the second mutator, and a harder one:
+  multi-field + SELECTOR-INDIRECT.  God mode -> 100; alive clears the dead flag
+  ([0x9CF0]); clamp 0..100; store at [0xAC8A]; set a damage/heal flag ([0x9AF2],
+  0 only when actually healing: old [0x9BEC] < new and new >= 10).  The test
+  points the world-state selector globals ([0xC49A..0xC4A0]) at DGROUP and seeds
+  the read fields.  Pure set_my_health(view, new_health) on a bridge word view;
+  18 cases green (god / clamp / heal-vs-damage / negative-as-word).
+- Suite: simant 713.  Oracle now proven on ds-direct AND selector-indirect,
+  single- AND multi-field mutation.  Next: a mutator with RNG (_DropWater uses
+  the recovered _SRand1) or start up the dig chain (_DigTileB -> _DigMyTile).
+
+
 ## 2026-07-14 (cont.68) — STATE-DIFF ORACLE bootstrapped; _SetMap (first mutator)
 - Built the verification tier for MUTATING routines (the seg6 behavior layer needs
   it — return-value proof doesn't apply when a routine changes world state).
