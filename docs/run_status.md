@@ -1,5 +1,19 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.176) — /goal grind: _GrabMap — wrap-clamped map read
+- RECOVERED `grab_map` (`_GrabMap`, SIMANTW.SYM seg7:6DAC, args x=
+  [bp+6], y=[bp+8]; FAR return, 64 bytes) — a PURE predicate (no
+  calls, no side effects) reading the yard map tile at `(x, y)`.
+  Per axis, a genuine WRAPAROUND clamp — independently confirmed via
+  the raw disassembly, NOT the "clamp to the nearer bound" shape one
+  might expect from the name: `x > 0x7F` (signed) maps to `0`, but
+  `x < 0` maps to `0x7F` (the MAX, not `0`); same shape for `y` against
+  `0x3F`.
+- 5 cases (in-range, both directions of both axes' wraparound) — ALL
+  GREEN ON THE FIRST REAL-ASM RUN, confirming the wraparound reading
+  (rather than the more intuitive clamp-to-nearer-bound) was correct.
+- Suite: simant 1763 (+5), full suite green.
+
 ## 2026-07-15 (cont.175) — /goal grind: _FollowCatDir — cat pursuit direction
 - RECOVERED `follow_cat_dir` (`_FollowCatDir`, SIMANTW.SYM seg7:32A6,
   NO args; FAR return, 68 bytes) — a PURE predicate (no calls, nothing

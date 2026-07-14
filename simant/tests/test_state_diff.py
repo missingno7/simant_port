@@ -6489,3 +6489,27 @@ def test_followcatdir_matches_asm(f77b0, f789c, f7a5c, label):
     pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
     result = follow_cat_dir(pack_view)
     assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
+
+
+# ---- _GrabMap (seg7:6DAC) — wrap-clamped yard map tile read ---------------
+def _grabmap_seed(tile_at):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        for (cx, cy), tile in tile_at.items():
+            m.mem.wb(dg, 0x28E8 + (cx << 6) + cy, tile)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tile_at,label", [
+    (20, 20, {(20, 20): 0x11}, "in-range"),
+    (0x80, 20, {(0, 20): 0x22}, "x-over-max-wraps-to-0"),
+    (-1, 20, {(0x7F, 20): 0x33}, "x-negative-wraps-to-max"),
+    (20, 0x40, {(20, 0): 0x44}, "y-over-max-wraps-to-0"),
+    (20, -1, {(20, 0x3F): 0x55}, "y-negative-wraps-to-max"),
+])
+def test_grabmap_matches_asm(x, y, tile_at, label):
+    from simant.recovered.gameplay import grab_map
+    ax, m = _run_and_get_ax(7, 0x6DAC, (x, y), seed_fn=_grabmap_seed(tile_at))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    result = grab_map(dg_view, x, y)
+    assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"

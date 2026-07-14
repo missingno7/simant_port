@@ -7873,3 +7873,36 @@ def follow_cat_dir(pack) -> int:
     if _sx16(pack.rw(0x789C)) > 0:
         return 0
     return pack.rb(0x7A5C) & 3
+
+
+def grab_map(dgroup, x: int, y: int) -> int:
+    """Read the yard map tile at `(x, y)`, wrap-clamping each axis to
+    its valid range — a PURE predicate (no calls, no side effects).
+
+    Recovered from `_GrabMap` (SIMANTW.SYM seg7:6DAC, args x=[bp+6],
+    y=[bp+8]; FAR return, 64 bytes).
+
+    Per axis, a genuine WRAPAROUND clamp (independently confirmed via
+    the raw disassembly, not the "clamp to the nearer bound" shape one
+    might expect): `x > 0x7F` (signed) maps to `0`; `x < 0` maps to
+    `0x7F` (the MAX, not `0`); otherwise `x` is used as-is. Same shape
+    for `y` against `0x3F`. Reads `dgroup[MAP_PLANE_BASE[0] + (cx<<6) +
+    cy]`.
+    """
+    sx = _sx16(x)
+    if sx > 0x7F:
+        cx = 0
+    elif sx < 0:
+        cx = 0x7F
+    else:
+        cx = sx
+
+    sy = _sx16(y)
+    if sy > 0x3F:
+        cy = 0
+    elif sy < 0:
+        cy = 0x3F
+    else:
+        cy = sy
+
+    return dgroup.rb(MAP_PLANE_BASE[0] + (cx << 6) + cy)
