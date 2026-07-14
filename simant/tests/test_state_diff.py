@@ -6972,3 +6972,55 @@ def test_reproduce_state_diff_matches_asm(seed_val, x, y, colony, pre_off,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _REPRODUCE_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _AddAntLion (seg7:4340) — stamp a pit + ring tiles + a slot ----------
+_ADDANTLION_REGIONS = [
+    # A single wide DGROUP window spanning both the plane-1 map cells near
+    # (10,10) (~0x2B00-0x2B90) and the plane-1 life cells (~0x6B00-0x6B90) --
+    # one region so add_ant_lion's single `dgroup` view can address both.
+    (hooks.DG_SEG_INDEX, 0x2800, 0x6C00),
+    (_PACK, 0x7A00, 0x8100),
+    (_SDG, 0x8A00, 0x8B00),
+]
+_AAL_X, _AAL_Y = 10, 10
+
+
+def _addantlion_seed(x, y, count, blocked_dirs):
+    """blocked_dirs: set of direction indices (0..7) whose neighbour cell
+    should read as occupied (life=5, a real non-yellow ant) rather than
+    clear. Out-of-range neighbours (off `map_cell_offset`) are skipped."""
+    from simant.recovered.gameplay import (GET_BEST_DIR_DX, GET_BEST_DIR_DY,
+                                            map_cell_offset, life_cell_offset)
+
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        sdg = m.seg_bases[_SDG]
+        for si in range(8):
+            nx = x + GET_BEST_DIR_DX[si]
+            ny = y + GET_BEST_DIR_DY[si]
+            map_off = map_cell_offset(1, nx, ny)
+            if map_off is None:
+                continue
+            life_off = life_cell_offset(1, nx, ny)
+            m.mem.wb(dg, map_off, 0x00)
+            m.mem.wb(dg, life_off, 5 if si in blocked_dirs else 0)
+        m.mem.ww(sdg, 0x8A88, count)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,count,blocked_dirs,label", [
+    (_AAL_X, _AAL_Y, 0, set(), "all-clear-first-slot"),
+    (_AAL_X, _AAL_Y, 3, {1, 4, 6}, "some-neighbours-blocked"),
+    (_AAL_X, _AAL_Y, 8, set(), "slot8-increments-to-9"),
+    (_AAL_X, _AAL_Y, 9, set(), "slot9-cap-no-further-increment"),
+    (0, 0, 0, set(), "corner-out-of-range-neighbours-skipped"),
+])
+def test_addantlion_state_diff_matches_asm(x, y, count, blocked_dirs, label):
+    from simant.recovered.gameplay import add_ant_lion
+    results = _run_and_diff_segs(
+        7, 0x4340, (x, y), lambda d, p, s: add_ant_lion(d, p, s, x, y),
+        _ADDANTLION_REGIONS, seed_fn=_addantlion_seed(x, y, count, blocked_dirs))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _ADDANTLION_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

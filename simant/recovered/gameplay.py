@@ -8405,3 +8405,57 @@ def reproduce(dgroup, pack, simant_data_group, x: int, y: int, colony: int) -> N
     if simant_data_group.rb(idx) == 0:
         pack.ww(counter_off, (pack.rw(counter_off) + 1) & 0xFFFF)
     simant_data_group.wb(idx, (simant_data_group.rb(idx) + 1) & 0xFF)
+
+
+# The per-direction ring-tile table _AddAntLion reads at DGROUP[0x25E8+dir] —
+# a plain compile-time DGROUP literal (no pointer-global indirection), same
+# category as GET_BEST_DIR_DX/DY, confirmed by a direct memory read.
+ADD_ANT_LION_RING_TILE = (1, 2, 4, 7, 6, 5, 3, 0)
+
+
+def add_ant_lion(dgroup, pack, simant_data_group, x: int, y: int) -> None:
+    """Stamp a new ant lion pit: the centre tile plus up to 8 clear
+    neighbouring "ring" tiles, then append a slot to the PACK ant-lion
+    array (capped at 10 live ant lions).
+
+    Recovered from `_AddAntLion` (SIMANTW.SYM seg7:4340, args x=[bp+6],
+    y=[bp+8]; FAR return, 186 bytes). Composes `set_map` (plane 1,
+    the yard plane) to stamp the pit centre to tile `0x38` unconditionally,
+    then for each of the 8 compass directions (`GET_BEST_DIR_DX`/`DY` —
+    confirmed via a direct memory read that DGROUP's own direction table,
+    reached through two pointer-globals at `[0xC57E]`/`[0xC580]` that both
+    resolve to SIMANT_DATA_GROUP, is byte-for-byte this same constant
+    table) checks the neighbour cell via the real `_IsClearTile` routine's
+    own composition (`map_cell_offset` + `life_cell_offset` + the
+    `is_clear_tile` predicate) and, if clear, stamps it to
+    `ADD_ANT_LION_RING_TILE[dir] + 0x30`. Finally appends one slot to the
+    PACK ant-lion arrays — `[0x809C+slot]`=x, `[0x80BC+slot]`=y (byte),
+    zeroing `[0x7A68+slot]`/`[0x7D34+slot]`/`[0x7D4E+slot]` — at the live
+    count `simant_data_group[0x8A88]` (the SAME field `find_in_lion_list`/
+    `kill_ant_lion` read), bumping that count only while it's `< 9` (a
+    hard cap at 10 slots — once full, further calls keep overwriting slot
+    9 without growing the count further).
+    """
+    set_map(dgroup, 1, x, y, 0x38)
+
+    for si in range(8):
+        nx = x + GET_BEST_DIR_DX[si]
+        ny = y + GET_BEST_DIR_DY[si]
+        off = map_cell_offset(1, nx, ny)
+        if off is None:
+            continue
+        map_tile = dgroup.rb(off)
+        life = dgroup.rb(life_cell_offset(1, nx, ny))
+        if is_clear_tile(1, map_tile, life) != 1:
+            continue
+        tile = (ADD_ANT_LION_RING_TILE[si] + 0x30) & 0xFF
+        set_map(dgroup, 1, nx, ny, tile)
+
+    slot = simant_data_group.rw(0x8A88)
+    pack.wb(0x809C + slot, x & 0xFF)
+    pack.wb(0x80BC + slot, y & 0xFF)
+    pack.wb(0x7A68 + slot, 0)
+    pack.wb(0x7D34 + slot, 0)
+    pack.wb(0x7D4E + slot, 0)
+    if slot < 9:
+        simant_data_group.ww(0x8A88, (slot + 1) & 0xFFFF)

@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.186) — /goal grind: _AddAntLion
+- RECOVERED `add_ant_lion` (`_AddAntLion`, SIMANTW.SYM seg7:4340, args
+  x=[bp+6], y=[bp+8]; FAR return, 186 bytes). Composes `set_map`
+  (plane 1, the yard plane) to stamp the pit centre to tile `0x38`
+  unconditionally, then for each of the 8 compass directions checks
+  the neighbour cell via the real `_IsClearTile` routine's own
+  composition (`map_cell_offset` + `life_cell_offset` + the
+  `is_clear_tile` predicate) and, if clear, stamps it to a
+  per-direction ring-tile (`ADD_ANT_LION_RING_TILE[dir] + 0x30`).
+  Finally appends one slot to the PACK ant-lion arrays (x/y plus three
+  zeroed status bytes), bumping the SIMANT_DATA_GROUP live count
+  `[0x8A88]` (the same field `find_in_lion_list`/`kill_ant_lion` read)
+  only while it's `< 9` — a hard cap at 10 slots.
+- Independently confirmed via direct memory reads (not assumed) that:
+  (a) the direction table reached through DGROUP pointer-globals
+  `[0xC57E]`/`[0xC580]` — both of which resolve to the SIMANT_DATA_GROUP
+  selector — is byte-for-byte the SAME `GET_BEST_DIR_DX`/`DY` compass
+  table already used throughout this session, just addressed as one
+  contiguous 16-byte block (`dx` at `SDG+0`, `dy` at `SDG+8`) rather
+  than through the usual literal DGROUP offsets; (b) the per-direction
+  ring-tile table at `DGROUP[0x25E8]` is a plain compile-time literal
+  (DS stays DGROUP throughout this function's loop — no segment
+  override before the loop, unlike `recruit`/`un_recruit`'s `ds=5294h`
+  pattern), so it was hardcoded as a new module constant
+  `ADD_ANT_LION_RING_TILE = (1, 2, 4, 7, 6, 5, 3, 0)` following the
+  same precedent as `GET_BEST_DIR_DX`/`DY`.
+- 5 cases (all-neighbours-clear, some-blocked-by-a-real-ant, the two
+  count=8/9 cap-boundary cases, and a grid-corner case exercising the
+  out-of-range-neighbour-skip branch) — all green on the first
+  real-ASM run.
+- Suite: simant 1828 (+5), full suite green.
+
 ## 2026-07-15 (cont.185) — /goal grind: _Reproduce
 - RECOVERED `reproduce` (`_Reproduce`, SIMANTW.SYM seg7:3D4C, args
   x=[bp+6], y=[bp+8], colony=[bp+10]; FAR return, 166 bytes). Composes
