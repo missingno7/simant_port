@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.65) — _IsItAHole recovered; map/life predicate tier complete
+- RECOVERED `_IsItAHole` (seg5:9B4A): plane<=1 tail-calls _IsItHole (so the island
+  reproduces _IsItHole's residue exactly); plane>1 is a yard-plane hole (top row
+  y==0, tile 0x18).  Intricate multi-case residue (y>0/coord-invalid/plane>3/valid)
+  green first try.  Islands 67 -> 68.  Suite: simant 660.
+- TIER BOUNDARY: the self-contained map/life-query PREDICATE family is now done —
+  _IsNotObstacle, _IsClearTile, _IsValidLocation, _IsItDigable, _IsItAHole (+ the
+  earlier leaf predicates).  What remains is a step-change in complexity, each a
+  bigger careful slice:
+    * _IsItYellow (5:96B6): 2 modes (a _GetDis proximity test vs a life read), the
+      yellow-ant position globals [0xAC7C/E], a mode flag es:[0x9FE8].
+    * _IsClear3x3 (5:5AD2): 9x _IsClearTile via DGROUP direction tables; residue =
+      the last inner call's.
+    * _TileCanBeMovedOn (5:9342): 7 args, many map reads, cross-arg logic.
+    * behaviors (_DoForageAnt/_DoNestAntB/_GetBestDir...): many subcalls, RNG, ds
+      swaps — the sim-tick layer that a native backend ultimately needs.
+    * writers _SetMap (5:617A) / _SetLife (5:5D18): side-effecting redraw far-calls
+      (partial islands — invoke the sub-call through the VM).
+
 ## 2026-07-14 (cont.64) — autonomous grind: 3 more compound map-query routines
 - Continued the compound map-query grind (oracle-guided residue).  Recovered:
     _IsClearTile   (5:5B2C) map passable + no blocking ant (life not in {0,FE,FF});
