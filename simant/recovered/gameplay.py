@@ -1723,6 +1723,42 @@ def _acc_add32(pack, lo_off: int, hi_off: int, delta: int) -> int:
     return total
 
 
+def _dig_tile_reroll_and_track(dgroup, pack, map_base: int, xsum_off: int,
+                               ysum_off: int, count_off: int, avgx_off: int,
+                               avgy_off: int, x: int, y: int) -> bool:
+    """Shared reroll + running-average-position bookkeeping `_DigTileB`/
+    `_DigTileR` both do per colony (and `_DigTileB` does a SECOND time, for
+    the red colony, on its rare tunnel-through branch): if the map tile at
+    (x, y) is dirt, reroll it to a random 0..7 (`_SRand8`), accumulate x/y
+    into a 32-bit running sum pair, bump a dig counter, and — once the
+    counter is positive — recompute the running average dig position via
+    two genuine `__aFldiv` calls (sum / count).  Returns whether the tile
+    was dirt (both callers still do their post-dig smoothing either way;
+    this is purely for `_DigTileB`'s "was the black tile dirt" gate around
+    its own y>0x35 red-tunnel roll).
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+    from .crt_math import a_f_ldiv
+
+    idx = (x << 6) + y
+    tile = dgroup.rb(map_base + idx)
+    if not is_it_dirt(tile):
+        return False
+
+    seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    dgroup.wb(map_base + idx, val & 0xFF)
+
+    xsum = _acc_add32(pack, xsum_off, xsum_off + 2, x)
+    ysum = _acc_add32(pack, ysum_off, ysum_off + 2, y)
+    count = (pack.rw(count_off) + 1) & 0xFFFF
+    pack.ww(count_off, count)
+    if _sx16(count) > 0:
+        pack.ww(avgx_off, a_f_ldiv(xsum, _sx16(count)) & 0xFFFF)
+        pack.ww(avgy_off, a_f_ldiv(ysum, _sx16(count)) & 0xFFFF)
+    return True
+
+
 def dig_tile_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
     """Dig one black-colony nest tile: reroll it if it's dirt, track a
     running average dig position, occasionally punch through into the red
@@ -1735,42 +1771,28 @@ def dig_tile_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
     earlier (`_IsItDirt`, `_SRand1`, `_SRand8`) — this is the first routine
     ported specifically because a prior slice's recoveries unblocked it.
 
-    - If the black nest map tile at (x, y) is dirt (`is_it_dirt`): reroll
-      it to a random 0..7 (`_SRand8`), accumulate `x`/`y` into 32-bit
-      running sums (`pack[0x8104:0x8108]`/`[0x811A:0x811E]`) and a dig
-      counter (`pack[0x72C8]`), and — once the counter is positive —
-      recompute the running average position via two genuine `__aFldiv`
-      calls (sum / count), stored at `pack[0x7C48]`/`[0x7C90]`.
-    - If additionally `y > 0x35` (near the yard-facing end of the nest)
-      AND a `_SRand1(0x40)` roll comes up exactly 0 (a 1-in-64 chance):
-      marks the black tile `0x14` (a tunnel-through marker) and repeats the
-      SAME dirt-check/reroll/running-average dance for the red colony's
-      map at the identical (x, y) (separate PACK fields at `[0x9DDC..)`/
-      `[0x9DE2..)`/`[0x7A56]`/`[0x9FBA]`/`[0x9FD2]`), then smooths the 4
-      red-map neighbours and the red exit-map at (x, y), and marks the red
-      tile `0x14` too.
+    - Rerolls/tracks the black tile via `_dig_tile_reroll_and_track`
+      (running sums at `pack[0x8104:0x8108]`/`[0x811A:0x811E]`, counter
+      `pack[0x72C8]`, averages at `pack[0x7C48]`/`[0x7C90]`); the black
+      tile being dirt is also the gate for the next step.
+    - If the black tile WAS dirt AND `y > 0x35` (near the yard-facing end
+      of the nest) AND a `_SRand1(0x40)` roll comes up exactly 0 (a
+      1-in-64 chance): marks the black tile `0x14` (a tunnel-through
+      marker) and repeats the SAME reroll/track dance for the red
+      colony's map at the identical (x, y) (separate PACK fields at
+      `[0x9DDC..)`/`[0x9DE2..)`/`[0x7A56]`/`[0x9FBA]`/`[0x9FD2]`), then
+      smooths the 4 red-map neighbours and the red exit-map at (x, y),
+      and marks the red tile `0x14` too.
     - Always (regardless of every branch above — even a no-op "tile wasn't
       dirt" call still does this) smooths the 4 black-map neighbours and
       refreshes the black exit-map at (x, y).
     """
-    idx = (x << 6) + y
-    tile = dgroup.rb(MAP_PLANE_BASE[2] + idx)
+    was_dirt = _dig_tile_reroll_and_track(
+        dgroup, pack, MAP_PLANE_BASE[2], 0x8104, 0x811A, 0x72C8, 0x7C48,
+        0x7C90, x, y)
 
-    if is_it_dirt(tile):
-        from .simone import SRAND_SEED_OFF, srand1, srand_pow2
-        from .crt_math import a_f_ldiv
-
-        seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
-        dgroup.ww(SRAND_SEED_OFF, seed)
-        dgroup.wb(MAP_PLANE_BASE[2] + idx, val & 0xFF)
-
-        xsum = _acc_add32(pack, 0x8104, 0x8106, x)
-        ysum = _acc_add32(pack, 0x811A, 0x811C, y)
-        count = (pack.rw(0x72C8) + 1) & 0xFFFF
-        pack.ww(0x72C8, count)
-        if _sx16(count) > 0:
-            pack.ww(0x7C48, a_f_ldiv(xsum, _sx16(count)) & 0xFFFF)
-            pack.ww(0x7C90, a_f_ldiv(ysum, _sx16(count)) & 0xFFFF)
+    if was_dirt:
+        from .simone import SRAND_SEED_OFF, srand1
 
         dig_red = False
         if y > 0x35:
@@ -1779,21 +1801,11 @@ def dig_tile_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
             dig_red = roll == 0
 
         if dig_red:
+            idx = (x << 6) + y
             dgroup.wb(MAP_PLANE_BASE[2] + idx, 0x14)
-            rtile = dgroup.rb(MAP_PLANE_BASE[3] + idx)
-            if is_it_dirt(rtile):
-                seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
-                dgroup.ww(SRAND_SEED_OFF, seed)
-                dgroup.wb(MAP_PLANE_BASE[3] + idx, val & 0xFF)
-
-                rxsum = _acc_add32(pack, 0x9DDC, 0x9DDE, x)
-                rysum = _acc_add32(pack, 0x9DE2, 0x9DE4, y)
-                rcount = (pack.rw(0x7A56) + 1) & 0xFFFF
-                pack.ww(0x7A56, rcount)
-                if _sx16(rcount) > 0:
-                    pack.ww(0x9FBA, a_f_ldiv(rxsum, _sx16(rcount)) & 0xFFFF)
-                    pack.ww(0x9FD2, a_f_ldiv(rysum, _sx16(rcount)) & 0xFFFF)
-
+            _dig_tile_reroll_and_track(
+                dgroup, pack, MAP_PLANE_BASE[3], 0x9DDC, 0x9DE2, 0x7A56,
+                0x9FBA, 0x9FD2, x, y)
             smooth_edges_r(dgroup, x, y - 1)
             smooth_edges_r(dgroup, x + 1, y)
             smooth_edges_r(dgroup, x, y + 1)
@@ -1806,6 +1818,31 @@ def dig_tile_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
     smooth_edges_b(dgroup, x, y + 1)
     smooth_edges_b(dgroup, x - 1, y)
     fix_exit_map_b(dgroup, simant_data_group, x, y)
+
+
+def dig_tile_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """Dig one red-colony nest tile — the simpler, no-tunnel-through
+    sibling of `dig_tile_b`'s red-colony branch (this is what a red ant's
+    OWN dig calls, versus the rare cross-colony punch-through `_DigTileB`
+    occasionally triggers).
+
+    Recovered from `_DigTileR` (SIMANTW.SYM seg5:21DE, args x=[bp+6],
+    y=[bp+8]; FAR return).  Rerolls/tracks the red tile via the SAME shared
+    `_dig_tile_reroll_and_track` helper and the SAME PACK fields
+    `_DigTileB`'s red branch uses (`[0x9DDC..)`/`[0x9DE2..)`/`[0x7A56]`/
+    `[0x9FBA]`/`[0x9FD2]`), then always smooths the 4 red-map neighbours
+    and refreshes the red exit-map at (x, y) — no y-threshold gate, no
+    RNG roll, no black-side interaction at all.
+    """
+    _dig_tile_reroll_and_track(
+        dgroup, pack, MAP_PLANE_BASE[3], 0x9DDC, 0x9DE2, 0x7A56, 0x9FBA,
+        0x9FD2, x, y)
+
+    smooth_edges_r(dgroup, x, y - 1)
+    smooth_edges_r(dgroup, x + 1, y)
+    smooth_edges_r(dgroup, x, y + 1)
+    smooth_edges_r(dgroup, x - 1, y)
+    fix_exit_map_r(dgroup, simant_data_group, x, y)
 
 
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:

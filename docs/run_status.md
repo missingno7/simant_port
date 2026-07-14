@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.97) — /goal grind: _DigTileR + a shared reroll/track helper
+- RECOVERED `dig_tile_r` (seg5:21DE, args x, y; FAR return) — the red-
+  colony twin of `_DigTileB`'s core dig logic, but genuinely simpler: no
+  y-threshold gate, no `_SRand1` roll, no black-side interaction at all —
+  it's what a red ant's OWN dig calls, versus the rare cross-colony
+  punch-through `_DigTileB` occasionally triggers into the exact same red
+  PACK fields (`[0x9DDC..)`/`[0x9DE2..)`/`[0x7A56]`/`[0x9FBA]`/`[0x9FD2]`).
+- Refactored `_DigTileB`'s reroll/accumulate/average logic out into a new
+  shared `_dig_tile_reroll_and_track` helper (map base + 5 PACK field
+  offsets + x/y in, dirt-or-not out) — `_DigTileR` and `_DigTileB`'s red
+  branch both reuse it now instead of duplicating the same 15 lines twice.
+  Re-ran `_DigTileB`'s existing 8 test cases after the refactor to confirm
+  it's a pure restructuring (all passed unchanged, no behavior drift).
+- Hit two small HARNESS setup mistakes while wiring the new test (neither
+  a logic bug): first, passed 4 region tuples but a 3-arg lambda (split
+  the count/sum PACK fields into two separate windows by habit, forgetting
+  `_run_and_diff_segs` gives each region its OWN view argument) — merged
+  into one wide PACK window. Second, the merged DGROUP region only covered
+  the red map plane, missing the `_SRand8` seed at `0xCBF2` — same "region
+  doesn't cover every table the function touches" class of mistake seen
+  repeatedly this session (cont.91, cont.93); fixed by widening to the
+  seed offset, same as `_DigTileB`'s own region already does.
+- 5 scenarios (not-dirt no-op, dirt-with-average, count-starts-at-zero,
+  both x-boundary cases) — all green after the two harness fixes.
+- Suite: simant 1133 (+5). Continuing per /goal — `_MakeNewHoleB`/
+  `_MakeNewHoleR` (seg5:1B06/1D02, need `_SRand1`✅, `_IsClear3x3`✅, and
+  now `_DigTileB`/`_DigTileR`✅) are next, followed by `_DigTileThemB/R`
+  (which need those plus `__aFldiv`✅) — the last layer before
+  `_TryMoveDirB/R` <-> `_GetOutB/R` becomes attemptable.
+
 ## 2026-07-14 (cont.96) — /goal grind: _DigTileB — the first payoff of __aFldiv
 - RECOVERED `dig_tile_b` (seg5:1FE4, args x, y; FAR return) — the first
   routine specifically unblocked by a PRIOR slice's recovery this session

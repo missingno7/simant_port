@@ -474,6 +474,47 @@ def test_digtileb_state_diff_matches_asm(x, y, tile, rtile, seed_val, count, rco
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _DigTileR (seg5:21DE) — dig one red-colony nest tile, no tunnelling --
+_DIGTILER_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x58E8, 0xCBF4),   # red nest map plane through the SRand seed
+    (_SDG, 0, 0x23A4 + 0x1000),              # delta tables + red exit-map array
+    (_PACK, 0x7A00, 0xA000),   # count [0x7A56], sums/averages [0x9DDC..0x9FD4)
+]
+
+
+def _digtiler_seed(x, y, tile, seed_val, count):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        idx = (x << 6) + y
+        m.mem.wb(dg, 0x58E8 + idx, tile)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x7A56, count)
+        m.mem.ww(pack, 0x9DDC, 50)
+        m.mem.ww(pack, 0x9DDE, 0)
+        m.mem.ww(pack, 0x9DE2, 75)
+        m.mem.ww(pack, 0x9DE4, 0)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tile,seed_val,count", [
+    (20, 20, 0x40, 0x1234, 3),      # not dirt -> smoothing tail only
+    (20, 20, 0x25, 0x1234, 3),      # dirt -> reroll + running average
+    (20, 0, 0x25, 0x1234, 0),       # count starts at 0 -> becomes 1
+    (0, 20, 0x25, 0x1234, 3),       # x=0 boundary (west neighbour off-grid)
+    (0x3F, 20, 0x25, 0x1234, 3),    # x=0x3F boundary (east neighbour off-grid)
+])
+def test_digtiler_state_diff_matches_asm(x, y, tile, seed_val, count):
+    from simant.recovered.gameplay import dig_tile_r
+    results = _run_and_diff_segs(
+        5, 0x21DE, (x, y),
+        lambda d, s, p: dig_tile_r(d, s, p, x, y),
+        _DIGTILER_REGIONS, seed_fn=_digtiler_seed(x, y, tile, seed_val, count))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DIGTILER_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} tile={tile:#x} seed={seed_val:#x} count={count} "
+            f"{label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only
