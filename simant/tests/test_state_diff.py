@@ -445,6 +445,85 @@ def test_alarmhere2_state_diff_matches_asm(x, y, value, existing):
     assert asm_after == rec_after, _first_diff(asm_after, rec_after, _ALARM_BASE)
 
 
+# ---- _FindInAList/BList/RList (seg5:2C42/2C86/2CCE) — pure list search -----
+# Read-only predicates (no state mutation): seed ONE machine, run the ASM to
+# return and capture AX, then feed the SAME machine's (still-seeded, untouched
+# since nothing was written) memory to the recovered function via ByteBackend
+# and compare.  reuses this file's PACK/SIMANT_DATA_GROUP segment indices.
+def _run_and_get_ax(m, seg, off, args):
+    s = m.cpu.s
+    s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[seg], off
+    sp = s.sp
+    for v in (*reversed(args), SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(50_000):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError(f"ASM {seg}:{off:#06x} did not return")
+    return s.ax
+
+
+@pytest.mark.parametrize("count,slots,target0,target1", [
+    (5, [(0, 10, 20, 1), (1, 10, 20, 1)], 10, 20),        # 2 matches -> last wins
+    (5, [(2, 7, 8, 1)], 7, 8),                             # single match mid-list
+    (3, [(0, 1, 1, 0)], 1, 1),                             # 3rd field 0 -> no match
+    (0, [], 5, 5),                                          # empty list -> 0xFFFF
+    (4, [(3, 9, 9, 1)], 1, 1),                              # no match at all
+])
+def test_findinalist_matches_asm(count, slots, target0, target1):
+    from simant.recovered.gameplay import find_in_a_list
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    m.mem.ww(pack, 0x80F0, count)
+    for slot, f0, f1, f2 in slots:
+        m.mem.wb(sdg, 0x23A4 + slot, f0)
+        m.mem.wb(sdg, 0x278E + slot, f1)
+        m.mem.wb(sdg, 0x2F62 + slot, f2)
+
+    ax = _run_and_get_ax(m, 5, 0x2C42, (target0, target1))
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    expect = find_in_a_list(pack_view, sdg_view, target0, target1)
+    assert ax == (expect & 0xFFFF)
+
+
+@pytest.mark.parametrize("routine,off,count_off,y_off,x_off,c_off,fn_name", [
+    ("_FindInBList", 0x2C86, 0x99D4, 0x3736, 0x392C, 0x3D18, "find_in_b_list"),
+    ("_FindInRList", 0x2CCE, 0x72CC, 0x4104, 0x42FA, 0x46E6, "find_in_r_list"),
+])
+@pytest.mark.parametrize("count,slots,ty,tx,tc", [
+    (5, [(0, 5, 6, 2), (1, 5, 6, 2)], 5, 6, 2),   # 2 matches -> last wins
+    (5, [(2, 7, 8, 3)], 7, 8, 3),                  # single match mid-list
+    (3, [(0, 1, 1, 1)], 1, 1, 2),                  # caste mismatch -> no match
+    (0, [], 5, 5, 1),                              # empty list -> 0xFFFF
+])
+def test_findinlist_matches_asm(routine, off, count_off, y_off, x_off, c_off,
+                                fn_name, count, slots, ty, tx, tc):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+    m.mem.ww(pack, count_off, count)
+    for slot, y, x, caste in slots:
+        m.mem.wb(sdg, y_off + slot, y)
+        m.mem.wb(sdg, x_off + slot, x)
+        m.mem.wb(sdg, c_off + slot, caste)
+
+    ax = _run_and_get_ax(m, 5, off, (ty, tx, tc))
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    expect = fn(pack_view, sdg_view, ty, tx, tc)
+    assert ax == (expect & 0xFFFF), f"{routine}: asm={ax:#06x} rec={expect:#06x}"
+
+
 def _sx(v):
     return v - 0x10000 if v & 0x8000 else v
 

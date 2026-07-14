@@ -1,6 +1,30 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.74) — /goal grind: the full scent/alarm pheromone system (10 fns)
+## 2026-07-14 (cont.75) — /goal grind: _FindInAList/BList/RList (pure predicates)
+- RECOVERED the three ant-list search predicates (seg5:2C42/2C86/2CCE): search
+  the yard/black/red ant lists BACKWARD (highest slot first — last-added wins on
+  a tie) for a slot whose recorded fields match, using the SAME per-ant arrays
+  discovered in cont.73 (kill_tail_b/r): _FindInBList/RList match (Y,X,caste)
+  against the exact array offsets kill_tail_[br] reads/clears; _FindInAList
+  matches a DIFFERENT array set (0x23A4/278E/2F62, the yard "A list", 2-value +
+  nonzero-flag match).  All three read their live count from PACK
+  (0x80F0/0x99D4/0x72CC) via the SAME "world selector" indirection pattern as
+  every other DGROUP pointer-global found so far.
+- Pure read-only predicates -> proven via return-value A/B (not state-diff):
+  seed one machine, run the ASM to return, capture AX, then feed the SAME
+  seeded machine's PACK/SIMANT_DATA_GROUP data to the recovered function and
+  compare.  Caught and fixed a bug while writing this: an early draft created
+  TWO SEPARATE machines (seeded one, ran ASM on an unseeded other) and used a
+  hacky global-mutable-state memory view — replaced with one seeded machine
+  shared by both the ASM run and the recovered-fn comparison, and a proper
+  `m.mem.block(seg, 0, 0x10000)` extraction (the segment-translation-safe
+  pattern already used elsewhere in this file) instead of indexing `m.mem.data`
+  directly with a raw selector value (selectors need translation, not linear
+  offsets).  13 cases green.
+- Suite: simant 806.  Continuing per /goal — next: _AddAntToAList/BList/RList
+  (the INSERT side of these lists — likely the next state-diff mutators, and
+  the natural companion to what's just been recovered).
+
 - RECOVERED the whole pheromone/alarm subsystem `_DoForageAnt`/`_DoRandAntA` feed
   on: `_ColonySmellB/RN`, `_ColonySmellB/RT`, `_JamScentB/RN`, `_JamScentB/RT`,
   `_AlarmHere`, `_AlarmHere2` (seg6:92AA/92D8/9306/9344/94B6/94F6/9536/9576/

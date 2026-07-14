@@ -510,6 +510,63 @@ def s_get_dis(x1: int, y1: int, x2: int, y2: int) -> int:
     return abs(x2 - x1) + abs(y2 - y1)
 
 
+def find_in_a_list(pack, simant_data_group, target0: int, target1: int) -> int:
+    """Search the yard ("A") ant list backward for the last-added slot whose
+    recorded fields match (target0, target1) and whose third field is nonzero.
+
+    Recovered from `_FindInAList` (SIMANTW.SYM seg5:2C42, args target0=[bp+6],
+    target1=[bp+8]).  The live slot count is read from `pack[0x80F0]`; per-slot
+    fields are parallel byte arrays in SIMANT_DATA_GROUP: `[0x23A4 + slot] ==
+    target0`, `[0x278E + slot] == target1`, `[0x2F62 + slot] != 0`.  Search order
+    is backward (highest slot first — the most recently added ant matches
+    first).  Returns the found 0-based slot index, or 0xFFFF if none match.
+    """
+    count = pack.rw(0x80F0)
+    for slot in range(count - 1, -1, -1):
+        if (simant_data_group.rb(0x23A4 + slot) == target0
+                and simant_data_group.rb(0x278E + slot) == target1
+                and simant_data_group.rb(0x2F62 + slot) != 0):
+            return slot
+    return 0xFFFF
+
+
+def find_in_b_list(pack, simant_data_group, y: int, x: int, caste: int) -> int:
+    """Search the black colony's ant list backward for the last-added slot at
+    (x, y) with the given caste.
+
+    Recovered from `_FindInBList` (SIMANTW.SYM seg5:2C86, args y=[bp+6],
+    x=[bp+8], caste=[bp+0xa]).  Uses the SAME per-ant record arrays
+    `kill_tail_b` writes: `pack[0x99D4]` for the count, and SIMANT_DATA_GROUP's
+    `[0x3736 + slot]` (Y), `[0x392C + slot]` (X), `[0x3D18 + slot]` (caste/type
+    — the field `kill_tail_b` clears to 0 when a tail dies).  Returns the found
+    0-based slot index, or 0xFFFF if none match.
+    """
+    count = pack.rw(0x99D4)
+    for slot in range(count - 1, -1, -1):
+        if (simant_data_group.rb(0x3736 + slot) == y
+                and simant_data_group.rb(0x392C + slot) == x
+                and simant_data_group.rb(0x3D18 + slot) == caste):
+            return slot
+    return 0xFFFF
+
+
+def find_in_r_list(pack, simant_data_group, y: int, x: int, caste: int) -> int:
+    """The red-colony twin of `find_in_b_list` (grid/array bases matching
+    `kill_tail_r`'s: count `pack[0x72CC]`, arrays `[0x4104+slot]` (Y),
+    `[0x42FA+slot]` (X), `[0x46E6+slot]` (caste)).
+
+    Recovered from `_FindInRList` (SIMANTW.SYM seg5:2CCE, args y=[bp+6],
+    x=[bp+8], caste=[bp+0xa]).
+    """
+    count = pack.rw(0x72CC)
+    for slot in range(count - 1, -1, -1):
+        if (simant_data_group.rb(0x4104 + slot) == y
+                and simant_data_group.rb(0x42FA + slot) == x
+                and simant_data_group.rb(0x46E6 + slot) == caste):
+            return slot
+    return 0xFFFF
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
