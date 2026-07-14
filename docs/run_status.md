@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.62) — SaveAs dialog fully brought up (list box + DlgDirList)
+- Continued the SaveAs frontier by REPLAYING cold4 past the WM_SETREDRAW fix to
+  OBSERVE (deterministically, no resume artifact) what the dialog needs next.
+  Walked the whole chain in one session, each gap confirmed by re-observing:
+    1. DlgDirList (USER.100) — fill the list box with the dir listing (the twin of
+       DlgDirListComboBox; both now share _fill_dir_control).
+    2. LB_GETTEXT / LB_GETCOUNT + the item-list family — a new ListBox branch in
+       SendDlgItemMessage mirroring the ComboBox one (same items/sel store).
+    3. InvalidateRect on a control HWND (from GetDlgItem) — no-op for non-Window
+       handles (our dialog UI paints on demand) instead of a Window-only crash.
+- RESULT: the SaveAs dialog now opens, populates + reads its file list, and
+  reaches the wait-for-user-event state (DemoEnded — cold4 has no dialog input).
+  Fully functional.  win16_re 0418984 (bumped).  Suites: win16_re 129, simant 547.
+- METHOD note: replaying the recorded demo past a fix is the clean way to observe
+  the next gap on the SAME input path — beats resuming a mid-callback crash
+  snapshot (which artifacts on the half-built dialog handle).
+
 ## 2026-07-14 (cont.61) — SaveAs dialog frontier: WM_SETREDRAW to a list box
 - FRONTIER (owner's `--record cold4 --no-hooks`): the SaveAs file dialog gapped
   at instr 187,559,268 — `SendDlgItemMessage ListBox msg 0x000B` (control 404)
