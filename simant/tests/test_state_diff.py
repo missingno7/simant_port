@@ -750,6 +750,111 @@ def test_digtilethemr_state_diff_matches_asm(x, y, tile_yplus1, tile_yminus1,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _TryMoveDirR / _GetOutR (seg6:6850 / 74BA) — movement EXECUTION,   ----
+# a genuine mutual-recursion pair.  Broad shared regions since either can
+# transitively reach almost the whole dig subsystem.
+_TRYMOVE_GETOUT_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0, 0x9000),
+    (_PACK, 0x7200, 0xA000),
+]
+
+
+def _trymove_seed(x, y, tile_at_dest, slot, caste, seed_val):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x46E6 + slot, caste)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        if tile_at_dest is not None:
+            for si in range(8):
+                nx = x + GET_BEST_DIR_DX[si]
+                ny = y + GET_BEST_DIR_DY[si]
+                if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x58E8 + (nx << 6) + ny, tile_at_dest)
+        # keep a GetOutR delegation (new_y<1) predictable: row-0 tile != 0x18
+        # (the "not a marked hole" branch), no candidate dirt neighbours, so
+        # it just rerolls RNG and recurses once into TryMoveDirR(x,1,roll)
+        m.mem.wb(dg, 0x58E8 + (x << 6) + 0, 0x10)
+        m.mem.wb(sdg, 0x13A4 + (x << 6), 0)
+        for c in (x - 1, x, x + 1):
+            if 0 <= c <= 0x3F:
+                m.mem.wb(dg, 0x58E8 + (c << 6) + 1, 0x40)   # not dirt -> no side dig
+    return seed
+
+
+@pytest.mark.parametrize("x,y,direction,tile_at_dest,slot,caste,seed_val", [
+    (30, 30, -1, 0x10, 0, 0x03, 0x1234),        # direction<0 -> fail
+    (0, 30, 5, 0x10, 0, 0x03, 0x1234),          # new_x<0 -> fail (dir=5 -> dx=-1)
+    (30, 0, 0, 0x10, 0, 0x03, 0x1234),          # new_y<1 -> delegates to GetOutR
+    (30, 30, 3, 0x20, 0, 0x03, 0x1234),         # destination tile>=0x1C -> fail
+    (30, 30, 3, 0x10, 0, 0x03, 0x1234),         # successful move
+    (30, 30, 3, 0x10, 2, 0xAA, 0x1234),         # successful move, different slot/caste
+])
+def test_trymovedirr_state_diff_matches_asm(x, y, direction, tile_at_dest, slot,
+                                            caste, seed_val):
+    from simant.recovered.gameplay import try_move_dir_r
+    results = _run_and_diff_segs(
+        6, 0x6850, (x, y, direction),
+        lambda d, s, p: try_move_dir_r(d, s, p, x, y, direction),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_trymove_seed(x, y, tile_at_dest, slot, caste, seed_val))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} dir={direction} tile={tile_at_dest} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+def _getout_seed(x, hole_marker, hole_x_val, slot, caste, seed_val, exit_dest_tiles):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x46E6 + slot, caste)
+        m.mem.wb(sdg, 0x48DC + slot, 5)     # field_e
+        m.mem.wb(sdg, 0x44F0 + slot, 7)     # field_c
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(dg, 0x58E8 + (x << 6) + 0, hole_marker)
+        m.mem.wb(sdg, 0x8312 + x, hole_x_val)
+        # exit_hole's own 8-direction search around (hole_x_val, x) -- give
+        # it a fully clear neighbourhood so it reliably succeeds when tested
+        for si in range(8):
+            nx = hole_x_val + GET_BEST_DIR_DX[si]
+            ny = x + GET_BEST_DIR_DY[si]
+            if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, exit_dest_tiles)
+        m.mem.wb(pack, 0x9B6E, 0)   # is_valid_a-style flag used by tile_can_be_moved_on
+        # not-a-hole branch: keep it inert (no side digs, single RNG reroll +
+        # one TryMoveDirR recursion into a clean fail)
+        m.mem.wb(sdg, 0x13A4 + (x << 6), 0)
+        for c in (x - 1, x, x + 1):
+            if 0 <= c <= 0x3F:
+                m.mem.wb(dg, 0x58E8 + (c << 6) + 1, 0x40)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,hole_marker,hole_x_val,slot,caste,seed_val,exit_dest_tiles", [
+    (20, 0x10, 0, 0, 0x03, 0x1234, 0x00),        # not a marked hole -> RNG dance + recurse
+    (20, 0x18, 0, 0, 0x03, 0x1234, 0x00),        # marked hole, hole_x==0 -> no MakeNewHoleR
+    (20, 0x18, 15, 1, 0x83, 0x0000, 0x00),       # marked hole, hole_x!=0 -> triggers MakeNewHoleR
+])
+def test_getoutr_state_diff_matches_asm(x, hole_marker, hole_x_val, slot, caste,
+                                        seed_val, exit_dest_tiles):
+    from simant.recovered.gameplay import get_out_r
+    results = _run_and_diff_segs(
+        6, 0x74BA, (x,),
+        lambda d, s, p: get_out_r(d, s, p, x),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_getout_seed(x, hole_marker, hole_x_val, slot, caste, seed_val,
+                             exit_dest_tiles))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} marker={hole_marker:#x} hole_x={hole_x_val} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only

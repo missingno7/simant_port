@@ -2186,6 +2186,158 @@ def dig_tile_them_r(dgroup, simant_data_group, pack, x: int, y: int) -> int:
     return 1
 
 
+def try_move_dir_r(dgroup, simant_data_group, pack, x: int, y: int,
+                   direction: int) -> int:
+    """Attempt to move the acting red ant one step in `direction` from
+    (x, y). Genuinely mutually recursive with `get_out_r` — this is the
+    movement-EXECUTION tier one level below the movement-SELECTION tier
+    (`get_red_best_dirs` etc.) this session already recovered.
+
+    Recovered from `_TryMoveDirR` (SIMANTW.SYM seg6:6850, args x=[bp+6],
+    y=[bp+8], direction=[bp+10]; FAR return).  `direction < 0` fails
+    immediately.  Computes the candidate cell via the same
+    `GET_BEST_DIR_DX`/`DY` compass tables `get_best_dir` uses (confirmed
+    byte-identical by reading the actual DGROUP pointer-globals this
+    routine dereferences, `[0xC396]`/`[0xC398]` — a THIRD alias pair for
+    the same SIMANT_DATA_GROUP table, after `get_my_best_dirs`'s and
+    `get_red_best_dirs`'s own); out of the 0..63 grid on either axis fails.
+    A new_y below 1 (the exit/surface row) delegates entirely to
+    `get_out_r(x)`, returning ITS result verbatim — not a fixed value.
+
+    Otherwise: the destination nest tile must be `< 0x1C` (unsigned) or
+    the move fails.  On success, writes a "direction-encoded" byte
+    (`(existing_caste & 0xF8) | direction`) into the LIFE grid at the new
+    cell, clears the LIFE grid at the old cell, then writes the new
+    position into `simant_data_group[0x4104 + slot]` (new_x)/`[0x42FA +
+    slot]` (new_y) — matching `kill_tail_b`'s X/Y roles for these two
+    fields, though swapped relative to which field is "X" vs "Y" there;
+    not fully reconciled, ported from THIS routine's own directly-traced
+    register flow rather than assumed from `kill_tail_b`'s naming — and
+    the direction-encoded byte into `[0x46E6 + slot]` (the caste field).
+    An initial port had this exactly backwards (assumed `[0x4104]` held
+    the direction-encoded byte and never touched `[0x46E6]` at all) from
+    misreading the disassembly: `mov ax,si` a few instructions before the
+    `[0x4104]` write silently overwrites AL with `new_x`, clobbering the
+    direction-encoded byte that had been sitting in AL since two
+    instructions earlier — caught only by a state-diff test and a register-
+    level instrumented trace of the real ASM, not by re-reading the
+    listing. Returns 1 on a successful move.
+    """
+    if direction < 0:
+        return 0
+
+    new_y = y + GET_BEST_DIR_DY[direction]
+    new_x = x + GET_BEST_DIR_DX[direction]
+    if new_x > 0x3F or new_x < 0:
+        return 0
+    if new_y > 0x3F:
+        return 0
+    if new_y < 1:
+        return get_out_r(dgroup, simant_data_group, pack, x)
+
+    idx = (new_x << 6) + new_y
+    if dgroup.rb(MAP_PLANE_BASE[3] + idx) >= 0x1C:
+        return 0
+
+    slot = pack.rw(0x9B6A)
+    dir_byte = (simant_data_group.rb(0x46E6 + slot) & 0xF8) | direction
+    dgroup.wb(LIFE_PLANE_BASE[3] + idx, dir_byte)
+    old_idx = (x << 6) + y
+    dgroup.wb(LIFE_PLANE_BASE[3] + old_idx, 0)
+    simant_data_group.wb(0x4104 + slot, new_x & 0xFF)
+    simant_data_group.wb(0x42FA + slot, new_y & 0xFF)
+    simant_data_group.wb(0x46E6 + slot, dir_byte)
+    return 1
+
+
+def get_out_r(dgroup, simant_data_group, pack, x: int) -> int:
+    """Handle the acting red ant reaching row 0 (the surface): either
+    complete an already-marked exit hole, or nudge the dig frontier
+    forward and retry the move one row in from the surface.
+
+    Recovered from `_GetOutR` (SIMANTW.SYM seg6:74BA, arg: x; FAR return).
+    Genuinely mutually recursive with `try_move_dir_r` (calls it once,
+    unconditionally, near the end — its own return value is discarded,
+    this routine ALWAYS returns 0 on that path).
+
+    - Nest map tile at `(x, 0) == 0x18` (the marker `dig_tile_them_r`
+      writes on row 0): clears the acting ant's caste field, then — if
+      `_FillHolesRN`'s per-column hole-tracking value at
+      `simant_data_group[0x8312 + x]` is exactly ZERO (an initial port had
+      this condition backwards — `jnz` after the `cmp ...,0` SKIPS the
+      call when the value is nonzero, so the call fires on zero, not on
+      nonzero; caught by reading `_ExitHole`'s real stack arguments off an
+      instrumented run and finding an x nowhere near what a correct-if-
+      inverted port would produce) — calls `make_new_hole_r` (which can
+      itself, transitively through `dig_tile_b`/`_them_r`, reach a wide
+      swath of already-recovered dig-subsystem code).  Then re-fetches the
+      acting ant's `field_e`/`field_c` fields (and the hole-tracking value
+      AGAIN, since `make_new_hole_r` may have just changed it) and rerolls
+      via `_SRand8`, and calls `exit_hole` with the tracked hole position
+      as `(x, y)` and the caller's own `x` and rerolled caste as the
+      "candidate site" — confirmed by tracing the exact push order against
+      `exit_hole`'s established arg positions, not assumed.  On success:
+      clears `LIFE_PLANE_BASE[3][x][1]`, returns 1.  On failure: restores
+      the caste field to its original value, clears `field_c`, returns 0.
+    - Tile != `0x18`: decrements the exit-map cell at `(x, 0)` if nonzero,
+      rerolls `_SRand2`; on a `1` roll (and `x > 0`) or a `0` roll (and
+      `x < 0x3F`), checks the neighbouring column's tile at row 1 via
+      `is_it_dirt` and calls `dig_tile_them_r` there if so.  Either way,
+      rerolls `_SRand8` and recurses into `try_move_dir_r(x, 1, roll)`,
+      discarding its result, and always returns 0.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    base = x << 6
+    if dgroup.rb(MAP_PLANE_BASE[3] + base) == 0x18:
+        slot = pack.rw(0x9B6A)
+        old_caste = simant_data_group.rb(0x46E6 + slot)
+        simant_data_group.wb(0x46E6 + slot, 0)
+
+        if simant_data_group.rb(0x8312 + x) == 0:
+            make_new_hole_r(dgroup, simant_data_group, pack, x)
+
+        slot = pack.rw(0x9B6A)
+        field_e = simant_data_group.rb(0x48DC + slot)
+        field_c = simant_data_group.rb(0x44F0 + slot)
+        seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        caste_arg = (roll8 + (old_caste & 0xF8)) & 0xFFFF
+        hole_x = simant_data_group.rb(0x8312 + x)
+
+        ok = exit_hole(dgroup, simant_data_group, pack, hole_x, x, caste_arg,
+                       field_c, field_e)
+        if ok:
+            dgroup.wb(LIFE_PLANE_BASE[3] + base + 1, 0)
+            return 1
+        slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x46E6 + slot, old_caste)
+        simant_data_group.wb(0x44F0 + slot, 0)
+        return 0
+
+    exit_map_val = simant_data_group.rb(0x13A4 + base)
+    if exit_map_val != 0:
+        simant_data_group.wb(0x13A4 + base, exit_map_val - 1)
+
+    seed, roll2 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 1)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll2 != 0:
+        if x > 0:
+            tile = dgroup.rb(MAP_PLANE_BASE[3] + ((x - 1) << 6) + 1)
+            if is_it_dirt(tile):
+                dig_tile_them_r(dgroup, simant_data_group, pack, x - 1, 1)
+    else:
+        if x < 0x3F:
+            tile = dgroup.rb(MAP_PLANE_BASE[3] + ((x + 1) << 6) + 1)
+            if is_it_dirt(tile):
+                dig_tile_them_r(dgroup, simant_data_group, pack, x + 1, 1)
+
+    seed, roll8b = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    try_move_dir_r(dgroup, simant_data_group, pack, x, 1, roll8b)
+    return 0
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 

@@ -1,5 +1,76 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.101) — /goal grind: _TryMoveDirR <-> _GetOutR — movement EXECUTION (red)
+- Surveyed whether the movement-EXECUTION mutual-recursion pair
+  (`_TryMoveDirB/R` <-> `_GetOutB/R`, flagged since cont.84) is tractable
+  now that the dig subsystem is fully closed (dispatched to a research
+  subagent to re-disassemble both pairs fresh, not trust the stale
+  cont.90 callee list). Verdict: **split tractability** — the red-colony
+  pair is fully clean (zero unrecovered dependencies once re-verified
+  against the CURRENT `gameplay.py`), but the black-colony pair has one
+  narrow gated branch in `_TryMoveDirB` calling `_DoTroph` (trophallaxis —
+  food-sharing between ants), whose own dependency chain bottoms out in
+  a genuine sound-engine routine (`_myBeginSound`, 2264B, no existing hook)
+  and a dialog/sound/busy-wait UI routine (`_EatMyFood`) — a materially
+  different, larger class of work, not a same-session win.
+- RECOVERED `try_move_dir_r`/`get_out_r` (seg6:6850/74BA; both FAR return)
+  — the movement-EXECUTION tier one level below the movement-SELECTION
+  tier (`get_red_best_dirs` etc.) already closed this session. Confirmed
+  by disassembly that `_TryMoveDirR` has NO trophallaxis branch at all
+  (unlike its black twin) — it goes straight from the obstacle/bounds
+  check to the move-tail writes, making it genuinely simpler and fully
+  portable today.
+  - `_TryMoveDirR`: computes a candidate cell via the same
+    `GET_BEST_DIR_DX`/`DY` compass tables (confirmed byte-identical via a
+    THIRD DGROUP pointer-global alias pair into the same table, after
+    `get_my_best_dirs`'s and `get_red_best_dirs`'s own); a new_y below 1
+    delegates entirely to `get_out_r(x)`, returning its result verbatim.
+    Otherwise moves the ant if the destination tile is passable, updating
+    the LIFE grid and the acting ant's per-slot record.
+  - `_GetOutR`: on the row-0 hole marker, completes an exit hole via
+    `exit_hole` (conditionally preceded by `make_new_hole_r`); otherwise
+    nudges the dig frontier via `dig_tile_them_r` and recursively retries
+    the move one row in — genuinely mutually recursive with
+    `try_move_dir_r`, ported as an ordinary Python call (no VM stack to
+    manage).
+  - **CAUGHT TWO REAL BUGS**, both via state-diff tests plus register-
+    level instrumented traces of the real ASM (not by re-reading the
+    listing a second time):
+    1. In `_TryMoveDirR`'s move-tail, a `mov ax,si` instruction two lines
+       before a field write silently clobbers AL with `new_x` — the
+       direction-encoded status byte that had been sitting in AL since
+       two instructions earlier is gone by the time that write executes.
+       The first port assumed AL still held the encoded byte there and
+       skipped writing the caste field (`[0x46E6]`) entirely. Caught via
+       a plain "successful move" test case (no recursion involved) whose
+       expected vs. actual SDG diff didn't match a hand-computed formula
+       — resolved by an instrumented trace printing real register values
+       at each relevant instruction, which is what actually revealed the
+       clobber.
+    2. In `_GetOutR`, the `jnz` after `cmp hole_x[x], 0` was misread as
+       "skip `make_new_hole_r` when the hole-tracking value is zero" —
+       it's the opposite: `jnz` skips when the value is NONZERO, so the
+       call fires exactly when the tracked value IS zero. Caught by
+       reading `_ExitHole`'s actual stack arguments off an instrumented
+       run and finding an `x` argument (106) that could only have come
+       from a `make_new_hole_r` search result the buggy port never
+       triggered — not from re-reading the disassembly, which reads
+       exactly the same either way without spotting the sign of the
+       jump.
+  - 9 scenarios (direction<0, both bounds-rejection axes, the new_y<1
+    GetOutR delegation, destination-blocked, two successful-move variants
+    with different slot/caste, and GetOutR's three main branches — not-a-
+    hole, hole-with-hole_x-zero, hole-with-hole_x-nonzero) — all green
+    after both fixes.
+- Suite: simant 1176 (+9). This closes the RED-colony half of the
+  movement-EXECUTION tier — pathfinding SELECTION and EXECUTION are now
+  both fully recovered for red. Continuing per /goal — next candidates:
+  either attempt the analogous black-colony pair up to (but stopping
+  before) the `_DoTroph` branch (raising fail-loud if that specific path
+  is ever hit, per the project's "fail loud, never fake" rule), or survey
+  for smaller tractable routines elsewhere given `_DoTroph`'s dependency
+  chain is a genuinely different, larger body of work.
+
 ## 2026-07-14 (cont.100) — /goal grind: _DigTileThemB/R — the dig subsystem is DONE
 - RECOVERED `dig_tile_them_b`/`dig_tile_them_r` (seg5:22D4/241C, args x, y;
   FAR return; genuinely return 1/0, unlike the other dig routines) — the
