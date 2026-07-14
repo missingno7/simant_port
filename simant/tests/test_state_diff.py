@@ -6513,3 +6513,36 @@ def test_grabmap_matches_asm(x, y, tile_at, label):
     dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
     result = grab_map(dg_view, x, y)
     assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
+
+
+# ---- _GetNearbyPatches (seg7:3CE4) — score 6 delta-table neighbor cells ---
+def _getnearbypatches_seed(dx, dy, grid1, grid2):
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        for i in range(6):
+            m.mem.wb(dg, 0x25DC + i, dx[i] & 0xFF)
+            m.mem.wb(dg, 0x25E2 + i, dy[i] & 0xFF)
+        for cell, v in grid1.items():
+            m.mem.wb(sdg, 0xA4 + cell, v)
+        for cell, v in grid2.items():
+            m.mem.wb(sdg, 0x164 + cell, v)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,dx,dy,grid1,grid2,label", [
+    (3, 3, [0] * 6, [0] * 6, {(3 << 4) + 3: 1}, {}, "all-same-cell-plus18"),
+    (3, 3, [0] * 6, [0] * 6, {}, {(3 << 4) + 3: 1}, "all-same-cell-minus18"),
+    (0, 0, [255] * 6, [0] * 6, {}, {}, "negative-delta-out-of-bounds"),
+    (11, 15, [1] * 6, [1] * 6, {}, {}, "positive-delta-out-of-bounds"),
+    (2, 2, [0, 1, 2, 3, 4, 5], [1, 0, 1, 0, 1, 0],
+     {(2 << 4) + 3: 1, (4 << 4) + 3: 1}, {(3 << 4) + 2: 1, (7 << 4) + 2: 1},
+     "mixed-deltas-mixed-grids"),
+])
+def test_getnearbypatches_matches_asm(x, y, dx, dy, grid1, grid2, label):
+    from simant.recovered.gameplay import get_nearby_patches
+    ax, m = _run_and_get_ax(7, 0x3CE4, (x, y),
+                            seed_fn=_getnearbypatches_seed(dx, dy, grid1, grid2))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
+    result = get_nearby_patches(dg_view, sdg_view, x, y)
+    assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"

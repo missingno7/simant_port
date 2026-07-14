@@ -7906,3 +7906,37 @@ def grab_map(dgroup, x: int, y: int) -> int:
         cy = sy
 
     return dgroup.rb(MAP_PLANE_BASE[0] + (cx << 6) + cy)
+
+
+def get_nearby_patches(dgroup, simant_data_group, x: int, y: int) -> int:
+    """Score the 6 cells `(x + dx[i], y + dy[i])` a small per-call
+    DGROUP delta table names, on the SAME 12x16 boy's-yard grid
+    `is_valid_yard` bounds-checks: `+3` for each in-bounds cell whose
+    first SDG grid byte is nonzero, `-3` for each whose SECOND (a
+    parallel 12x16 grid immediately following the first, `0xC0` bytes
+    later) is nonzero. Out-of-bounds candidates contribute nothing
+    either way. A PURE predicate — no calls, nothing written.
+
+    Recovered from `_GetNearbyPatches` (SIMANTW.SYM seg7:3CE4, args
+    x=[bp+6], y=[bp+8]; FAR return, 104 bytes). The 6-entry delta
+    table (`dgroup[0x25DC+i]` for dx, `dgroup[0x25E2+i]` for dy, both
+    zero-extended BYTES) is genuinely runtime-populated scratch data
+    (confirmed all-zero on a fresh machine — not a fixed compass table
+    like the 8-entry ones used throughout this session), so callers
+    are expected to have already filled it in; this routine only
+    reads it.
+    """
+    score = 0
+    for i in range(6):
+        di = (dgroup.rb(0x25DC + i) + x) & 0xFFFF
+        si = (dgroup.rb(0x25E2 + i) + y) & 0xFFFF
+        if _sx16(di) < 0 or _sx16(si) < 0:
+            continue
+        if _sx16(di) >= 0x0C or _sx16(si) >= 0x10:
+            continue
+        cell = (di << 4) + si
+        if simant_data_group.rb(0xA4 + cell) != 0:
+            score += 3
+        if simant_data_group.rb(0x164 + cell) != 0:
+            score -= 3
+    return score

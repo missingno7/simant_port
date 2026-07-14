@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.177) — /goal grind: _GetNearbyPatches — score 6 delta cells
+- RECOVERED `get_nearby_patches` (`_GetNearbyPatches`, SIMANTW.SYM
+  seg7:3CE4, args x=[bp+6], y=[bp+8]; FAR return, 104 bytes) — a PURE
+  predicate (no calls, nothing written) scoring 6 delta-table
+  neighbor cells on the SAME 12x16 boy's-yard grid `is_valid_yard`
+  bounds-checks: `+3` per in-bounds cell whose first SDG 12x16 grid
+  byte is nonzero, `-3` per cell whose SECOND parallel grid
+  (immediately following the first, `0xC0` bytes later) is nonzero.
+  The 6-entry `(dx, dy)` delta table is genuine runtime-populated
+  scratch data (confirmed all-zero on a fresh machine — unlike the
+  fixed 8-entry compass tables used throughout this session).
+- Caught the SAME decimal-vs-hex transcription slip as cont.163's
+  `0x2F6A`/`0x2F62` bug, this time on the delta-table base offsets:
+  `lindis_win16.py` prints displacements in DECIMAL (`9692`/`9698`),
+  and those got typed directly as `0x9692`/`0x9698` instead of first
+  converting — the correct hex values are `0x25DC`/`0x25E2`. Caught by
+  a direct instrumented single-instruction trace showing the real
+  ASM's `si`/`di` registers held values that couldn't possibly come
+  from the (correctly-seeded, independently verified) memory my test
+  was writing to — proving the OFFSET, not the seeded data, was wrong.
+  Two of the five test cases had been passing by coincidence before
+  the fix (both sides landing on an out-of-bounds skip for unrelated
+  reasons) — re-ran the full parametrized set after the fix, including
+  the case that would have caught this immediately
+  (`mixed-deltas-mixed-grids`, distinct per-index values).
+- 5 cases — ALL GREEN after the fix.
+- Suite: simant 1768 (+5), full suite green.
+
 ## 2026-07-15 (cont.176) — /goal grind: _GrabMap — wrap-clamped map read
 - RECOVERED `grab_map` (`_GrabMap`, SIMANTW.SYM seg7:6DAC, args x=
   [bp+6], y=[bp+8]; FAR return, 64 bytes) — a PURE predicate (no
