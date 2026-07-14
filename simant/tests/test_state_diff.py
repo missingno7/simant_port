@@ -1035,6 +1035,52 @@ def test_getnewmode_state_diff_matches_asm(sub, full_byte, seed_val, mode_base_h
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _GetNewModeB / _GetNewModeR (seg7:09D0 / 0A50) — per-colony ------------
+# specializations of _GetNewMode, proven against the REAL ASM (not just
+# against get_new_mode itself, which would be circular).
+@pytest.mark.parametrize(
+    "sub,seed_val,mode_base_lo,gate_flag,tbl2,tbl6,tbl_direct,tbl_word", [
+    (2, 0x1234, 3, 1, 0x25, 0x30, 0x40, 0x1122),   # gate=1, sub=2 -> rolled
+    (6, 0x1234, 3, 1, 0x25, 0x30, 0x40, 0x1122),   # gate=1, sub=6 -> rolled
+    (4, 0x1234, 3, 1, 0x25, 0x30, 0x40, 0x1122),   # gate=1, other -> direct
+    (2, 0x1234, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # gate=0, sub=2 -> word
+    (4, 0x1234, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # gate=0, other -> direct
+])
+def test_getnewmodeb_state_diff_matches_asm(sub, seed_val, mode_base_lo,
+                                            gate_flag, tbl2, tbl6, tbl_direct,
+                                            tbl_word):
+    from simant.recovered.gameplay import get_new_mode_b
+    results = _run_and_diff_segs(
+        7, 0x9D0, (sub,),
+        lambda d, s, p: get_new_mode_b(d, s, p, sub),
+        _GETNEWMODE_REGIONS,
+        seed_fn=_getnewmode_seed(seed_val, 1, mode_base_lo, gate_flag,
+                                 tbl2, tbl6, tbl_direct, tbl_word))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GETNEWMODE_REGIONS):
+        assert asm_after == rec_after, (
+            f"sub={sub} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
+@pytest.mark.parametrize(
+    "sub,seed_val,mode_base_hi,tbl2,tbl6,tbl_direct,tbl_word", [
+    (2, 0x1234, 2, 0x25, 0x30, 0x40, 0x1122),   # sub=2 -> rolled via mode_base_hi
+    (6, 0x1234, 2, 0x25, 0x30, 0x40, 0x1122),   # sub=6 -> rolled via mode_base_hi
+    (4, 0x1234, 2, 0x25, 0x30, 0x40, 0x1122),   # other -> direct (no gate, no word table)
+])
+def test_getnewmoder_state_diff_matches_asm(sub, seed_val, mode_base_hi, tbl2,
+                                            tbl6, tbl_direct, tbl_word):
+    from simant.recovered.gameplay import get_new_mode_r
+    results = _run_and_diff_segs(
+        7, 0xA50, (sub,),
+        lambda d, s, p: get_new_mode_r(d, s, p, sub),
+        _GETNEWMODE_REGIONS,
+        seed_fn=_getnewmode_seed(seed_val, mode_base_hi, 3, 0,
+                                 tbl2, tbl6, tbl_direct, tbl_word))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GETNEWMODE_REGIONS):
+        assert asm_after == rec_after, (
+            f"sub={sub} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
 # `_Do*Ant*` behavior routine recovered) -------------------------------------
 # NEAR call/return. `_FightBalloons` (ANTEDIT seg3:0x499A, presentation-only

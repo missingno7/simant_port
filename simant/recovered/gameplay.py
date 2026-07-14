@@ -2513,6 +2513,34 @@ def get_new_mode(dgroup, simant_data_group, pack, sub: int, full_byte: int) -> i
     return sx8(simant_data_group.rb((sub + 0x8A46) & 0xFFFF))
 
 
+def get_new_mode_b(dgroup, simant_data_group, pack, sub: int) -> int:
+    """The black-colony specialization of `get_new_mode`: byte-for-byte the
+    same as its `full_byte & 0x80 == 0` branch (the gate-checked, PACK
+    `[0x9B8A]`-mode-based one) with an implicit `full_byte = 0`.
+
+    Recovered from `_GetNewModeB` (SIMANTW.SYM seg7:09D0, arg: sub=[bp+6];
+    FAR return) — confirmed byte-identical control flow to `get_new_mode`'s
+    non-`0x80` branch (same `pack[0x9FCE]` gate, same `pack[0x9B8A]` mode
+    base, same three SDG table bases) via independent disassembly, not
+    assumed from the name alone.
+    """
+    return get_new_mode(dgroup, simant_data_group, pack, sub, 0)
+
+
+def get_new_mode_r(dgroup, simant_data_group, pack, sub: int) -> int:
+    """The red-colony specialization of `get_new_mode`: byte-for-byte the
+    same as its `full_byte & 0x80` branch (the ungated, PACK `[0x7690]`-mode-
+    based one) with an implicit `full_byte = 0x80`.
+
+    Recovered from `_GetNewModeR` (SIMANTW.SYM seg7:0A50, arg: sub=[bp+6];
+    FAR return) — confirmed byte-identical control flow to `get_new_mode`'s
+    `0x80` branch (same `pack[0x7690]` mode base, same three SDG table
+    bases, no gate check) via independent disassembly, not assumed from the
+    name alone.
+    """
+    return get_new_mode(dgroup, simant_data_group, pack, sub, 0x80)
+
+
 def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of combat for a yard ("A"-list) ant: jitter its
     caste, and on a 1-in-16 roll, kill it — recovered from SIMANT1's

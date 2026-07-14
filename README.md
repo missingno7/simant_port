@@ -159,7 +159,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
 | `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA` top-level behaviors done; forage/nest frontier | 39 / 123 | movement **done** |
-| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode`/`_Bounce` done | 6 / 282 | mostly rendering |
+| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`/`_Bounce` done | 8 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
 The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88

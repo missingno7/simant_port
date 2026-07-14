@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.106) — /goal grind: _GetNewModeB / _GetNewModeR — thin per-colony wrappers
+- RECOVERED `get_new_mode_b`/`get_new_mode_r` (`_GetNewModeB`/`_GetNewModeR`,
+  seg7:09D0/0A50, FAR return, arg: sub). Found while scoping the seg7
+  `_Get*Dir` family (this round's next planned target) — both sit right
+  after `_GetNewMode` in the symbol table and are small (128/96 bytes).
+  Independent disassembly showed each is byte-for-byte identical control
+  flow to ONE of `_GetNewMode`'s two top-level branches: `_GetNewModeB` is
+  `_GetNewMode`'s `full_byte & 0x80 == 0` branch (the `pack[0x9FCE]`-gated
+  one, mode base `pack[0x9B8A]`) with no `full_byte` input at all;
+  `_GetNewModeR` is the `full_byte & 0x80` branch (ungated, mode base
+  `pack[0x7690]`) — confirmed by tracing every selector/table-base pair,
+  not assumed from the name pairing alone. Implemented as one-line wrappers
+  around the already-recovered `get_new_mode` (`full_byte=0` / `0x80`).
+- Proved against the REAL ASM, not just against `get_new_mode` (which would
+  be circular): reused `get_new_mode`'s own state-diff regions/seed helper.
+  8 cases (every branch each routine can reach) — ALL GREEN ON THE FIRST
+  RUN, confirming the wrapper hypothesis exactly.
+- Suite: simant 1228 (+8).
+
 ## 2026-07-14 (cont.105) — /goal grind: _DoDigOutAntA — second TOP-LEVEL `_Do*Ant*` routine
 - RECOVERED `do_dig_out_ant_a` (`_DoDigOutAntA`, seg6:1480, NEAR call/return,
   arg: `slot`) — a yard ant's per-tick "dig out" resolution: aging/mode
