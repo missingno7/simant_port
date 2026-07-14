@@ -1,5 +1,49 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.96) — /goal grind: _DigTileB — the first payoff of __aFldiv
+- RECOVERED `dig_tile_b` (seg5:1FE4, args x, y; FAR return) — the first
+  routine specifically unblocked by a PRIOR slice's recovery this session
+  (every callee — `_IsItDirt`, `_SRand1`, `_SRand8`, `__aFldiv`,
+  `_FixExitMapB/R`, `_SmoothEdgesB/R` — was already recovered before this
+  one, several of them earlier in this same /goal run).
+  - Rerolls the black nest map tile at (x,y) to a random 0..7 when it's
+    dirt (`_SRand8`), while accumulating `x`/`y` into 32-bit PACK running
+    sums and a dig counter, recomputing a running-average dig position via
+    TWO GENUINE `__aFldiv` calls (sum/count) once the counter turns
+    positive — confirmed the push order matches `__aFldiv`'s own ABI
+    (divisor=counter pushed first, dividend=the 32-bit sum pushed second)
+    by cross-checking against `crt_math.py`'s own established convention
+    rather than re-deriving it from scratch.
+  - When additionally `y > 0x35` (near the yard-facing end of the nest)
+    AND a `_SRand1(0x40)` roll comes up exactly 0 (1-in-64): tunnels
+    through into the red colony's map at the SAME (x,y) — repeating the
+    identical dirt-check/reroll/running-average dance against a separate
+    set of PACK fields, then smoothing the 4 red-map neighbours and the
+    red exit-map, marking both colonies' tiles `0x14` (a tunnel-through
+    sentinel).
+  - Always smooths the 4 black-map neighbours and refreshes the black
+    exit-map at (x,y) — even on a complete no-op "tile wasn't dirt" call,
+    matching the ASM's unconditional tail (every early-exit path converges
+    on it via `jmp`, not `ret`).
+  - Added a small shared `_acc_add32` helper (sign-extend a 16-bit delta,
+    add onto a 32-bit PACK accumulator, write both words back, return the
+    raw total for immediate reuse as `a_f_ldiv`'s dividend) and a module-
+    level `_sx32` (mirroring the existing `_sx16`, needed for the signed
+    `count > 0` gate before each average recompute).
+  - 8 scenarios (not-dirt no-op, dirt-with-running-average, count-starts-
+    at-zero, the SRand1(64) roll both ways, red-tile-dirt vs. not, and
+    both x-boundary cases) — ALL GREEN ON THE FIRST RUN, no bugs caught
+    this time (the disassembly discipline from the last several slices —
+    re-tracing every jump target's actual destination rather than trusting
+    a first read, verifying selector resolutions empirically rather than
+    assuming — is paying off in fewer round-trips).
+- Suite: simant 1128 (+8). Continuing per /goal — `_DigTileR` (seg5:21DE,
+  the red-colony twin, likely near-identical structure) is next, followed
+  by `_MakeNewHoleB/R` (needs `_IsClear3x3`✅, `_SRand1`✅, and now
+  `_DigTileB`✅) and `_DigTileThemB/R` (needs the same plus `_MakeNewHoleB/R`)
+  — closing in on the full dig subsystem and, eventually, `_TryMoveDirB/R`
+  <-> `_GetOutB/R`.
+
 ## 2026-07-14 (cont.95) — /goal grind: _ExitHole closes the dig-subsystem "tractable now" trio
 - RECOVERED `exit_hole` (seg5:2DB6, args x, y, caste, field_c, field_e_hint;
   FAR return) — the third and last independently-tractable dig-subsystem

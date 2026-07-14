@@ -20,6 +20,12 @@ def _sx16(v: int) -> int:
     return v - 0x10000 if v & 0x8000 else v
 
 
+def _sx32(v: int) -> int:
+    """Sign-extend a 32-bit dword to a Python int."""
+    v &= 0xFFFFFFFF
+    return v - 0x100000000 if v & 0x80000000 else v
+
+
 def is_it_food(tile: int, inside_nest: bool) -> int:
     """Whether a map tile value denotes food.
 
@@ -1703,6 +1709,103 @@ def smooth_edges_r(dgroup, x: int, y: int) -> None:
     y=[bp+8]).
     """
     _smooth_edges(dgroup, MAP_PLANE_BASE[3], x, y)
+
+
+def _acc_add32(pack, lo_off: int, hi_off: int, delta: int) -> int:
+    """Add a sign-extended 16-bit `delta` onto a 32-bit PACK accumulator
+    (`add`/`adc` on the two words), write it back, and return the raw
+    32-bit (unsigned-word-pair) total for immediate reuse (e.g. as
+    `a_f_ldiv`'s dividend, which sign-extends its own inputs)."""
+    total = (pack.rw(lo_off) | (pack.rw(hi_off) << 16))
+    total = (total + _sx16(delta)) & 0xFFFFFFFF
+    pack.ww(lo_off, total & 0xFFFF)
+    pack.ww(hi_off, (total >> 16) & 0xFFFF)
+    return total
+
+
+def dig_tile_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """Dig one black-colony nest tile: reroll it if it's dirt, track a
+    running average dig position, occasionally punch through into the red
+    colony's map too, then refresh the smoothing/exit-distance state around
+    the cell on both colonies' maps.
+
+    Recovered from `_DigTileB` (SIMANTW.SYM seg5:1FE4, args x=[bp+6],
+    y=[bp+8]; FAR return).  All of its callees were only just recovered
+    this session (`__aFldiv`, `_FixExitMapB/R`, `_SmoothEdgesB/R`) or
+    earlier (`_IsItDirt`, `_SRand1`, `_SRand8`) — this is the first routine
+    ported specifically because a prior slice's recoveries unblocked it.
+
+    - If the black nest map tile at (x, y) is dirt (`is_it_dirt`): reroll
+      it to a random 0..7 (`_SRand8`), accumulate `x`/`y` into 32-bit
+      running sums (`pack[0x8104:0x8108]`/`[0x811A:0x811E]`) and a dig
+      counter (`pack[0x72C8]`), and — once the counter is positive —
+      recompute the running average position via two genuine `__aFldiv`
+      calls (sum / count), stored at `pack[0x7C48]`/`[0x7C90]`.
+    - If additionally `y > 0x35` (near the yard-facing end of the nest)
+      AND a `_SRand1(0x40)` roll comes up exactly 0 (a 1-in-64 chance):
+      marks the black tile `0x14` (a tunnel-through marker) and repeats the
+      SAME dirt-check/reroll/running-average dance for the red colony's
+      map at the identical (x, y) (separate PACK fields at `[0x9DDC..)`/
+      `[0x9DE2..)`/`[0x7A56]`/`[0x9FBA]`/`[0x9FD2]`), then smooths the 4
+      red-map neighbours and the red exit-map at (x, y), and marks the red
+      tile `0x14` too.
+    - Always (regardless of every branch above — even a no-op "tile wasn't
+      dirt" call still does this) smooths the 4 black-map neighbours and
+      refreshes the black exit-map at (x, y).
+    """
+    idx = (x << 6) + y
+    tile = dgroup.rb(MAP_PLANE_BASE[2] + idx)
+
+    if is_it_dirt(tile):
+        from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+        from .crt_math import a_f_ldiv
+
+        seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        dgroup.wb(MAP_PLANE_BASE[2] + idx, val & 0xFF)
+
+        xsum = _acc_add32(pack, 0x8104, 0x8106, x)
+        ysum = _acc_add32(pack, 0x811A, 0x811C, y)
+        count = (pack.rw(0x72C8) + 1) & 0xFFFF
+        pack.ww(0x72C8, count)
+        if _sx16(count) > 0:
+            pack.ww(0x7C48, a_f_ldiv(xsum, _sx16(count)) & 0xFFFF)
+            pack.ww(0x7C90, a_f_ldiv(ysum, _sx16(count)) & 0xFFFF)
+
+        dig_red = False
+        if y > 0x35:
+            seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 0x40)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            dig_red = roll == 0
+
+        if dig_red:
+            dgroup.wb(MAP_PLANE_BASE[2] + idx, 0x14)
+            rtile = dgroup.rb(MAP_PLANE_BASE[3] + idx)
+            if is_it_dirt(rtile):
+                seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+                dgroup.ww(SRAND_SEED_OFF, seed)
+                dgroup.wb(MAP_PLANE_BASE[3] + idx, val & 0xFF)
+
+                rxsum = _acc_add32(pack, 0x9DDC, 0x9DDE, x)
+                rysum = _acc_add32(pack, 0x9DE2, 0x9DE4, y)
+                rcount = (pack.rw(0x7A56) + 1) & 0xFFFF
+                pack.ww(0x7A56, rcount)
+                if _sx16(rcount) > 0:
+                    pack.ww(0x9FBA, a_f_ldiv(rxsum, _sx16(rcount)) & 0xFFFF)
+                    pack.ww(0x9FD2, a_f_ldiv(rysum, _sx16(rcount)) & 0xFFFF)
+
+            smooth_edges_r(dgroup, x, y - 1)
+            smooth_edges_r(dgroup, x + 1, y)
+            smooth_edges_r(dgroup, x, y + 1)
+            smooth_edges_r(dgroup, x - 1, y)
+            fix_exit_map_r(dgroup, simant_data_group, x, y)
+            dgroup.wb(MAP_PLANE_BASE[3] + idx, 0x14)
+
+    smooth_edges_b(dgroup, x, y - 1)
+    smooth_edges_b(dgroup, x + 1, y)
+    smooth_edges_b(dgroup, x, y + 1)
+    smooth_edges_b(dgroup, x - 1, y)
+    fix_exit_map_b(dgroup, simant_data_group, x, y)
 
 
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
