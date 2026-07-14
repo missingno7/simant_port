@@ -1,5 +1,38 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.125) — /goal grind: _CanBeHouseHole + _HoleBorder — new batch, round 2 survey
+- Dispatched a THIRD research survey pass (the second candidate list
+  closed out in cont.124) — found 14 more zero-blocker routines across
+  the hole/list/food/tail/ant/raid families, and re-confirmed
+  `_DoForageAnt`/`_DoRecruitAnt` are STILL blocked on exactly
+  `_YellowFight`/`_DoTroph` (traced fresh, not cached) with no smaller
+  tractable sub-piece inside either — both genuinely bottom out in
+  redraw/camera-follow/animation UI. `_DoNestAntB` is a new non-starter:
+  an 18-case jump-table dispatch that defeats linear disassembly, a
+  materially larger job than anything recovered this session.
+- RECOVERED `can_be_house_hole` (`_CanBeHouseHole`, seg5:1CBA, FAR
+  return, arg: dy) — a pure constant lookup, NO calls at all: `dy in
+  (0, 2, 3)` and `dy in (0x66, 0x68)` each map to a fixed house-hole
+  tile ID, `0x5E <= dy < 0x62` maps to `dy + 0x22`, everything else `0`.
+- RECOVERED `hole_border` (`_HoleBorder`, seg5:1F8E, FAR return, args
+  x/y) — borders a newly-placed hole's 8 compass neighbors, overwriting
+  any "soft" (`< 0x50`) tile with a direction-specific border tile.
+  **Caught and fixed a real selector mis-read before it reached a
+  passing-but-wrong state**: first assumed the border-tile table lived
+  at `simant_data_group[0x230C..)` (by visual proximity to the ES-
+  prefixed compass-table reads earlier in the same routine), but the
+  test failed with the real ASM writing values that didn't match my
+  seed at all. Re-checked the SPECIFIC instruction for an `ES:` override
+  byte (there wasn't one) and found the table is a genuinely DIRECT
+  DGROUP read — and turned out to be the ALREADY-ESTABLISHED
+  `HOLE_EDGE_TILES` constant `_MakeNewHoleB`/`R` already use (should
+  have grepped for the offset before assuming it was new/unknown).
+- 18 cases (16 house-hole lookup boundaries + 2 hole-border scenarios) —
+  all green after the fix.
+- Suite: simant 1378 (+18). Next: `_GetFromAlist`, `_PickupFoodB/R`,
+  `_PlaceEggB/R`, `_MakeNewTailB/R`, `_ScanForAnts`, `_RaidInB/R` remain
+  from this round's batch.
+
 ## 2026-07-14 (cont.124) — /goal grind: _QueenMoveB/R — queen movement + trail-marker relocation
 - RECOVERED `queen_move_b`/`r` (`_QueenMoveB`/`R`, seg6:4154/6606, FAR
   return, args x/y/exclude_direction) — the last two routines from the

@@ -1852,6 +1852,49 @@ def test_getenterdir_matches_asm(colony, seg, off, exit_base, own_val,
     assert dgroup_view.rw(0xCBF2) == asm_seed_after, f"{colony} {label}: seed mismatch"
 
 
+# ---- _CanBeHouseHole (seg5:1CBA) — house-hole tile lookup, no calls -------
+@pytest.mark.parametrize("dy", [0, 1, 2, 3, 4, 0x5D, 0x5E, 0x60, 0x61, 0x62,
+                                0x65, 0x66, 0x67, 0x68, 0x69, 0x100])
+def test_canbehousehole_matches_asm(dy):
+    from simant.recovered.gameplay import can_be_house_hole
+    ax, m = _run_and_get_ax(5, 0x1CBA, (dy,))
+    assert ax == (can_be_house_hole(dy) & 0xFFFF), f"dy={dy:#x}"
+
+
+# ---- _HoleBorder (seg5:1F8E) — border a new hole's 8 neighbors ------------
+_HOLEBORDER_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x230C, 0x38E8),   # HOLE_EDGE_TILES (read-only) + yard tile map
+    (_SDG, 0, 0x20),                        # compass tables
+]
+
+
+@pytest.mark.parametrize("tile_at_neighbors,label", [
+    (0x40, "all neighbours soft (<0x50) -> all bordered"),
+    (0x50, "all neighbours already >=0x50 -> none touched"),
+])
+def test_holeborder_state_diff_matches_asm(tile_at_neighbors, label):
+    from simant.recovered.gameplay import hole_border
+    x, y = 20, 20
+
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+            dx = _DX8[i]
+            dy = _DY8[i]
+            dx = dx - 0x100 if dx & 0x80 else dx
+            dy = dy - 0x100 if dy & 0x80 else dy
+            m.mem.wb(dg, 0x28E8 + ((x + dx) << 6) + (y + dy), tile_at_neighbors)
+
+    results = _run_and_diff_segs(
+        5, 0x1F8E, (x, y),
+        lambda d, s: hole_border(d, s, x, y),
+        _HOLEBORDER_REGIONS, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _HOLEBORDER_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
 # `_Do*Ant*` behavior routine recovered) -------------------------------------
 # NEAR call/return. `_FightBalloons` (ANTEDIT seg3:0x499A, presentation-only

@@ -1763,6 +1763,56 @@ def get_enter_dir_r(dgroup, simant_data_group, x: int, y: int, exclude: int) -> 
     return _get_enter_dir(dgroup, simant_data_group, 0x13A4, x, y, exclude)
 
 
+def can_be_house_hole(dy: int) -> int:
+    """Look up the yard tile ID for a "house" (ant-hill mound) entrance at
+    row-offset `dy`, or `0` if `dy` isn't a valid house-hole row.
+
+    Recovered from `_CanBeHouseHole` (SIMANTW.SYM seg5:1CBA, FAR return,
+    arg: dy=[bp+6]) — a pure constant lookup, no calls at all. `dy in
+    (0, 2, 3)` and `dy in (0x66, 0x68)` each map to a specific fixed tile;
+    `0x5E <= dy < 0x62` maps to `dy + 0x22`; everything else is `0`.
+    """
+    if dy == 0:
+        return 0x86
+    if dy in (2, 3):
+        return 0x8A
+    if 0x5E <= dy < 0x62:
+        return (dy + 0x22) & 0xFFFF
+    if dy == 0x66:
+        return 0x85
+    if dy == 0x68:
+        return 0x84
+    return 0
+
+
+def hole_border(dgroup, simant_data_group, x: int, y: int) -> None:
+    """Border a newly-placed yard hole at `(x, y)`: for each of the 8
+    compass neighbors, if its current tile is "soft" (`< 0x50`), overwrite
+    it with a direction-specific border tile.
+
+    Recovered from `_HoleBorder` (SIMANTW.SYM seg5:1F8E, FAR return, args
+    x=[bp+6], y=[bp+8]) — no calls at all, just the standard compass delta
+    tables (SIMANT_DATA_GROUP-resident) plus the SAME `HOLE_EDGE_TILES`
+    constant table `_MakeNewHoleB`/`R` already use — a genuinely direct
+    DGROUP read (`dgroup[0x230C..)`, no SIMANT_DATA_GROUP pointer-global
+    indirection), confirmed by re-checking for an `ES:` override on that
+    specific instruction rather than assuming it matched the nearby
+    SIMANT_DATA_GROUP-prefixed compass-table reads.
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    for i in range(8):
+        ny = y + sx8(simant_data_group.rb(8 + i))
+        nx = x + sx8(simant_data_group.rb(i))
+        if not (0 <= nx <= 0x7F and 0 <= ny <= 0x3F):
+            continue
+        idx = MAP_PLANE_BASE[0] + (nx << 6) + ny
+        if dgroup.rb(idx) < 0x50:
+            dgroup.wb(idx, HOLE_EDGE_TILES[i])
+
+
 def pickup_food_a(dgroup, pack, x: int, y: int) -> None:
     """An ant picking up food from the YARD tile map at `(x, y)` — a
     genuine `_DoForageAnt` dependency.
