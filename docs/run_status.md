@@ -1,5 +1,40 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.117) — /goal grind: _GetExitDir*/_GetEnterDir* — nest tunneling direction family
+- RECOVERED all four remaining zero-blocker `_Get*Dir`-style routines from
+  the original survey, closing that list entirely: `get_exit_dir_b`/`r`
+  (`_GetExitDirB`/`R`, seg5:119C/1240) and `get_enter_dir_b`/`r`
+  (`_GetEnterDirB`/`R`, seg5:12E4/137C), each FAR return, args x/y/exclude.
+  Both pairs are byte-identical B/R twins (confirmed by independently
+  disassembling BOTH of each pair, not assuming symmetry from the name) —
+  ported as one shared `_get_exit_dir`/`_get_enter_dir` body parametrized
+  by map/exit-map base, mirroring this project's established B/R-twin
+  pattern (`_dig_tile_reroll_and_track`, `_jam_scent`, `_compact_list`).
+  No new dependencies: the exit-distance arrays (`[0x3A4..)` black,
+  `[0x13A4..)` red) are the SAME ones `fix_exit_map_b`/`r` already
+  maintain.
+- `get_exit_dir_*`: at `y == 1` (the tunnel row), a fast path — an exact
+  `0x18` tile at `(x, 0)` on the nest map returns `1` outright; otherwise
+  a coin-flip (`_SRand2`) picks between `3`/`7` without consulting the
+  exit-distance map at all. Elsewhere: scans the 8 neighbors for the
+  HIGHEST exit-distance (heading toward an exit), biased away from
+  `exclude`'s opposite (`exclude ^ 4`), returns 1-8 or `0` for none found.
+- `get_enter_dir_*`: the inverse search — heads toward the LOWEST
+  exit-distance (deeper into the nest), starting from the ant's own cell
+  value and updating as better neighbors are found (not just competing
+  against the starting cell); a neighbor of exactly `0` is never a valid
+  target (unlike `_get_exit_dir`, where `0` is just "no signal yet");
+  ties are broken by a coin-flip; returns 0-7 or `-1` for none found.
+- 24 cases (12 per family, doubled across both colonies via a
+  `colony`-parametrized fixture) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1302 (+24). This closes the ENTIRE zero-blocker candidate
+  list from the original research survey — every small, self-contained
+  routine it flagged as reachable is now recovered. What remains needs
+  either fresh scoping (a new survey pass) or tackling a genuinely
+  top-level `_Do*Ant*` behavior routine directly (`_DoForageAnt`,
+  `_DoNestAntB/R`, `_DoAntSimA/B`), most of which still terminate in the
+  unrecovered sound-engine/dialog-UI dependency chain.
+
 ## 2026-07-14 (cont.116) — /goal grind: _RandTurn — unconditional random caste-mode direction
 - RECOVERED `rand_turn` (`_RandTurn`, seg6:2A22, NEAR return, arg:
   caste_low3) — a tiny (30-byte) routine, byte-identical to the random-

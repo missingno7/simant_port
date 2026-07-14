@@ -1268,6 +1268,109 @@ def test_randturn_matches_asm(caste_low3, seed_val):
         f"caste_low3={caste_low3} seed={seed_val:#x}: seed mismatch")
 
 
+# ---- _GetExitDirB / _GetExitDirR (seg5:119C / 1240) — exit-distance-------
+# gradient direction, biased away from `exclude`'s opposite.
+@pytest.mark.parametrize("colony,seg,off,map_base,exit_base", [
+    ("B", 5, 0x119C, 0x48E8, 0x3A4),
+    ("R", 5, 0x1240, 0x58E8, 0x13A4),
+])
+@pytest.mark.parametrize("x,y,exclude,seed_val,tile,neighbor_dir,neighbor_val,label", [
+    (10, 1, 0, 0x1234, 0x18, None, 0, "y=1, tile==0x18 -> fast-path 1"),
+    (10, 1, 0, 0x1234, 0x00, None, 0, "y=1, tile!=0x18 -> coin-flip 3/7 (seed A)"),
+    (10, 1, 0, 0x8000, 0x00, None, 0, "y=1, tile!=0x18 -> coin-flip 3/7 (seed B)"),
+    (20, 20, 0, 0x1234, 0x00, 3, 50, "interior, gradient found"),
+    (20, 20, 0, 0x1234, 0x00, None, 0, "interior, no candidate -> 0"),
+    (20, 20, 3 ^ 4, 0x1234, 0x00, 3, 50, "interior, gate excludes the only candidate"),
+])
+def test_getexitdir_matches_asm(colony, seg, off, map_base, exit_base, x, y,
+                                exclude, seed_val, tile, neighbor_dir,
+                                neighbor_val, label):
+    from simant.recovered.gameplay import get_exit_dir_b, get_exit_dir_r
+    fn = get_exit_dir_b if colony == "B" else get_exit_dir_r
+
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(dg, map_base + (x << 6), tile)
+        m.mem.data[sdg + exit_base:sdg + exit_base + 0x1000] = bytes(0x1000)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        if neighbor_dir is not None:
+            dx = _DX8[neighbor_dir]
+            dy = _DY8[neighbor_dir]
+            dx = dx - 0x100 if dx & 0x80 else dx
+            dy = dy - 0x100 if dy & 0x80 else dy
+            nx, ny = x + dx, y + dy
+            m.mem.wb(sdg, exit_base + (nx << 6) + ny, neighbor_val)
+
+    ax, m = _run_and_get_ax(seg, off, (x, y, exclude), seed_fn=seed)
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    asm_seed_after = m.mem.rw(dg, 0xCBF2)
+
+    buf = bytearray(m.mem.block(dg, 0, 0x10000))
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
+    rec_ax = fn(dgroup_view, sdg_view, x, y, exclude)
+
+    assert ax == (rec_ax & 0xFFFF), f"{colony} {label}: seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, f"{colony} {label}: seed mismatch"
+
+
+# ---- _GetEnterDirB / _GetEnterDirR (seg5:12E4 / 137C) — inverse gradient --
+# (toward LOWER exit-distance), biased away from `exclude`'s opposite.
+@pytest.mark.parametrize("colony,seg,off,exit_base", [
+    ("B", 5, 0x12E4, 0x3A4),
+    ("R", 5, 0x137C, 0x13A4),
+])
+@pytest.mark.parametrize(
+    "own_val,exclude,seed_val,neighbor_dir,neighbor_val,label", [
+    (50, 0, 0x1234, 3, 20, "neighbor strictly lower -> wins"),
+    (50, 0, 0x1234, 3, 80, "neighbor strictly higher -> not selected -> -1"),
+    (50, 0, 0x1234, 3, 50, "tie -> coin-flip (seed A)"),
+    (50, 0, 0x8000, 3, 50, "tie -> coin-flip (seed B)"),
+    (50, 0, 0x1234, 3, 0, "neighbor==0 -> skipped -> -1"),
+    (50, 3 ^ 4, 0x1234, 3, 20, "gate excludes the only candidate -> -1"),
+])
+def test_getenterdir_matches_asm(colony, seg, off, exit_base, own_val,
+                                 exclude, seed_val, neighbor_dir,
+                                 neighbor_val, label):
+    from simant.recovered.gameplay import get_enter_dir_b, get_enter_dir_r
+    fn = get_enter_dir_b if colony == "B" else get_enter_dir_r
+    x, y = 20, 20
+
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.data[sdg + exit_base:sdg + exit_base + 0x1000] = bytes(0x1000)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        m.mem.wb(sdg, exit_base + (x << 6) + y, own_val)
+        dx = _DX8[neighbor_dir]
+        dy = _DY8[neighbor_dir]
+        dx = dx - 0x100 if dx & 0x80 else dx
+        dy = dy - 0x100 if dy & 0x80 else dy
+        nx, ny = x + dx, y + dy
+        m.mem.wb(sdg, exit_base + (nx << 6) + ny, neighbor_val)
+
+    ax, m = _run_and_get_ax(5, off, (x, y, exclude), seed_fn=seed)
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    asm_seed_after = m.mem.rw(dg, 0xCBF2)
+
+    buf = bytearray(m.mem.block(dg, 0, 0x10000))
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
+    rec_ax = fn(dgroup_view, sdg_view, x, y, exclude)
+
+    assert ax == (rec_ax & 0xFFFF), f"{colony} {label}: seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, f"{colony} {label}: seed mismatch"
+
+
 # ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
 # `_Do*Ant*` behavior routine recovered) -------------------------------------
 # NEAR call/return. `_FightBalloons` (ANTEDIT seg3:0x499A, presentation-only

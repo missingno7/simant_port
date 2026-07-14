@@ -1635,6 +1635,134 @@ def fix_exit_map_r(dgroup, simant_data_group, x: int, y: int) -> None:
     _fix_exit_map(dgroup, simant_data_group, MAP_PLANE_BASE[3], 0x13A4, x, y)
 
 
+def _get_exit_dir(dgroup, simant_data_group, map_base: int, exit_map_base: int,
+                  x: int, y: int, exclude: int) -> int:
+    """Shared body of `get_exit_dir_b`/`r`: pick a compass direction (1-8,
+    `0` for none found) heading toward higher exit-distance, biased away
+    from `exclude`'s opposite.
+
+    At `y == 1` (right at the tunnel row): a fast path — if the tile at
+    `(x, 0)` on the colony's nest map is exactly `0x18` (an open exit
+    marker), returns `1` outright; otherwise a coin-flip (`_SRand2`) picks
+    between `3` and `7` without consulting the exit-distance map at all.
+
+    Otherwise: scans the 8 compass neighbors of `(x, y)` for the highest
+    exit-distance value (`exit_map_base + (nx << 6) + ny`, in-bounds only),
+    skipping the direction opposite `exclude` (`exclude ^ 4`) and ties
+    (strictly `<=` current best never updates) — returns the winning
+    neighbor's 1-based compass index, or `0` if none ever beat `0`.
+    """
+    if y == 1:
+        if dgroup.rb(map_base + (x << 6)) == 0x18:
+            return 1
+        from .simone import SRAND_SEED_OFF, srand_pow2
+        seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 1)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return (roll << 2) + 3
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    gate = exclude ^ 4
+    best_dir = 0
+    best_val = 0
+    for i in range(8):
+        nx = x + sx8(simant_data_group.rb(i))
+        ny = y + sx8(simant_data_group.rb(8 + i))
+        if not (0 <= nx <= 0x3F and 0 <= ny <= 0x3F):
+            continue
+        val = simant_data_group.rb(exit_map_base + (nx << 6) + ny)
+        if val <= best_val:
+            continue
+        if gate == i:
+            continue
+        best_val = val
+        best_dir = i + 1
+    return best_dir
+
+
+def get_exit_dir_b(dgroup, simant_data_group, x: int, y: int, exclude: int) -> int:
+    """Recovered from `_GetExitDirB` (SIMANTW.SYM seg5:119C, args x=[bp+6],
+    y=[bp+8], exclude=[bp+10]; FAR return). See `_get_exit_dir`.
+    """
+    return _get_exit_dir(dgroup, simant_data_group, MAP_PLANE_BASE[2], 0x3A4,
+                         x, y, exclude)
+
+
+def get_exit_dir_r(dgroup, simant_data_group, x: int, y: int, exclude: int) -> int:
+    """The red-colony twin of `get_exit_dir_b`.
+
+    Recovered from `_GetExitDirR` (SIMANTW.SYM seg5:1240, args x=[bp+6],
+    y=[bp+8], exclude=[bp+10]; FAR return).
+    """
+    return _get_exit_dir(dgroup, simant_data_group, MAP_PLANE_BASE[3], 0x13A4,
+                         x, y, exclude)
+
+
+def _get_enter_dir(dgroup, simant_data_group, exit_map_base: int, x: int,
+                   y: int, exclude: int) -> int:
+    """Shared body of `get_enter_dir_b`/`r`: pick a compass direction (0-7,
+    `-1` for none found) heading toward LOWER exit-distance — deeper into
+    the nest, away from any exit.
+
+    Starts `best_val` at the ant's OWN cell's exit-distance, then scans the
+    8 compass neighbors (skipping the direction opposite `exclude`,
+    `exclude ^ 4`, and any neighbor whose exit-distance is exactly `0` —
+    unlike `_get_exit_dir`, matching `0` is never a valid target here).
+    A neighbor with a STRICTLY lower exit-distance than `best_val` always
+    wins; a tie is broken by a coin-flip (`_SRand2`); a strictly higher
+    value never wins. `best_val` updates on every win, so later neighbors
+    compete against the running best, not just the ant's starting cell.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    gate = exclude ^ 4
+    best_dir = -1
+    best_val = simant_data_group.rb(exit_map_base + (x << 6) + y)
+
+    for i in range(8):
+        if gate == i:
+            continue
+        nx = x + sx8(simant_data_group.rb(i))
+        ny = y + sx8(simant_data_group.rb(8 + i))
+        if not (0 <= nx <= 0x3F and 0 <= ny <= 0x3F):
+            continue
+        neighbor_val = simant_data_group.rb(exit_map_base + (nx << 6) + ny)
+        if neighbor_val == 0:
+            continue
+        if best_val < neighbor_val:
+            continue
+        if best_val == neighbor_val:
+            seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 1)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            if roll == 0:
+                continue
+        best_val = neighbor_val
+        best_dir = i
+    return best_dir
+
+
+def get_enter_dir_b(dgroup, simant_data_group, x: int, y: int, exclude: int) -> int:
+    """Recovered from `_GetEnterDirB` (SIMANTW.SYM seg5:12E4, args x=[bp+6],
+    y=[bp+8], exclude=[bp+10]; FAR return). See `_get_enter_dir`.
+    """
+    return _get_enter_dir(dgroup, simant_data_group, 0x3A4, x, y, exclude)
+
+
+def get_enter_dir_r(dgroup, simant_data_group, x: int, y: int, exclude: int) -> int:
+    """The red-colony twin of `get_enter_dir_b`.
+
+    Recovered from `_GetEnterDirR` (SIMANTW.SYM seg5:137C, args x=[bp+6],
+    y=[bp+8], exclude=[bp+10]; FAR return).
+    """
+    return _get_enter_dir(dgroup, simant_data_group, 0x13A4, x, y, exclude)
+
+
 def _smooth_edges(dgroup, map_base: int, x: int, y: int) -> None:
     """Shared body of `smooth_edges_b`/`smooth_edges_r`."""
     from .simone import SRAND_SEED_OFF, srand_pow2
