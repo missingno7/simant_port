@@ -1,5 +1,56 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.90) — /goal grind: __aFldiv (dig-subsystem unlock, new module)
+- Ran a fresh survey (dispatched to a research subagent) now that the whole
+  pathfinding-selection tier is closed. Confirmed `_TryMoveDirB/R` and
+  `_SetLife` are BOTH still genuinely blocked — fully traced both closures:
+  `_TryMoveDirB/R` needs an 8-9-routine chain including a mutual-recursion
+  pair (`_TryMoveDirB/R` <-> `_GetOutB/R`) and the whole dig subsystem
+  (`_MakeNewHoleB/R`, `_DigTileThemB/R`, `_DigTileB/R`, `_SmoothEdgesB/R`,
+  `_FixExitMapB/R`); `_SetLife` needs the SAME dig subsystem plus an
+  `indirect`-classified 2264-byte sound-engine routine with zero existing
+  hook infrastructure. Top pick instead: `__aFldiv` (seg4:08D4, the signed
+  32-bit long-division C-runtime helper) — a genuine leaf, 40+ call sites
+  project-wide (the highest fan-in found this session, ahead of even
+  `_GetWinner`'s 30), and specifically the ONE new dependency standing
+  between today and `_DigTileB/R` + `_MakeNewHoleB/R` + `_DigTileThemB/R`
+  becoming tractable (three more dig-subsystem members already confirmed
+  independently tractable: `_ExitHole`, `_SmoothEdgesB/R`, `_FixExitMapB/R`).
+- Investigated where `__aFldiv` belongs before writing any code: it's not
+  SimAnt logic, just the MSC compiler's own runtime library (every
+  MSC-compiled 16-bit app links the identical helper), so checked whether
+  `win16_re`/`dos_re` already have a "generic C-runtime helper" home per
+  CLAUDE.md's "genuinely new mechanism -> win16_re" rule. Confirmed (via a
+  research subagent) there is NO such upstream convention — the existing
+  sibling `__aFuldiv` (unsigned divide) lives entirely in `simant/hooks.py`
+  as a lifted performance island (it was PC-sampled at ~14% of runtime, a
+  genuine hot loop), and `lifted_islands.md` is explicit that islands are a
+  per-game pattern, never promoted to `win16_re`. Since `__aFldiv` hasn't
+  been profiled hot and the actual need here is COMPOSABILITY (future
+  dig-subsystem routines calling it as a plain Python function, the way
+  `get_my_best_dirs` calls `get_dis`), not a VM-level lift, it belongs in
+  `simant/recovered/` as source, not `hooks.py` as an island.
+- RECOVERED `a_f_ldiv` in a NEW module `simant/recovered/crt_math.py`
+  (following `byteops.py`'s exact precedent — tiny, generic, seg4-`_TEXT`,
+  VM-free, A/B-oracle-tested in `test_hooks.py`, not gameplay.py, since it
+  isn't simulation logic). Confirmed the disassembly independently (own
+  pass with the scratch disassembler, not just trusting the survey): takes
+  absolute values of both 32-bit operands (tracking sign parity), divides
+  the magnitudes via a double-precision shift-estimate-correct routine
+  (classic single-step Knuth algorithm-D), negates the quotient iff exactly
+  one operand was negative. Zero divisor reaches the ASM's own `div` and
+  `#DE`-faults, so the port raises `ZeroDivisionError` rather than
+  fabricate a value (matches `__aFuldiv`'s existing island precedent for
+  the same situation). 17 cases including both `INT_MIN` edge cases and the
+  divisor-fits-16-bits vs. divisor-needs-full-32-bits branch split, all
+  green on the first run.
+- Suite: simant 1026 (+17). Continuing per /goal — next per the survey:
+  `_DeadAntHere` (seg6:28C0, 354B, fan-in 9, ZERO new dependencies beyond
+  already-recovered `_SRand1/4/16` — tractable today) is the strongest
+  pure-gameplay pick; `__aFulmul` (seg4:096E, __aFldiv's 32x32 unsigned-
+  multiply sibling, a hard prerequisite for `_rand`/`_RRand`) is the
+  cheapest follow-on in the same `crt_math.py` module.
+
 ## 2026-07-14 (cont.89) — /goal grind: _GetRedBestDirs closes the pathfinding family
 - RECOVERED `get_red_best_dirs` (seg6:9A18, args: plane, cur_x, cur_y,
   tgt_x, tgt_y; FAR return) — the red-colony twin of `get_my_best_dirs`,

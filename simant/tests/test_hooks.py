@@ -1955,6 +1955,37 @@ def test_getdis_island_matches_asm(x1, y1, x2, y2, dist):
     assert got == dist == get_dis(x1, y1, x2, y2)
 
 
+# ---- __aFldiv (seg4:08D4) — signed 32-bit long division, no island ---------
+# recovered/crt_math.py: not profiled hot (unlike __aFuldiv), recovered as
+# plain composable source for the dig-subsystem routines that need it, not
+# as a hooks.py performance island. Verified straight against the ASM (no
+# with_island leg -- there's nothing installed to compare against).
+def _split32(v):
+    v &= 0xFFFFFFFF
+    return v & 0xFFFF, (v >> 16) & 0xFFFF          # (lo, hi)
+
+
+@pytest.mark.parametrize("dividend,divisor", [
+    (100, 3), (-100, 3), (100, -3), (-100, -3),
+    (0, 5), (7, 1), (-7, 1), (1, 7), (-1, 7),
+    (0x12345678, 0x1000), (-0x12345678, 0x1000),           # divisor fits 16 bits
+    (0x12345678, 0x123), (0x7FFFFFFF, 0x10001),             # divisor > 16 bits
+    (-0x80000000, 1), (-0x80000000, -1),                    # INT_MIN edge cases
+    (0x7FFFFFFF, 2), (-0x80000000, 0x7FFFFFFF),
+])
+def test_afldiv_matches_asm(dividend, divisor):
+    from simant.recovered.crt_math import a_f_ldiv
+    dividend_lo, dividend_hi = _split32(dividend)
+    divisor_lo, divisor_hi = _split32(divisor)
+    asm = _run_predicate(hooks.RT_SEG_INDEX, 0x08D4, "__aFldiv", False,
+                         (dividend_lo, dividend_hi, divisor_lo, divisor_hi))
+    got = asm["ax"] | (asm["dx"] << 16)
+    expect = a_f_ldiv(dividend, divisor)
+    assert got == expect, (
+        f"dividend={dividend:#x} divisor={divisor:#x}: asm={got:#010x} "
+        f"rec={expect:#010x}")
+
+
 def _run_issameplane(with_island, plane, current):
     m = runtime.create_machine()
     m.cpu.trace_enabled = False
