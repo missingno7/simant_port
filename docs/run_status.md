@@ -1,5 +1,27 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.183) — /goal grind: _InitGrassMap/_InitSimVars
+- Ran a fresh Explore survey now that the pillar-family batch is
+  exhausted. It flagged `_SRand4` as an unrecovered blocker for several
+  candidates — that's a false alarm: `srand_pow2(seed, mask=3)`
+  already covers the WHOLE `_SRand2..256` family generically (the SAME
+  primitive this session has repeatedly called with different masks
+  for `_SRand8`/`_SRand16`/`_SRand32` etc.), so those candidates were
+  never actually blocked. Picked the two smallest, zero-call
+  candidates first: `_InitGrassMap`/`_InitSimVars`.
+- RECOVERED `init_grass_map` (`_InitGrassMap`, SIMANTW.SYM seg7:2096,
+  NO args; FAR return, 32 bytes) — startup init, no calls. Clears
+  three PACK counters and fills a 9-entry WORD table with `0xFFFF`.
+- RECOVERED `init_sim_vars` (`_InitSimVars`, SIMANTW.SYM seg7:5A70, NO
+  args; FAR return, 62 bytes) — startup init, no calls. Sets a
+  handful of fixed constants and zeroed counters, including the SAME
+  `pack[0x9C26]`/`[0x807A]` fields `maintain_swarm` decays and
+  `dgroup[0xAC8C]`/`[0xAC8E]` fields `start_migrate`/`end_migrate` use
+  as floors — confirms this routine is (part of) their initializer.
+- 2 cases (one each, no branches to exercise) — ALL GREEN ON THE FIRST
+  REAL-ASM RUN.
+- Suite: simant 1808 (+2), full suite green.
+
 ## 2026-07-15 (cont.182) — /goal grind: _PillFoodTile/_IsPillDead
 - RECOVERED `pill_food_tile` (`_PillFoodTile`, SIMANTW.SYM seg7:5A02,
   args x=[bp+6], y=[bp+8]; FAR return, 110 bytes) — composes

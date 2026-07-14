@@ -8204,3 +8204,39 @@ def is_pill_dead(dgroup, simant_data_group) -> int:
             if life != 0:
                 count += 1
     return 1 if count > 5 else 0
+
+
+def init_grass_map(pack) -> None:
+    """Startup init: clears three PACK counters and fills a 9-entry
+    WORD table with `0xFFFF` (an "empty"/unassigned sentinel).
+
+    Recovered from `_InitGrassMap` (SIMANTW.SYM seg7:2096, NO args;
+    FAR return, 32 bytes). All fields are PACK-resident.
+    """
+    pack.ww(0xA0B6, 0)
+    pack.ww(0xA0B8, 0)
+    pack.ww(0xA0BA, 0)
+    for i in range(9):
+        pack.ww(0xA0BC + i * 2, 0xFFFF)
+
+
+def init_sim_vars(dgroup, simant_data_group, pack) -> None:
+    """Startup init: a handful of fixed constants and zeroed counters,
+    including the SAME `pack[0x9C26]`/`[0x807A]` `maintain_swarm`
+    decays and `dgroup[0xAC8C]`/`[0xAC8E]` `start_migrate`/
+    `end_migrate` floors this session already recovered.
+
+    Recovered from `_InitSimVars` (SIMANTW.SYM seg7:5A70, NO args; FAR
+    return, 62 bytes). `simant_data_group[0x8614] = 1`;
+    `pack[0x9BEC]`/`[0x769C] = 0x1E` (30); `pack[0x79E2]`/`[0x9C26]`/
+    `[0x807A] = 0`; `dgroup[0xAC8E]`/`[0xAC8C] = 0` (direct DGROUP
+    writes, no pointer-global indirection).
+    """
+    simant_data_group.ww(0x8614, 1)
+    pack.ww(0x9BEC, 0x1E)
+    pack.ww(0x769C, 0x1E)
+    pack.ww(0x79E2, 0)
+    pack.ww(0x9C26, 0)
+    pack.ww(0x807A, 0)
+    dgroup.ww(0xAC8E, 0)
+    dgroup.ww(0xAC8C, 0)

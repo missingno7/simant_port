@@ -6805,3 +6805,44 @@ def test_ispilldead_matches_asm(px, py, alive_cells, label):
     sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
     result = is_pill_dead(dg_view, sdg_view)
     assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
+
+
+# ---- _InitGrassMap (seg7:2096) — startup PACK init -------------------------
+def test_initgrassmap_state_diff_matches_asm():
+    from simant.recovered.gameplay import init_grass_map
+    regions = [(_PACK, 0xA0B0, 0xA0D0)]
+
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        for off in range(0xA0B6, 0xA0D0, 2):
+            m.mem.ww(pack, off, 0x1234)
+
+    results = _run_and_diff_segs(7, 0x2096, (), lambda p: init_grass_map(p),
+                                 regions, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _InitSimVars (seg7:5A70) — startup DGROUP/SDG/PACK init --------------
+def test_initsimvars_state_diff_matches_asm():
+    from simant.recovered.gameplay import init_sim_vars
+    regions = [
+        (hooks.DG_SEG_INDEX, 0xAC8C, 0xAC90),
+        (_SDG, 0x8600, 0x8620),
+        (_PACK, 0x7690, 0x9C30),
+    ]
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xAC8C, 0x9999)
+        m.mem.ww(dg, 0xAC8E, 0x9999)
+        m.mem.ww(sdg, 0x8614, 0x9999)
+        for off in (0x9BEC, 0x769C, 0x79E2, 0x9C26, 0x807A):
+            m.mem.ww(pack, off, 0x9999)
+
+    results = _run_and_diff_segs(7, 0x5A70, (),
+                                 lambda d, s, p: init_sim_vars(d, s, p),
+                                 regions, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"
