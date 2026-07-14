@@ -5849,3 +5849,93 @@ def test_findinlionlist_matches_asm(count, slots, val0, val1, label):
     pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
     expect = find_in_lion_list(pack_view, sdg_view, val0, val1)
     assert ax == (expect & 0xFFFF), f"{label}: asm={ax:#06x} rec={expect & 0xFFFF:#06x}"
+
+
+# ---- _CheckNestFightB/R (seg6:3BA2/61A2) — nest combat trigger gate ------
+# Composes is_yellow_ant, find_in_b/r_list, get_winner -- all already
+# recovered. The unrecovered _YellowFight branch is gated off (dgroup[0xCE98]
+# left 0, matching each routine's own "don't trigger YellowFight" polarity).
+_CHECKNESTFIGHT_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x88E8, 0xCE9A),
+    (_SDG, 0x3700, 0x8B00),
+    (_PACK, 0x7200, 0xA100),
+]
+
+
+def _checknestfight_seed(x, y, life_base, tile, count_off, y_off, x_off,
+                         caste_off, slots, cheat_flag=0, rand_state=0,
+                         strength_tbl=None, outcome_tbl=None):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(dg, life_base + (x << 6) + y, tile)
+        m.mem.ww(dg, 0xCE98, 0)
+        m.mem.wb(sdg, 0x8A5C, cheat_flag)
+        m.mem.ww(dg, RAND_STATE_OFF, rand_state & 0xFFFF)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, (rand_state >> 16) & 0xFFFF)
+        for sub, v in (strength_tbl or {}).items():
+            m.mem.wb(dg, 0x8902 + sub, v)
+        for idx, v in (outcome_tbl or {}).items():
+            m.mem.wb(dg, 0x8918 + idx, v)
+        m.mem.ww(pack, count_off, len(slots))
+        for slot, (yv, xv, cv) in enumerate(slots):
+            m.mem.wb(sdg, y_off + slot, yv)
+            m.mem.wb(sdg, x_off + slot, xv)
+            m.mem.wb(sdg, caste_off + slot, cv)
+    return seed
+
+
+@pytest.mark.parametrize("which,off,life_base,count_off,y_off,x_off,"
+                         "caste_off,tile,found_slot,label", [
+    ("b", 0x3BA2, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x50, False,
+     "b-below-range-noop"),
+    ("b", 0x3BA2, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x90, False,
+     "b-in-range-not-in-list"),
+    ("b", 0x3BA2, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x90, True,
+     "b-in-range-found-cheat-a-wins"),
+    ("r", 0x61A2, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x05, False,
+     "r-below-range-notyellow-noop"),
+    ("r", 0x61A2, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x30, False,
+     "r-in-range-not-in-list"),
+    ("r", 0x61A2, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x30, True,
+     "r-in-range-found-cheat-a-wins"),
+])
+def test_checknestfight_state_diff_matches_asm(which, off, life_base,
+                                               count_off, y_off, x_off,
+                                               caste_off, tile, found_slot,
+                                               label):
+    import simant.recovered.gameplay as G
+    fn = G.check_nest_fight_b if which == "b" else G.check_nest_fight_r
+    x, y, attacker = 20, 25, 0x08
+    slots = [(x, y, tile)] if found_slot else []
+    results = _run_and_diff_segs(
+        6, off, (x, y, attacker),
+        lambda d, s, p: fn(d, s, p, x, y, attacker),
+        _CHECKNESTFIGHT_REGIONS,
+        seed_fn=_checknestfight_seed(x, y, life_base, tile, count_off, y_off,
+                                     x_off, caste_off, slots, cheat_flag=1))
+    for (rlabel, asm_after, rec_after), (_si, lo2, _hi) in zip(
+            results, _CHECKNESTFIGHT_REGIONS):
+        assert asm_after == rec_after, f"{which} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo2)}"
+
+
+def test_checknestfightb_yellowfight_gate_raises():
+    from simant.recovered.gameplay import check_nest_fight_b
+    dg = bytearray(0x10000)
+    dg[0x88E8] = 0xFE   # a yellow-ant marker tile
+    dgv = ByteBackend(dg, 0)
+    dgv.ww(0xCE98, 1)
+    with pytest.raises(NotImplementedError):
+        check_nest_fight_b(dgv, ByteBackend(bytearray(0x10000), 0),
+                           ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08)
+
+
+def test_checknestfightr_yellowfight_gate_raises():
+    from simant.recovered.gameplay import check_nest_fight_r
+    dg = bytearray(0x10000)
+    dg[0x98E8] = 0xFE   # a yellow-ant marker tile, out of the 8..0x67 range
+    dgv = ByteBackend(dg, 0)
+    dgv.ww(0xCE98, 0)
+    with pytest.raises(NotImplementedError):
+        check_nest_fight_r(dgv, ByteBackend(bytearray(0x10000), 0),
+                           ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08)

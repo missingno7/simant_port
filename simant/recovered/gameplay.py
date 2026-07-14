@@ -4930,6 +4930,109 @@ def do_nest_fight_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
     simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
 
 
+def check_nest_fight_b(dgroup, simant_data_group, pack, x: int, y: int,
+                       attacker: int) -> int:
+    """Whether the black nest ant occupying `(x, y)` fights the
+    acting/attacking ant (caste `attacker`) — the black-nest combat-
+    trigger gate `do_nest_fight_b` itself is the AFTERMATH of.
+
+    Recovered from `_CheckNestFightB` (SIMANTW.SYM seg6:3BA2, args
+    x=[bp+6], y=[bp+8], attacker=[bp+10]; FAR return). Composes
+    `is_yellow_ant`, `find_in_b_list`, and `get_winner` — all already
+    recovered.
+
+    ALWAYS checks `is_yellow_ant` on the occupant tile first (before
+    even checking whether it's in a valid caste range at all — the
+    opposite order from `check_nest_fight_r`, independently confirmed
+    via the raw disassembly, not assumed symmetric): if it IS the
+    player's yellow ant AND `dgroup[0xCE98]` is nonzero, defers to the
+    UNRECOVERED `_YellowFight(2, pack[0x9B6A])` and returns `1`
+    unconditionally (its own return value is discarded by the real
+    ASM). `_YellowFight`'s dependency chain is a materially larger body
+    of work than this routine itself, so — per this project's fail-loud
+    rule — that branch raises `NotImplementedError` rather than a
+    silently-wrong guess; every other outcome below is fully byte-exact.
+
+    Otherwise (not yellow, OR yellow but the gate flag is clear): the
+    occupant tile must be `0x88..0xE7` or this returns `0` (no fight).
+    In range: looks the occupant up via `find_in_b_list` (coordinate-
+    role-swap convention: the callee's `y` gets THIS routine's `x` and
+    vice versa) with `caste=`the occupant tile; a miss returns `0`.
+    A hit: resolves `get_winner(occupant_tile, attacker)`, stamps the
+    winner onto the occupant's `field_e`, recomputes its caste as
+    `(winner & 0x80) + 0x70` (colony bit preserved, mode forced to a
+    fixed "defeated" value) onto both its own caste field and the SAME
+    life-grid cell, sets `field_c = 0x0A`, and returns `1`.
+    """
+    cell = LIFE_PLANE_BASE[2] + (x << 6) + y
+    tile = dgroup.rb(cell)
+
+    if is_yellow_ant(tile) == 1:
+        if dgroup.rw(0xCE98) != 0:
+            raise NotImplementedError(
+                "check_nest_fight_b: _YellowFight branch reached (not "
+                "recovered) -- x={!r} y={!r} attacker={!r}".format(x, y, attacker))
+
+    if not (0x88 <= tile <= 0xE7):
+        return 0
+
+    found = find_in_b_list(pack, simant_data_group, y=x, x=y, caste=tile)
+    if found == 0xFFFF:
+        return 0
+
+    winner = get_winner(dgroup, simant_data_group, pack, tile, attacker) & 0xFF
+    simant_data_group.wb(0x3F0E + found, winner)
+    new_caste = ((winner & 0x80) + 0x70) & 0xFF
+    simant_data_group.wb(0x3D18 + found, new_caste)
+    dgroup.wb(cell, new_caste)
+    simant_data_group.wb(0x3B22 + found, 0x0A)
+    return 1
+
+
+def check_nest_fight_r(dgroup, simant_data_group, pack, x: int, y: int,
+                       attacker: int) -> int:
+    """The red-colony twin of `check_nest_fight_b` — NOT a mechanical
+    twin (independently confirmed via the raw disassembly): the caste-
+    range check runs FIRST here (opposite order from the black version),
+    a range hit ALWAYS attempts the fight with no yellow-ant check at
+    all, and a range MISS falls back to `is_yellow_ant` with the
+    `_YellowFight` gate flag INVERTED (`dgroup[0xCE98] == 0` here,
+    vs `!= 0` for black) and a different `_YellowFight` first argument
+    (`3`, vs `2` for black) — plus a genuine behavioral difference: a
+    non-yellow out-of-range tile returns `0` immediately here, where
+    the black version still falls through to attempt a normal fight.
+
+    Recovered from `_CheckNestFightR` (SIMANTW.SYM seg6:61A2, args
+    x=[bp+6], y=[bp+8], attacker=[bp+10]; FAR return). Composes
+    `find_in_r_list` and `get_winner` (both already recovered); the
+    `_YellowFight` branch raises `NotImplementedError` for the same
+    reason `check_nest_fight_b`'s does — everything else is byte-exact.
+    """
+    cell = LIFE_PLANE_BASE[3] + (x << 6) + y
+    tile = dgroup.rb(cell)
+
+    if 8 <= tile <= 0x67:
+        found = find_in_r_list(pack, simant_data_group, y=x, x=y, caste=tile)
+        if found == 0xFFFF:
+            return 0
+
+        winner = get_winner(dgroup, simant_data_group, pack, tile, attacker) & 0xFF
+        simant_data_group.wb(0x48DC + found, winner)
+        new_caste = ((winner & 0x80) + 0x70) & 0xFF
+        simant_data_group.wb(0x46E6 + found, new_caste)
+        dgroup.wb(cell, new_caste)
+        simant_data_group.wb(0x44F0 + found, 0x0A)
+        return 1
+
+    if is_yellow_ant(tile) == 0:
+        return 0
+    if dgroup.rw(0xCE98) == 0:
+        raise NotImplementedError(
+            "check_nest_fight_r: _YellowFight branch reached (not "
+            "recovered) -- x={!r} y={!r} attacker={!r}".format(x, y, attacker))
+    return 0
+
+
 def start_fight_a(dgroup, simant_data_group, pack, slot1: int, x1: int,
                    y1: int, x2: int, y2: int) -> None:
     """Initiate combat between a yard ant at `(x1, y1)` (A-list slot

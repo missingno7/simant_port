@@ -1,5 +1,44 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.165) — /goal grind: _CheckNestFightB/R — nest combat trigger
+- RECOVERED `check_nest_fight_b`/`check_nest_fight_r` (`_CheckNestFightB`/
+  `_CheckNestFightR`, SIMANTW.SYM seg6:3BA2/61A2, args x=[bp+6],
+  y=[bp+8], attacker=[bp+10]; FAR return) — the combat-TRIGGER gate
+  the already-recovered `do_nest_fight_b`/`r` are the AFTERMATH of.
+  Composes `is_yellow_ant`, `find_in_b_list`/`find_in_r_list`, and
+  `get_winner` — all already recovered.
+  - Confirmed via independent disassembly that R is genuinely NOT a
+    mechanical twin of B: the caste-range check runs FIRST in R
+    (opposite order from B, which checks `is_yellow_ant` first,
+    unconditionally); a range HIT always attempts the fight in R with
+    no yellow-ant check at all; the `_YellowFight` gate flag polarity
+    is INVERTED between the two (`dgroup[0xCE98] != 0` triggers it for
+    B, `== 0` for R); the `_YellowFight` first argument differs (`2`
+    for B, `3` for R); and a non-yellow out-of-range tile returns `0`
+    immediately in R, where B still falls through to attempt a normal
+    fight.
+  - `_YellowFight` itself (seg6:823E, ~458 bytes) is NOT recovered —
+    its call site's own return value is discarded by the real ASM
+    either way (both callers force `1`/`0` unconditionally after the
+    call), so only the SIDE EFFECTS are unmodeled; per this project's
+    fail-loud rule (same precedent as `try_move_dir_b`'s trophallaxis
+    gate), that one branch raises `NotImplementedError` instead of a
+    silently-wrong guess. Every other outcome is fully byte-exact.
+- Caught the SAME class of test-harness region-window bug `food_fall`
+  hit at cont.163, this time surfacing as a silent WRONG ANSWER instead
+  of a hang: the SDG region started at `0x3B00`, excluding
+  `find_in_b_list`'s own field arrays at `0x3736`/`0x392C`/`0x3D18`
+  (below that bound) — the windowed `ByteBackend`'s negative-offset
+  wraparound fed garbage into the search, silently causing a false
+  "not found" instead of an exception. Diagnosed by reproducing the
+  EXACT scenario standalone via plain `ByteBackend`s (no windowing),
+  which passed cleanly — proving the recovered Python was correct and
+  the harness's region bound was the bug. Fixed by widening the SDG
+  region's low bound to `0x3700`.
+- 8 cases (3 B, 3 R, plus one `NotImplementedError`-gate check per
+  colony) — all green after the harness-window fix.
+- Suite: simant 1690 (+8), full suite green.
+
 ## 2026-07-15 (cont.164) — /goal grind: _IsValidYard + _FindInLionList
 - Dispatched an Explore survey now that every previously-deferred
   candidate is resolved; it enumerated seg6/seg7 symbols not yet
