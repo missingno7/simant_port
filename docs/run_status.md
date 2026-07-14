@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.160) — /goal grind: _GetMyDir deferred (partial map)
+- Picked `_GetMyDir` (SIMANTW.SYM seg6:8ECA, 0x314 bytes, SIX args
+  `[bp+6..16]`) back up after cont.159 deferred it. Confirmed all of
+  its composed near/far calls are already-recovered: `_GetMyBestDirs`
+  (`get_my_best_dirs`), `_GetMyRandDirs` (`get_my_rand_dirs`),
+  `_CheckMyBestDirs` (`check_my_best_dirs`), `_GetDir` (`get_dir`) — no
+  new primitives needed for the branches mapped so far.
+- Fully mapped the `plane <= 1` (yard) branch, both `[bp+12]` sub-cases
+  (`<= 1` and reaching `_GetMyBestDirs`/`_CheckMyBestDirs` directly) and
+  the `pack[0x72E4] < 0` ("stuck sentinel already pending") path: a
+  `check_my_best_dirs` call; on total failure (`-2`) AND the sentinel
+  was ALREADY `-2` from a prior tick, falls back to a `_GetDir(cur,tgt)
+  - 1` raw compass direction seeded into `get_my_rand_dirs`'s two
+  far-pointer outputs (`out1=pack[0x78A4]=0` fresh-commit, `out2=
+  pack[0xA0D8]=` that direction), resetting `pack[0x72E4]=0x10` (a
+  fresh 16-step retry budget) — the SAME `pack[0x72E4]` stuck-sentinel
+  field `get_my_best_dir` (cont.157) already established.
+- Started the `[bp+12] > 1` (`dx >= 2`) sub-case and hit a genuinely
+  new mechanism: reads a SDG-resident TABLE at `0x835A:0x835C`
+  (`[bp+12] == 2`) or `0x835E:0x8360` (`[bp+12] >= 3`) as a 4-byte FAR
+  POINTER pair — the SAME encoding this routine's own `pack[0x72E4]`
+  far-pointer local uses — and pushes one half of it before jumping
+  into a not-yet-mapped tail (`9121`) that looks like it sets up an
+  INDIRECT CALL through that table entry (a callback/dispatch
+  mechanism, not a plain composed call to an already-recovered
+  routine). The `plane > 1` (nest) branch (`8F90` onward) and the
+  `9121`/`911E`/`90A1`/`9074` tail regions are still completely
+  unmapped.
+- DEFERRED, not a bug: this is a genuinely bigger/different-shaped
+  routine than `_DoNestingB`/`R` (a dynamic dispatch table, not just
+  more branches over already-known composables) — a good candidate to
+  resume fresh next session with this partial map as the starting
+  point, rather than sinking a third massive orchestrator into an
+  already very long session. No test/code changes this entry — pure
+  reconnaissance, nothing to revert.
+
 ## 2026-07-14 (cont.159) — /goal grind: _DoNestingB/_DoNestingR — nest dig/tend tick
 - RECOVERED `do_nesting_b`/`do_nesting_r` (`_DoNestingB`/`_DoNestingR`,
   seg6:44A8/690A, args x=[bp+6], y=[bp+8], mode=[bp+10], sub=[bp+12];
