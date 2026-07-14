@@ -1,5 +1,28 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.179) — /goal grind: _fracSIN/_fracCOS — fixed-point trig
+- RECOVERED `frac_sin`/`frac_cos` (`_fracSIN`/`_fracCOS`, SIMANTW.SYM
+  seg7:69C8/6A0E, arg angle=[bp+6]; FAR return, 70/74 bytes) —
+  16-bit fixed-point sine/cosine of an 8-bit angle (`0..255` =
+  `0..360` degrees) via quarter-wave symmetry into a shared 64-entry
+  WORD table. Composes a shared local `_frac_trig` helper (`cos(a) =
+  sin(a + 0x40)`, confirmed by both routines sharing the SAME `bx ==
+  0x40 -> 0x7FFF` special case).
+  - The 64-entry table is reached through a genuine runtime FAR
+    POINTER at `pack[0x9FCA]`/`[0x9FCC]` (confirmed zero on a fresh,
+    pre-init machine — populated by some not-yet-recovered
+    initialization routine), NOT a fixed compile-time address. Rather
+    than solve "resolve an arbitrary runtime segment value to a
+    bridge view" as new infrastructure, `frac_sin`/`frac_cos` take the
+    already-resolved table as an explicit `(view, offset)` pair — the
+    same "take an explicit view" convention `set_map` already
+    established.
+- 12 cases (both routines: angle 0, the `0x40`/`0xC0` special-case
+  boundary, a plain lookup, a reflected lookup, the negate-check
+  boundary, and the `255` wraparound edge) — ALL GREEN ON THE FIRST
+  REAL-ASM RUN.
+- Suite: simant 1787 (+12), full suite green.
+
 ## 2026-07-15 (cont.178) — /goal grind: _StartMigrate/_EndMigrate
 - RECOVERED `start_migrate`/`end_migrate` (`_StartMigrate`/
   `_EndMigrate`, SIMANTW.SYM seg7:3DF2/3E6C, args x=[bp+6], y=[bp+8];

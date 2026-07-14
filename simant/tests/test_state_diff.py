@@ -6613,3 +6613,55 @@ def test_endmigrate_state_diff_matches_asm(x, y, slot_9cee, ybucket_9d72,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _MIGRATE_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _fracSIN/_fracCOS (seg7:69C8/6A0E) — fixed-point trig via table -----
+_FRACTRIG_TABLE_OFF = 0x9000
+
+
+def _fractrig_seed(table_words):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x9FCA, _FRACTRIG_TABLE_OFF)
+        m.mem.ww(pack, 0x9FCC, dg)
+        for i, w in enumerate(table_words):
+            m.mem.ww(dg, _FRACTRIG_TABLE_OFF + i * 2, w & 0xFFFF)
+    return seed
+
+
+_TRIG_TABLE = [int(0x7FFF * (i / 64) ** 0.9) for i in range(64)]
+
+
+@pytest.mark.parametrize("angle,label", [
+    (0, "angle0-no-reflection"),
+    (0x40, "angle64-max-value-special-case"),
+    (32, "angle32-plain-lookup"),
+    (96, "angle96-reflected"),
+    (200, "angle200-second-half-negated"),
+    (255, "angle255-boundary"),
+])
+def test_fracsin_matches_asm(angle, label):
+    from simant.recovered.gameplay import frac_sin
+    ax, m = _run_and_get_ax(7, 0x69C8, (angle,),
+                            seed_fn=_fractrig_seed(_TRIG_TABLE))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    result = frac_sin(dg_view, _FRACTRIG_TABLE_OFF, angle)
+    assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
+
+
+@pytest.mark.parametrize("angle,label", [
+    (0, "angle0"),
+    (0x40, "angle64-plain-value"),
+    (0xC0, "angle192-shifts-to-max-value-special-case"),
+    (32, "angle32"),
+    (200, "angle200"),
+    (255, "angle255-boundary"),
+])
+def test_fraccos_matches_asm(angle, label):
+    from simant.recovered.gameplay import frac_cos
+    ax, m = _run_and_get_ax(7, 0x6A0E, (angle,),
+                            seed_fn=_fractrig_seed(_TRIG_TABLE))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    result = frac_cos(dg_view, _FRACTRIG_TABLE_OFF, angle)
+    assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"

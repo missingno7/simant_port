@@ -8023,3 +8023,60 @@ def end_migrate(pack, simant_data_group, x: int, y: int) -> None:
     new_cell = (combined << 4) + y_bucket
     total = simant_data_group.rb(0xA4 + new_cell) + half
     simant_data_group.wb(0xA4 + new_cell, 0xFA if total >= 0xFB else total & 0xFF)
+
+
+def _frac_trig(table_view, table_off: int, angle: int, phase: int) -> int:
+    """Shared body of `frac_sin`/`frac_cos`: an 8-bit-angle (0..255 =
+    0..360 degrees), 16-bit-fixed-point lookup via quarter-wave
+    symmetry into a 64-entry WORD table.
+
+    `phase` is the angle offset (`0` for sine, `0xC0` for cosine — the
+    real ASM computes `cos(a) = sin(a + 0x40)`, done here as
+    `sin(a - 0xC0)`, the SAME shift modulo 256).  Folds
+    `shifted = (angle - phase) & 0xFF` into the table's first quadrant
+    (`shifted & 0x7F`, then reflected around `0x40` if `> 0x3F`) —
+    `0x40` itself is the hardcoded max value `0x7FFF` (never looked up
+    in the table, avoiding a 65th entry) — negating the result when
+    `shifted`'s bit 7 is set (second half of the sign wave).
+    """
+    shifted = (angle - phase) & 0xFF
+    bx = shifted & 0x7F
+    if bx > 0x3F:
+        bx = 0x80 - bx
+
+    if bx == 0x40:
+        value = 0x7FFF
+    else:
+        bx &= 0x3F
+        value = _sx16(table_view.rw(table_off + (bx << 1)))
+
+    return -value if shifted > 0x7F else value
+
+
+def frac_sin(table_view, table_off: int, angle: int) -> int:
+    """16-bit fixed-point sine of an 8-bit angle (`0..255` = `0..360`
+    degrees). Composes `_frac_trig`.
+
+    Recovered from `_fracSIN` (SIMANTW.SYM seg7:69C8, arg angle=
+    [bp+6]; FAR return, 70 bytes). The 64-entry quarter-wave table is
+    reached through a genuine runtime FAR POINTER stored at
+    `pack[0x9FCA]` (offset) / `[0x9FCC]` (segment) — NOT a fixed
+    compile-time address (confirmed zero on a fresh, pre-init
+    machine), so this takes the already-resolved table as an explicit
+    `(view, offset)` pair rather than trying to dereference an
+    arbitrary runtime segment value itself.
+    """
+    return _frac_trig(table_view, table_off, angle, 0)
+
+
+def frac_cos(table_view, table_off: int, angle: int) -> int:
+    """16-bit fixed-point cosine of an 8-bit angle — `sin(angle +
+    0x40)`, the SAME quarter-circle-is-64-units encoding `frac_sin`
+    uses (confirmed via the `bx == 0x40 -> 0x7FFF` special case both
+    routines share). Composes `_frac_trig`.
+
+    Recovered from `_fracCOS` (SIMANTW.SYM seg7:6A0E, arg angle=
+    [bp+6]; FAR return, 74 bytes). Reads the SAME runtime far-pointer
+    table `frac_sin` does.
+    """
+    return _frac_trig(table_view, table_off, angle, 0xC0)
