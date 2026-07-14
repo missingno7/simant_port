@@ -2275,6 +2275,80 @@ def dig_tile_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
     fix_exit_map_r(dgroup, simant_data_group, x, y)
 
 
+def make_blk_queen(dgroup, simant_data_group, pack, x: int, y: int, direction: int) -> None:
+    """Carve a founding black queen's chamber: dig her own tile plus two
+    farther cells along the compass opposite her facing, then drop two
+    black ant-list records marking the chamber, and bump a black-queen
+    counter.
+
+    Recovered from `_MakeBlkQueen` (SIMANTW.SYM seg7:671A, args x=[bp+6],
+    y=[bp+8], direction=[bp+10]; FAR return).  Composes `dig_tile_b`
+    (seg5:1FE4, called 3x) and `add_ant_to_b_list` (seg5:2F4A, called 2x).
+
+    Digs `(x, y)` itself, then `(x, y)` offset by 1x and 2x the compass
+    delta for `direction ^ 4` (the OPPOSITE compass direction), reading
+    the SAME `simant_data_group` compass tables `sim_queen_a` uses (dx at
+    `[dir]`, dy at `[dir+8]`).  Then appends two ant-list records: one at
+    the caller's own `(x, y)` with `caste = direction + 0x60` (per the
+    established coordinate-role-swap convention — the caller's x lands in
+    the list's y slot and vice versa), and one at the 1x-offset cell with
+    `caste = direction + 0x68` (the SAME "+0x68" caste-encoding constant
+    `queen_move_b`'s own transform uses). Both records use `field_c=9`,
+    `field_e=0`. Finally increments `pack[0x78E8]` (a black-queen counter)
+    unconditionally.
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    dig_tile_b(dgroup, simant_data_group, pack, x, y)
+
+    dir_idx = direction ^ 4
+    dx = sx8(simant_data_group.rb(dir_idx))
+    dy = sx8(simant_data_group.rb(8 + dir_idx))
+    dig_tile_b(dgroup, simant_data_group, pack, x + dx, y + dy)
+    dig_tile_b(dgroup, simant_data_group, pack, x + 2 * dx, y + 2 * dy)
+
+    add_ant_to_b_list(pack, simant_data_group, dgroup, y=x, x=y,
+                       caste=direction + 0x60, field_c=9, field_e=0)
+    add_ant_to_b_list(pack, simant_data_group, dgroup, y=x + dx, x=y + dy,
+                       caste=direction + 0x68, field_c=9, field_e=0)
+
+    pack.ww(0x78E8, (pack.rw(0x78E8) + 1) & 0xFFFF)
+
+
+def make_red_queen(dgroup, simant_data_group, pack, x: int, y: int, direction: int) -> None:
+    """The red-colony twin of `make_blk_queen` — same shape, red arrays and
+    a different caste-encoding constant pair.
+
+    Recovered from `_MakeRedQueen` (SIMANTW.SYM seg7:6906, args x=[bp+6],
+    y=[bp+8], direction=[bp+10]; FAR return).  Composes `dig_tile_r`
+    (seg5:21DE, called 3x) and `add_ant_to_r_list` (seg5:2FA4, called 2x).
+    Confirmed a genuine twin by independent disassembly, not assumed:
+    same dig-then-list-twice shape, but `caste = direction + 0xE0` /
+    `direction + 0xE8` (not `+0x60`/`+0x68`) and the final counter is a
+    DIFFERENT PACK field, `pack[0x79DC]`.
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    dig_tile_r(dgroup, simant_data_group, pack, x, y)
+
+    dir_idx = direction ^ 4
+    dx = sx8(simant_data_group.rb(dir_idx))
+    dy = sx8(simant_data_group.rb(8 + dir_idx))
+    dig_tile_r(dgroup, simant_data_group, pack, x + dx, y + dy)
+    dig_tile_r(dgroup, simant_data_group, pack, x + 2 * dx, y + 2 * dy)
+
+    add_ant_to_r_list(pack, simant_data_group, dgroup, y=x, x=y,
+                       caste=direction + 0xE0, field_c=9, field_e=0)
+    add_ant_to_r_list(pack, simant_data_group, dgroup, y=x + dx, x=y + dy,
+                       caste=direction + 0xE8, field_c=9, field_e=0)
+
+    pack.ww(0x79DC, (pack.rw(0x79DC) + 1) & 0xFFFF)
+
+
 HOLE_EDGE_TILES = (0x19, 0x1A, 0x1C, 0x1F, 0x1E, 0x1D, 0x1B, 0x18)  # dgroup[0x230C..)
 
 

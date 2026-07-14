@@ -521,6 +521,69 @@ def test_digtiler_state_diff_matches_asm(x, y, tile, seed_val, count):
             f"{label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _MakeBlkQueen/_MakeRedQueen (seg7:671A/6906) — carve a founding queen -
+# chamber.  Regions merge dig_tile_b/r's own footprint with add_ant_to_b/r_
+# list's (both real segments touched by each — SDG and PACK regions from the
+# two composed routines are UNIONed into one window per segment, never split).
+_MAKEBLKQUEEN_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0, 0x4200),
+    (_PACK, 0x7200, 0xA000),
+]
+_MAKEREDQUEEN_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0, 0x4C00),
+    (_PACK, 0x7200, 0xA000),
+]
+
+
+def _makequeen_seed(seed_val, count_list, count_field):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        for off in (0x72C8, 0x8104, 0x8106, 0x811A, 0x811C,
+                    0x7A56, 0x9DDC, 0x9DDE, 0x9DE2, 0x9DE4):
+            m.mem.ww(pack, off, 0)
+        m.mem.ww(pack, count_field, count_list)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,direction,seed_val,count_b", [
+    (20, 20, 3, 0x1234, 0),
+    (20, 20, 0, 0x1234, 5),
+    (60, 30, 5, 0x0001, 0x1F3),   # near the B-list 500-slot cap
+])
+def test_makeblkqueen_state_diff_matches_asm(x, y, direction, seed_val, count_b):
+    from simant.recovered.gameplay import make_blk_queen
+    results = _run_and_diff_segs(
+        7, 0x671A, (x, y, direction),
+        lambda d, s, p: make_blk_queen(d, s, p, x, y, direction),
+        _MAKEBLKQUEEN_REGIONS,
+        seed_fn=_makequeen_seed(seed_val, count_b, 0x99D4))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKEBLKQUEEN_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} dir={direction} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+@pytest.mark.parametrize("x,y,direction,seed_val,count_r", [
+    (20, 20, 3, 0x1234, 0),
+    (20, 20, 0, 0x1234, 5),
+    (60, 30, 5, 0x0001, 0x1F3),   # near the R-list 500-slot cap
+])
+def test_makeredqueen_state_diff_matches_asm(x, y, direction, seed_val, count_r):
+    from simant.recovered.gameplay import make_red_queen
+    results = _run_and_diff_segs(
+        7, 0x6906, (x, y, direction),
+        lambda d, s, p: make_red_queen(d, s, p, x, y, direction),
+        _MAKEREDQUEEN_REGIONS,
+        seed_fn=_makequeen_seed(seed_val, count_r, 0x72CC))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKEREDQUEEN_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} dir={direction} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _MakeNewHoleB (seg5:1B06) — search + carve a new above-ground hole ---
 _MAKENEWHOLEB_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed

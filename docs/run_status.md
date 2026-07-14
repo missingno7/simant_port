@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.134) — /goal grind: _MakeBlkQueen/_MakeRedQueen — founding queen chamber
+- RECOVERED `make_blk_queen`/`make_red_queen` (`_MakeBlkQueen`/`_MakeRedQueen`,
+  seg7:671A/6906, FAR return, args x=[bp+6]/y=[bp+8]/direction=[bp+10]) —
+  carves a founding queen's chamber: digs her own tile plus two farther
+  cells along the compass opposite her facing (`direction ^ 4`, reading
+  the SAME `simant_data_group` compass tables `sim_queen_a` uses), then
+  appends two ant-list records for the chamber (one at her own position,
+  one at the 1x-offset cell) with `caste = direction + 0x60`/`+0x68`
+  (black) or `+0xE0`/`+0xE8` (red), and bumps a per-colony queen counter
+  (`pack[0x78E8]` black, `pack[0x79DC]` red — both new, previously
+  unreferenced fields). Composes `dig_tile_b`/`r` (called 3x each) and
+  `add_ant_to_b`/`r_list` (called 2x each), all already recovered.
+- Confirmed a genuine B/R twin by independent disassembly of both (not
+  assumed symmetric): identical shape, but distinct caste-encoding
+  constants and distinct counter fields, matching the discipline already
+  established for `_QueenMoveB`/`R`.
+- Selector-resolution discipline paid off again: verified `C5DC`/`C5DE`
+  (both resolve to SDG) and `C5D4`/`C5D6` (both resolve to PACK) against
+  a real machine before trusting them, rather than assuming from
+  proximity to the already-known compass-table pattern.
+- Region discipline: both routines touch the SAME real SDG/PACK segments
+  their two composed callees separately touch — merged into ONE window
+  per segment (`(_SDG, 0, 0x4200)` for black / `(_SDG, 0, 0x4C00)` for
+  red) rather than two disjoint region entries, per the established
+  "one real segment, one window" rule.
+- 6 cases (3 per colony, including a near-cap A-list count) — ALL GREEN
+  ON THE FIRST RUN.
+- Suite: simant 1422 (+6), full suite green.
+
 ## 2026-07-14 (cont.133) — /goal grind: _BuildAntListA — full yard A-list rebuild
 - RECOVERED `build_ant_list_a` (`_BuildAntListA`, seg5:3046, FAR return, NO
   args) — rebuilds the entire yard A-list from scratch by scanning the
