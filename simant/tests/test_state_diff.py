@@ -4764,6 +4764,67 @@ def test_getmybestdirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, tiles,
         f"cand=({cand_plane},{cand_x},{cand_y})): asm={ax:#06x} rec={expect:#06x}")
 
 
+# ---- _GetMyNextRandDirs (seg6:8BEA) — probe ahead, dispatch on the outcome
+# Composes get_my_best_dirs + get_my_rand_dirs (via the SAME PACK-resident
+# out1/out2 cells get_my_initial_rand_dir uses).
+_GETMYNEXTRANDDIRS_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0, 0x9000),
+    (_PACK, 0x7200, 0xA100),
+]
+
+
+def _getmynextranddirs_seed(plane, x, y, tgt_x, tgt_y, tiles, inside,
+                            check_adjacent, cand_plane, cand_x, cand_y,
+                            avoid_x, avoid_y, out1_init, out2_init):
+    from simant.recovered.gameplay import map_cell_offset
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(pack, 0x9BC4, 2 if check_adjacent else 0)
+        m.mem.ww(pack, 0x9BE0, cand_plane & 0xFFFF)
+        m.mem.ww(pack, 0x80C6, cand_x & 0xFFFF)
+        m.mem.ww(pack, 0x80D2, cand_y & 0xFFFF)
+        m.mem.ww(pack, 0xA0D6, avoid_x & 0xFFFF)
+        m.mem.ww(pack, 0xA0DA, avoid_y & 0xFFFF)
+        m.mem.ww(pack, 0x78A4, out1_init & 0xFFFF)
+        m.mem.ww(pack, 0xA0D8, out2_init & 0xFFFF)
+        m.mem.ww(pack, 0x72E4, 0x9999)   # garbage sentinel, only touched on one path
+        for si in range(8):
+            nx, ny = x + GET_BEST_DIR_DX[si], y + GET_BEST_DIR_DY[si]
+            moff = map_cell_offset(plane, nx, ny)
+            if moff is not None:
+                m.mem.wb(dg, moff & 0xFFFF, tiles.get(si, 0x40))
+    return seed
+
+
+@pytest.mark.parametrize(
+    "plane,x,y,tgt_x,tgt_y,tiles,inside,check_adjacent,cand_plane,cand_x,"
+    "cand_y,avoid_x,avoid_y,out1_init,out2_init,label", [
+    (2, 20, 20, 20, 20, {}, False, False, 0, 0, 0, -100, -100, 0, 3,
+     "already-at-target-immediate-neg1"),
+    (2, 20, 20, 25, 25, {}, False, False, 0, 0, 0, -100, -100, 0, 3,
+     "all-blocked-immediate-neg2-falls-to-randdirs"),
+    (2, 20, 20, 25, 25, {3: 0x05}, False, False, 0, 0, 0, -100, -100, 0, 3,
+     "one-clear-step-then-default-terrain"),
+])
+def test_getmynextranddirs_state_diff_matches_asm(
+        plane, x, y, tgt_x, tgt_y, tiles, inside, check_adjacent, cand_plane,
+        cand_x, cand_y, avoid_x, avoid_y, out1_init, out2_init, label):
+    from simant.recovered.gameplay import get_my_next_rand_dirs
+    results = _run_and_diff_segs(
+        6, 0x8BEA, (plane, x, y, tgt_x, tgt_y),
+        lambda d, s, p: get_my_next_rand_dirs(d, p, plane, x, y, tgt_x, tgt_y),
+        _GETMYNEXTRANDDIRS_REGIONS,
+        seed_fn=_getmynextranddirs_seed(
+            plane, x, y, tgt_x, tgt_y, tiles, inside, check_adjacent,
+            cand_plane, cand_x, cand_y, avoid_x, avoid_y, out1_init, out2_init))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _GETMYNEXTRANDDIRS_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _GetMyRandDirs (seg6:8928) — sticky-direction search, 2 far-ptr I/O ---
 # Two output words are passed as a genuine far pointer pair (offset, segment
 # words on the stack); seeded/read back at fixed PACK offsets since any

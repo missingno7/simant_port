@@ -934,6 +934,71 @@ def get_my_initial_rand_dir(dgroup, pack, plane: int, cur_x: int, cur_y: int,
     return result
 
 
+def get_my_next_rand_dirs(dgroup, pack, plane: int, x: int, y: int,
+                          tgt_x: int, tgt_y: int) -> int:
+    """Probe up to 64 steps of `get_my_best_dirs` ahead from `(x, y)`
+    WITHOUT ever using the walked-to position for anything but deciding
+    the final dispatch: if the walk hits a `-2` ("nothing clear at all")
+    at any point, falls back to `get_my_rand_dirs` from the ORIGINAL
+    `(x, y)`; otherwise (success throughout, or an ordinary `-1`
+    failure) re-calls `get_my_best_dirs` from the ORIGINAL `(x, y)` one
+    final time and returns THAT result directly — the walk only ever
+    determines WHICH of the two routines gets the final say, never
+    contributes its own answer.
+
+    Recovered from `_GetMyNextRandDirs` (SIMANTW.SYM seg6:8BEA, args
+    plane=[bp+6], x=[bp+8], y=[bp+10], tgt_x=[bp+12], tgt_y=[bp+14]; FAR
+    return).  Composes the already-recovered `get_my_best_dirs` and
+    `get_my_rand_dirs` (the latter via the SAME PACK-resident output
+    cells `get_my_initial_rand_dir` uses: `pack[0x78A4]`/`[0xA0D8]`).
+
+    Calls `get_my_best_dirs` once from `(x, y)`. If that fails
+    immediately, the walk never starts (0 steps taken). Otherwise walks
+    a SHADOW position forward: each successful `get_my_best_dirs` call
+    advances the shadow by that direction's compass delta and
+    continues (up to 64 total attempts); the first failure stops the
+    walk early. After the walk, a LAST attempt result that's still
+    non-negative (the walk ran the full 64 steps without ever failing)
+    is forced to `-1` — only an actual failure mid-walk keeps its real
+    value. Finally: `-2` specifically calls `get_my_rand_dirs(x, y,
+    ...)`; anything else (including the forced `-1`) stamps
+    `pack[0x72E4] = 0xFFFF` and calls `get_my_best_dirs(x, y, ...)` one
+    more time — both are tail calls, returning THEIR result directly.
+    """
+    inside = pack.rw(0x9B6E) != 0
+
+    si = get_my_best_dirs(dgroup, pack, inside, plane, x, y, tgt_x, tgt_y)
+    step_count = 0
+
+    if si >= 0:
+        shadow_x = x + GET_BEST_DIR_DX[si]
+        shadow_y = y + GET_BEST_DIR_DY[si]
+        while step_count < 0x40:
+            si = get_my_best_dirs(dgroup, pack, inside, plane, shadow_x,
+                                  shadow_y, tgt_x, tgt_y)
+            if si >= 0:
+                shadow_x += GET_BEST_DIR_DX[si]
+                shadow_y += GET_BEST_DIR_DY[si]
+            step_count += 1
+            if si < 0:
+                break
+
+    if si >= 0:
+        si = -1
+
+    if si == -2:
+        out1 = [pack.rw(0x78A4)]
+        out2 = [pack.rw(0xA0D8)]
+        result = get_my_rand_dirs(dgroup, pack, out1, out2, inside, plane,
+                                  x, y, tgt_x, tgt_y)
+        pack.ww(0x78A4, out1[0] & 0xFFFF)
+        pack.ww(0xA0D8, out2[0] & 0xFFFF)
+        return result
+
+    pack.ww(0x72E4, 0xFFFF)
+    return get_my_best_dirs(dgroup, pack, inside, plane, x, y, tgt_x, tgt_y)
+
+
 def check_my_best_dirs(dgroup, pack, out, inside: bool, plane: int, cur_x: int,
                        cur_y: int, tgt_x: int, tgt_y: int) -> int:
     """Walk `get_my_best_dirs` forward up to 64 steps toward the target,

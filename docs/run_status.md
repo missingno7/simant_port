@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.152) — /goal grind: _GetMyNextRandDirs — probe ahead, dispatch on outcome
+- DEFERRED `_GetMyDis` after partial disassembly: the 6th survey's
+  "thin wrapper around `get_dis`" characterization was WRONG — it's a
+  genuine colony-anchor-routing distance function with up to 6
+  asymmetric colony-pair branches, each reading a different SDG
+  scratch-field pair (`_MakeNewHoleB`'s own `[0x8352]/[0x8354]` and
+  `[0x835A]/[0x835C]` "last placed hole" fields, plus two more pairs
+  presumably from `_MakeNewHoleR`). Genuinely tractable in principle
+  (composes only `get_dis`) but the branch count made it a poor value
+  a rushed pass — deferred rather than guess at the anchor semantics,
+  same call as `_DropFoodA`/`_CreateNewHole` earlier this session.
+- RECOVERED `get_my_next_rand_dirs` instead (`_GetMyNextRandDirs`,
+  seg6:8BEA, args plane=[bp+6], x=[bp+8], y=[bp+10], tgt_x=[bp+12],
+  tgt_y=[bp+14], FAR return) — a genuinely unusual "probe ahead but
+  discard the result" pattern: walks a SHADOW position up to 64 steps
+  via the already-recovered `get_my_best_dirs`, but the walked-to
+  position itself is NEVER used for anything except whether the walk
+  ever hit a `-2` ("nothing clear at all") outcome. The final dispatch
+  always re-calls from the ORIGINAL `(x, y)`: a `-2` anywhere in the
+  walk falls back to `get_my_rand_dirs`; anything else (including a
+  forced `-1` when the walk succeeded the full 64 steps) re-calls
+  `get_my_best_dirs` one more time and returns that directly.
+- 3 cases (immediate `-1` at-target, immediate `-2` all-blocked falling
+  through to `get_my_rand_dirs`, and a one-step-then-default-terrain
+  walk) — ALL GREEN ON THE FIRST RUN (one quick lambda-arity fix in the
+  test harness itself, unrelated to the recovered logic).
+- Suite: simant 1582 (+3), full suite green.
+
 ## 2026-07-14 (cont.151) — /goal grind: _DoRepoFly — reproductive-flight departure
 - RECOVERED `do_repo_fly` (`_DoRepoFly`, seg6:0D4A, arg slot=[bp+4],
   NEAR return) — a yard ant occasionally departs on a "reproductive
