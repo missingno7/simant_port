@@ -58,8 +58,9 @@ flowchart TD
     dfor["_DoForageAnt"]
     ddig["_DoDigInB"]
   end
-  subgraph L2c["combat resolution (started)"]
+  subgraph L2c["top-level behaviors, started"]
     dfa["_DoFightA"]
+    ddoa["_DoDigOutAntA"]
     gnm["_GetNewMode"]
     dah["_DeadAntHere"]
   end
@@ -113,8 +114,9 @@ flowchart TD
   das --> dab & daa
   dab --> dnb
   daa --> dfor & gbd
-  daa -.-> dfa
+  daa -.-> dfa & ddoa
   dfa --> gnm & dah & srand
+  ddoa --> gnm & bnc & jsc & srand
   dnb --> ddig & iyel & srand
   dfor --> iva & iyel & srand
   dfor -.-> fial & aal & csd
@@ -147,7 +149,7 @@ flowchart TD
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
   class dtb,dttb,mnhb,exh,seb,fxm,afld done;
   class tmdb,gob done;
-  class dfa,gnm,dah done;
+  class dfa,ddoa,gnm,dah done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
 
@@ -156,7 +158,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA` combat resolution done; forage/nest behaviors frontier | 38 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA` top-level behaviors done; forage/nest frontier | 39 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode`/`_Bounce` done | 6 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -192,14 +194,18 @@ move and then actually move* is byte-exact, end to end:
   sharing) branch that calls the unrecovered `_DoTroph` — the port computes
   that gate's condition exactly and raises loudly if it would ever fire,
   rather than fake the outcome.
-- **Combat resolution, started**: `_DoFightA` — the first genuinely
-  **top-level** `_Do*Ant*` routine recovered (one call-hop below
-  `_DoAntSimA`): per-tick caste jitter plus a 1-in-16 kill roll that
-  composes the caste mode-transition lookup `_GetNewMode` (`seg7`) and the
-  already-recovered `_DeadAntHere`. Its presentation-only branch
-  (`ANTEDIT!_FightBalloons`, a speech-balloon UI call) is deliberately
-  omitted, not ported — same core/presentation split as the redraw stubs
-  below.
+- **Top-level `_Do*Ant*` behaviors, started**: `_DoFightA` and
+  `_DoDigOutAntA` — the first two genuinely **top-level** routines recovered
+  (each one call-hop below `_DoAntSimA`). `_DoFightA`: per-tick caste jitter
+  plus a 1-in-16 kill roll that composes the caste mode-transition lookup
+  `_GetNewMode` (`seg7`) and the already-recovered `_DeadAntHere`. Its
+  presentation-only branch (`ANTEDIT!_FightBalloons`, a speech-balloon UI
+  call) is deliberately omitted, not ported — same core/presentation split
+  as the redraw stubs below. `_DoDigOutAntA`: aging/mode-transition, or a
+  move (with its own, distinct natural-decay kill chance) toward a
+  `_Bounce`-biased or mode-table-random direction, composing `_Bounce`
+  (also recovered — a yard-edge "bounce back into the map" compass) and the
+  already-recovered `_JamScentBN`/`_JamScentRN`.
 - **Also recovered**: `_DeadAntHere` (a 100-slot corpse-decay ring buffer),
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
@@ -210,11 +216,8 @@ move and then actually move* is byte-exact, end to end:
 an actual decision, `_DoTroph`'s own dependency chain (a real sound-engine
 routine plus a dialog/busy-wait UI routine — presentation/audio work, not
 core sim logic), and the rest of combat (`_YellowFight`/`_GetWinner`, which
-now only needs zero-blocker leftovers now that `_GetNewMode` is done).
-`_Bounce` (a yard-edge "bounce back into the map" compass helper, also
-recovered) was the last missing dependency for `_DoDigOutAntA` — a 502-byte
-top-level `_Do*Ant*` routine, next up. That's the next milestone toward the
-[VM-less native port](docs/vmless_port.md).
+now only needs zero-blocker leftovers now that `_GetNewMode` is done). That's
+the next milestone toward the [VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 

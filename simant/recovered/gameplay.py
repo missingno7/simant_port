@@ -2624,6 +2624,116 @@ def bounce(dgroup, x: int, y: int) -> int:
     return 0
 
 
+def do_dig_out_ant_a(dgroup, simant_data_group, pack, slot: int) -> None:
+    """Resolve one tick of a yard ant "digging out" — aging/mode-transition,
+    or a move (with a natural-decay kill chance) toward a `_Bounce`-biased or
+    mode-table-random direction — the second top-level `_Do*Ant*` routine
+    recovered, after `_DoFightA`.
+
+    Recovered from `_DoDigOutAntA` (SIMANTW.SYM seg6:1480, NEAR call/return,
+    arg: `slot`). Always picks a candidate direction: an `_SRand8`-plus-
+    caste-low-3-bits index into an 8-row/8-caste mode table
+    (`simant_data_group[0x24 + roll8 + ((caste & 7) << 3)]`), overridden by
+    `bounce()` when the ant is at (or adjacent to) the yard edge.
+
+    `sub = (caste & 0x78) >> 3` splits the routine in two:
+    - `sub not in (5, 9)`: no movement at all — just a `get_new_mode`
+      transition (written to THIS ant's own `field_c`, not an "acting ant"
+      like `do_fight_a`) and a `field_e` clear. (The ASM computes the
+      candidate new x/y before checking `sub`, then discards them on this
+      path — the recovered version skips that dead computation.)
+    - `sub in (5, 9)`: rolls `_SRand8()`; on a `0` (1-in-8, natural decay):
+      the caste field is decremented by `0x18` in place (a slow aging-to-
+      death clock, distinct from `_DoFightA`'s combat kill), stamped via
+      `get_new_mode`/`field_c`/`field_e` same as above, and the decayed
+      caste is written back into the yard life grid at the CURRENT
+      position (no movement). On any other roll: reads the yard TILE map
+      (not life grid) at the candidate position and compares it to
+      `pack[0x7604]` (a diggability threshold); if the tile is too hard,
+      OR the life grid there is already occupied, the ant doesn't move —
+      it just rerolls a fresh mode-table direction and re-stamps its
+      caste in place. Otherwise it moves: occupies the new life-grid cell,
+      vacates the old one, updates its recorded position, and — if
+      `field_e` (its carried-dirt counter) is nonzero — decrements it and
+      jams the corresponding colony's NEST scent grid at the new position
+      (`jam_scent_rn` for colony bit `0x80` set, else `jam_scent_bn`) with
+      the decremented count.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def roll8() -> int:
+        seed, r = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return r
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    a_x = simant_data_group.rb(0x23A4 + slot)
+    a_y = simant_data_group.rb(0x278E + slot)
+    caste = simant_data_group.rb(0x2F62 + slot)
+    caste_masked = caste & 0xF8
+    sub = (caste & 0x78) >> 3
+    low3_shifted = (caste & 7) << 3
+
+    dir_idx = sx8(simant_data_group.rb(0x24 + roll8() + low3_shifted))
+    bounced = bounce(dgroup, a_x, a_y)
+    if bounced != 0:
+        dir_idx = (bounced - 1) & 7
+
+    new_x = (a_x + sx8(simant_data_group.rb(dir_idx))) & 0xFF
+    new_y = (a_y + sx8(simant_data_group.rb(8 + dir_idx))) & 0xFF
+
+    if sub not in (5, 9):
+        new_mode = get_new_mode(dgroup, simant_data_group, pack, sub, caste) & 0xFF
+        simant_data_group.wb(0x2B78 + slot, new_mode)
+        simant_data_group.wb(0x334C + slot, 0)
+        return
+
+    def stamp_in_place(new_caste: int) -> None:
+        simant_data_group.wb(0x2F62 + slot, new_caste & 0xFF)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (a_x << 6) + a_y, new_caste & 0xFF)
+
+    if roll8() == 0:
+        decayed = (caste - 0x18) & 0xFF
+        simant_data_group.wb(0x2F62 + slot, decayed)
+        new_mode = get_new_mode(dgroup, simant_data_group, pack, sub, caste) & 0xFF
+        simant_data_group.wb(0x2B78 + slot, new_mode)
+        simant_data_group.wb(0x334C + slot, 0)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (a_x << 6) + a_y, decayed)
+        return
+
+    tile = dgroup.rb(MAP_PLANE_BASE[0] + (new_x << 6) + new_y)
+    threshold = _sx16(pack.rw(0x7604))
+    if tile > threshold:
+        newdir = simant_data_group.rb(0x24 + roll8() + low3_shifted)
+        stamp_in_place(caste_masked | newdir)
+        return
+
+    if dgroup.rb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y) != 0:
+        newdir = simant_data_group.rb(0x24 + roll8() + low3_shifted)
+        stamp_in_place(caste_masked | newdir)
+        return
+
+    moved_caste = caste_masked | dir_idx
+    dgroup.wb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y, moved_caste)
+    simant_data_group.wb(0x2F62 + slot, moved_caste)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (a_x << 6) + a_y, 0)
+    simant_data_group.wb(0x23A4 + slot, new_x)
+    simant_data_group.wb(0x278E + slot, new_y)
+
+    field_e = simant_data_group.rb(0x334C + slot)
+    if field_e == 0:
+        return
+    field_e = (field_e - 1) & 0xFF
+    simant_data_group.wb(0x334C + slot, field_e)
+    if caste & 0x80:
+        jam_scent_rn(simant_data_group, new_x, new_y, field_e)
+    else:
+        jam_scent_bn(simant_data_group, new_x, new_y, field_e)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 

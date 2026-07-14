@@ -1147,6 +1147,89 @@ def test_bounce_matches_asm(x, y, seed_val):
         f"x={x:#x} y={y:#x} seed={seed_val:#x}: seed mismatch")
 
 
+# ---- _DoDigOutAntA (seg6:1480) — second top-level `_Do*Ant*` routine -------
+# NEAR call/return, composes `_Bounce`, `_GetNewMode`, and (on a successful
+# move with a nonzero carried-dirt counter) `_JamScentBN`/`_JamScentRN`.
+_DODIGOUTANTA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard tile map + yard life grid + SRand seed
+    (_SDG, 0x0000, 0x8B00),                 # dx/dy + mode tables, A-list fields, NEST scent grids, GetNewMode tables
+    (_PACK, 0x7600, 0xA000),                # dig threshold [0x7604] + GetNewMode's pack fields
+]
+_DX8 = [0, 1, 1, 1, 0, 0xFF, 0xFF, 0xFF]
+_DY8 = [0xFF, 0xFF, 0, 1, 1, 1, 0, 0xFF]
+
+
+def _dodigoutanta_seed(slot, a_x, a_y, caste, seed_val, *, threshold=5,
+                       dest_tile=0, dest_life=0, field_e=0):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.data[dg + 0x28E8:dg + 0x38E8] = bytes(0x1000)   # yard tile map -> 0
+        m.mem.data[dg + 0x68E8:dg + 0x78E8] = bytes(0x1000)   # yard life grid -> 0
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(sdg, 0x23A4 + slot, a_x)
+        m.mem.wb(sdg, 0x278E + slot, a_y)
+        m.mem.wb(sdg, 0x2F62 + slot, caste)
+        m.mem.wb(sdg, 0x334C + slot, field_e)
+        m.mem.wb(sdg, 0x2B78 + slot, 0x11)   # sentinel -- must change only when GetNewMode fires
+        m.mem.ww(pack, 0x7604, threshold)
+        m.mem.ww(pack, 0x9FCE, 0)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, 0x40)
+        m.mem.ww(sdg, 0x8A58, 0x1122)
+        for i in range(8):
+            m.mem.wb(sdg, 0x89E6 + i, 0x25)
+            m.mem.wb(sdg, 0x8A16 + i, 0x30)
+        m.mem.wb(dg, 0x28E8 + ((a_x & 0xFF) << 6) + (a_y & 0xFF), 0)
+        # The candidate direction (bounce-free, interior case) picked by the
+        # seeded tables is stamped as the actual dest cell too, so a single
+        # `dest_tile`/`dest_life` override reaches the branch under test
+        # regardless of exactly which of the 8 mode-table rolls landed:
+        for i in range(8):
+            dx, dy = _DX8[i], _DY8[i]
+            dx = dx - 0x100 if dx & 0x80 else dx
+            dy = dy - 0x100 if dy & 0x80 else dy
+            nx, ny = (a_x + dx) & 0xFF, (a_y + dy) & 0xFF
+            m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+            m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, dest_life)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "slot,a_x,a_y,caste,seed_val,threshold,dest_tile,dest_life,field_e", [
+    (0x10, 10, 12, 0x08, 0x1234, 5, 0, 0, 0),        # sub=1 not in (5,9) -> mode transition, no move
+    (0x10, 10, 12, 0x29, 0x0000, 5, 0, 0, 0),         # sub=5, roll_a==0 -> natural-decay kill
+    (0x10, 10, 12, 0x29, 0xABCD, 5, 10, 0, 0),        # sub=5, roll_a!=0, tile>threshold -> terrain-blocked
+    (0x10, 10, 12, 0x29, 0xABCD, 5, 3, 0x40, 0),      # sub=5, tile ok, dest occupied -> occupant-blocked
+    (0x10, 10, 12, 0x29, 0xABCD, 5, 3, 0, 0),         # sub=5, move succeeds, field_e==0 -> plain move
+    (0x10, 10, 12, 0x29, 0xABCD, 5, 3, 0, 5),         # move succeeds, field_e!=0, colony B -> jam_scent_bn
+    (0x10, 10, 12, 0xA9, 0xABCD, 5, 3, 0, 5),         # move succeeds, field_e!=0, colony R -> jam_scent_rn
+    (0x10, 0x4A, 0x2A, 0x4A, 0x1234, 5, 3, 0, 0),     # sub=9, interior -> mode-table direction (no bounce)
+    (0x10, 0, 0, 0x29, 0x1234, 100, 0, 0, 0),         # sub=5, at the (0,0) corner -> `_Bounce` overrides dir_idx
+])
+def test_dodigoutanta_state_diff_matches_asm(slot, a_x, a_y, caste, seed_val,
+                                             threshold, dest_tile, dest_life,
+                                             field_e):
+    from simant.recovered.gameplay import do_dig_out_ant_a
+    results = _run_and_diff_segs(
+        6, 0x1480, (slot,),
+        lambda d, s, p: do_dig_out_ant_a(d, s, p, slot),
+        _DODIGOUTANTA_REGIONS, near=True,
+        seed_fn=_dodigoutanta_seed(slot, a_x, a_y, caste, seed_val,
+                                   threshold=threshold, dest_tile=dest_tile,
+                                   dest_life=dest_life, field_e=field_e),
+        )
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DODIGOUTANTA_REGIONS):
+        assert asm_after == rec_after, (
+            f"slot={slot:#x} caste={caste:#x} seed={seed_val:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only

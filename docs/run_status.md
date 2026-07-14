@@ -1,5 +1,49 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.105) — /goal grind: _DoDigOutAntA — second TOP-LEVEL `_Do*Ant*` routine
+- RECOVERED `do_dig_out_ant_a` (`_DoDigOutAntA`, seg6:1480, NEAR call/return,
+  arg: `slot`) — a yard ant's per-tick "dig out" resolution: aging/mode
+  transition, or a move (with a natural-decay kill chance, distinct from
+  `_DoFightA`'s combat kill) toward a `_Bounce`-biased or mode-table-random
+  direction. Independently disassembled the full 502-byte body; a careful
+  re-read of the bp-relative locals caught my own first-pass mis-transcription
+  (I'd initially inverted which of the `sub==5`/`sub==9` branches uses the
+  computed `new_x`/`new_y` — fixed by re-tracing every `[bp-N]` write/read in
+  address order rather than trusting the first skim) before any code was
+  written, so no wasted test iteration.
+- The routine's only two dependencies the earlier research survey hadn't
+  named by symbol were two NEAR calls (seg6:0x94F6/0x94B6) reached solely on
+  the "successful move AND carrying dirt (`field_e`!=0)" path — resolved via
+  `symbols_in_segment` to `_JamScentRN`/`_JamScentBN`, ALREADY recovered in
+  an earlier round (`gameplay.py`'s scent/pheromone tier). So the survey's
+  "zero-blocker" call stands; these just weren't visible from a call-graph
+  summary alone.
+  `_Bounce` itself was the other dependency, recovered last round (cont.104).
+  Independently verified the mode-table's real byte contents (`simant_data_
+  group[0x24..0x63]`, values 0-7) and the two 8-entry compass delta tables at
+  `simant_data_group[0..7]`/`[8..15]` (the canonical N/NE/E/SE/S/SW/W/NW
+  dx/dy pairs) directly from a fresh machine, rather than assuming their
+  shape from the disassembly's `cbw` sign-extend alone.
+- 9 state-diff cases (early mode-transition; natural-decay kill; terrain-
+  blocked retry; occupant-blocked retry; successful move with no cargo;
+  successful move + `_JamScentBN`; successful move + `_JamScentRN`; the
+  `sub==9` twin of the `sub==5` movement path; and a yard-corner case that
+  exercises `_Bounce` overriding the mode-table direction) — ALL GREEN ON
+  THE FIRST RUN. Seeded every one of the 8 possible destination cells around
+  the ant with the same override value rather than hand-computing which
+  index the seeded RNG sequence would land on — robust to *which* direction
+  gets picked, only to *whether* a move happens.
+- Suite: simant 1220 (+9). **Second top-level `_Do*Ant*` routine recovered**
+  (after `_DoFightA`, cont.103). Both of this round's top-level routines
+  compose entirely from already-recovered supporting tiers — no new gaps
+  opened. Next candidates per the survey, all zero-blocker: the rest of the
+  seg7 `_Get*Dir` family (`_GetForageDir`/`_GetNestDir`/`_GetAlarmDir`/
+  `_GetRandDir`/`_GetDefendDir`/`_GetRedDefendDir`); `_GetWinner`,
+  `_RandTurn`, `_GetExitDirB/R`, `_GetEnterDirB/R`, `_GoInNest`,
+  `_StartFightA`. `_DoForageAnt` remains a maybe (needs its own `_DoTroph`/
+  `_YellowFight` gate-shape re-verified end-to-end, same pattern as
+  `try_move_dir_b`'s trophallaxis gate).
+
 ## 2026-07-14 (cont.104) — /goal grind: _Bounce — yard-edge compass, unblocks _DoDigOutAntA
 - RECOVERED `bounce` (`_Bounce`, seg7:12EC, FAR call/return, args x=[bp+6]/
   y=[bp+8]) — picks a "bounce back into the map" compass value for an ant at
