@@ -1155,6 +1155,142 @@ def test_simegga_state_diff_matches_asm(slot, a_x, a_y, caste, seed_val, label):
             f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _LostHeadA (seg6:0B1E) — yard trail-head marker occupancy check ------
+# Pure predicate: no mutation at all, so the recovered call safely reuses
+# `_run_and_get_ax`'s own (unmutated) machine directly.
+_DX8 = [0, 1, 1, 1, 0, 0xFF, 0xFF, 0xFF]
+_DY8 = [0xFF, 0xFF, 0, 1, 1, 1, 0, 0xFF]
+_DX8_S = [d - 0x100 if d & 0x80 else d for d in _DX8]
+_DY8_S = [d - 0x100 if d & 0x80 else d for d in _DY8]
+@pytest.mark.parametrize("tile_matches,ant_present,label", [
+    (True, False, "tile matches the marker -> 0, no A-list check needed"),
+    (False, True, "tile changed, but the ant is still there -> 0"),
+    (False, False, "tile changed, no ant found -> 1 (lost)"),
+])
+def test_losthead_a_matches_asm(tile_matches, ant_present, label):
+    from simant.recovered.gameplay import lost_head_a
+    x, y, direction = 20, 20, 11
+    dir_idx = direction & 7
+    nx, ny = x + _DX8_S[dir_idx], y + _DY8_S[dir_idx]
+    marker = (direction - 8) & 0xFF
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        m.mem.wb(dg, 0x68E8 + (nx << 6) + ny,
+                 marker if tile_matches else 0)
+        m.mem.ww(pack, 0x80F0, 1 if ant_present else 0)
+        if ant_present:
+            m.mem.wb(sdg, 0x23A4, nx)
+            m.mem.wb(sdg, 0x278E, ny)
+            m.mem.wb(sdg, 0x2F62, 1)
+
+    ax, m = _run_and_get_ax(6, 0x0B1E, (x, y, direction), seed_fn=seed, near=True)
+    dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                     m.seg_bases[_PACK])
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    rec_ax = lost_head_a(dgroup_view, sdg_view, pack_view, x, y, direction)
+
+    assert ax == (rec_ax & 0xFFFF), label
+
+
+# ---- _LostHeadB / _LostHeadR (seg6:42DE / 6790) — NEST trail-head marker --
+_DX8_S = [d - 0x100 if d & 0x80 else d for d in _DX8]
+_DY8_S = [d - 0x100 if d & 0x80 else d for d in _DY8]
+
+
+@pytest.mark.parametrize("colony,seg,off,life_base,count_off,arrays", [
+    ("B", 6, 0x42DE, 0x88E8, 0x99D4, (0x3736, 0x392C, 0x3D18)),
+    ("R", 6, 0x6790, 0x98E8, 0x72CC, (0x4104, 0x42FA, 0x46E6)),
+])
+@pytest.mark.parametrize("tile_matches,ant_present,label", [
+    (True, False, "tile matches the marker -> 0, no A-list check needed"),
+    (False, True, "tile changed, but the ant is still there -> 0"),
+    (False, False, "tile changed, no ant found -> 1 (lost)"),
+])
+def test_losthead_br_matches_asm(colony, seg, off, life_base, count_off,
+                                 arrays, tile_matches, ant_present, label):
+    from simant.recovered.gameplay import lost_head_b, lost_head_r
+    fn = lost_head_b if colony == "B" else lost_head_r
+    x, y, direction = 20, 20, 11
+    dir_idx = direction & 7
+    nx, ny = x + _DX8_S[dir_idx], y + _DY8_S[dir_idx]
+    marker = (direction - 8) & 0xFF
+    y_off, x_off, caste_off = arrays
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        m.mem.wb(dg, life_base + (nx << 6) + ny, marker if tile_matches else 0)
+        m.mem.ww(pack, count_off, 1 if ant_present else 0)
+        if ant_present:
+            m.mem.wb(sdg, y_off, nx)
+            m.mem.wb(sdg, x_off, ny)
+            m.mem.wb(sdg, caste_off, marker)
+
+    ax, m = _run_and_get_ax(seg, off, (x, y, direction), seed_fn=seed)
+    dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                     m.seg_bases[_PACK])
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    rec_ax = fn(dgroup_view, sdg_view, pack_view, x, y, direction)
+
+    assert ax == (rec_ax & 0xFFFF), f"{colony} {label}"
+
+
+# ---- _LostTailB / _LostTailR (seg6:433C / 67EE) — NEST trail-tail marker --
+@pytest.mark.parametrize("colony,seg,off,life_base,count_off,arrays", [
+    ("B", 6, 0x433C, 0x88E8, 0x99D4, (0x3736, 0x392C, 0x3D18)),
+    ("R", 6, 0x67EE, 0x98E8, 0x72CC, (0x4104, 0x42FA, 0x46E6)),
+])
+@pytest.mark.parametrize("tile_matches,ant_present,label", [
+    (True, False, "tile matches the marker -> 0, no A-list check needed"),
+    (False, True, "tile changed, but the ant is still there -> 0"),
+    (False, False, "tile changed, no ant found -> 1 (lost)"),
+])
+def test_losttail_br_matches_asm(colony, seg, off, life_base, count_off,
+                                 arrays, tile_matches, ant_present, label):
+    from simant.recovered.gameplay import lost_tail_b, lost_tail_r
+    fn = lost_tail_b if colony == "B" else lost_tail_r
+    x, y, direction = 20, 20, 11
+    dir_idx = (direction ^ 4) & 7
+    nx, ny = x + _DX8_S[dir_idx], y + _DY8_S[dir_idx]
+    marker = (direction + 8) & 0xFF
+    y_off, x_off, caste_off = arrays
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        m.mem.wb(dg, life_base + (nx << 6) + ny, marker if tile_matches else 0)
+        m.mem.ww(pack, count_off, 1 if ant_present else 0)
+        if ant_present:
+            m.mem.wb(sdg, y_off, nx)
+            m.mem.wb(sdg, x_off, ny)
+            m.mem.wb(sdg, caste_off, marker)
+
+    ax, m = _run_and_get_ax(seg, off, (x, y, direction), seed_fn=seed)
+    dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                     m.seg_bases[_PACK])
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    rec_ax = fn(dgroup_view, sdg_view, pack_view, x, y, direction)
+
+    assert ax == (rec_ax & 0xFFFF), f"{colony} {label}"
+
+
 # ---- _StartFightA (seg6:266A) — initiate yard combat ----------------------
 # NEAR call/return. Composes the already-recovered _FindInAList, _GetWinner,
 # and _AlarmHere2.

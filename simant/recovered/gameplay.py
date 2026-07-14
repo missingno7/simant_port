@@ -2756,6 +2756,120 @@ def sim_egg_a(dgroup, simant_data_group, slot: int) -> None:
     dgroup.wb(life_off, 0)
 
 
+def lost_head_a(dgroup, simant_data_group, pack, x: int, y: int,
+                 direction: int) -> int:
+    """Check whether the yard trail-head marker one step ahead in
+    `direction` has come unclaimed.
+
+    Recovered from `_LostHeadA` (SIMANTW.SYM seg6:0B1E, NEAR return, args
+    x=[bp+4], y=[bp+6], direction=[bp+8]).
+
+    Steps one cell in `direction & 7` (the same compass delta tables every
+    `_Get*Dir`/`_Bounce` routine uses) and reads the yard life plane there.
+    If that cell's value equals `direction - 8` (a specific encoded
+    "trail head" marker tied to the direction itself), the marker's
+    intact and returns `0` immediately — no need to consult the A-list.
+    Otherwise the tile has changed, so it falls back to actually
+    searching the A-list for an ant AT that cell (`find_in_a_list`): found
+    still returns `0`, not found returns `1` (the head is lost).
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    dir_idx = direction & 7
+    ny = y + sx8(simant_data_group.rb(8 + dir_idx))
+    nx = x + sx8(simant_data_group.rb(dir_idx))
+    tile = dgroup.rb(LIFE_PLANE_BASE[0] + (nx << 6) + ny)
+    check = (tile - direction) & 0xFFFF
+    if check == 0xFFF8:
+        return 0
+    found = find_in_a_list(pack, simant_data_group, nx, ny)
+    return 0 if _sx16(found) >= 0 else 1
+
+
+def _lost_head(dgroup, simant_data_group, pack, life_plane_base: int,
+               find_list, x: int, y: int, direction: int) -> int:
+    """Shared body of `lost_head_b`/`r`."""
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    dir_idx = direction & 7
+    ny = y + sx8(simant_data_group.rb(8 + dir_idx))
+    caste_check = (direction - 8) & 0xFFFF
+    nx = x + sx8(simant_data_group.rb(dir_idx))
+    tile = dgroup.rb(life_plane_base + (nx << 6) + ny)
+    if tile == caste_check:
+        return 0
+    found = find_list(pack, simant_data_group, nx, ny, caste_check)
+    return 0 if _sx16(found) >= 0 else 1
+
+
+def lost_head_b(dgroup, simant_data_group, pack, x: int, y: int,
+                 direction: int) -> int:
+    """The black-colony NEST-map twin of `lost_head_a` — the trail-head
+    marker is `direction - 8` on the black nest life plane (`kill_tail_b`'s
+    `_FindInBList` for occupancy).
+
+    Recovered from `_LostHeadB` (SIMANTW.SYM seg6:42DE, FAR return, args
+    x=[bp+6], y=[bp+8], direction=[bp+10]).
+    """
+    return _lost_head(dgroup, simant_data_group, pack, LIFE_PLANE_BASE[2],
+                      find_in_b_list, x, y, direction)
+
+
+def lost_head_r(dgroup, simant_data_group, pack, x: int, y: int,
+                 direction: int) -> int:
+    """The red-colony twin of `lost_head_b`.
+
+    Recovered from `_LostHeadR` (SIMANTW.SYM seg6:6790, FAR return, args
+    x=[bp+6], y=[bp+8], direction=[bp+10]).
+    """
+    return _lost_head(dgroup, simant_data_group, pack, LIFE_PLANE_BASE[3],
+                      find_in_r_list, x, y, direction)
+
+
+def _lost_tail(dgroup, simant_data_group, pack, life_plane_base: int,
+               find_list, x: int, y: int, direction: int) -> int:
+    """Shared body of `lost_tail_b`/`r` — `lost_head_b`/`r`'s twin, checking
+    the OPPOSITE direction (`direction ^ 4`) for a tail marker
+    (`direction + 8`) instead of a head marker one step ahead."""
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    dir_idx = (direction ^ 4) & 7
+    ny = y + sx8(simant_data_group.rb(8 + dir_idx))
+    caste_check = (direction + 8) & 0xFFFF
+    nx = x + sx8(simant_data_group.rb(dir_idx))
+    tile = dgroup.rb(life_plane_base + (nx << 6) + ny)
+    if tile == caste_check:
+        return 0
+    found = find_list(pack, simant_data_group, nx, ny, caste_check)
+    return 0 if _sx16(found) >= 0 else 1
+
+
+def lost_tail_b(dgroup, simant_data_group, pack, x: int, y: int,
+                 direction: int) -> int:
+    """Recovered from `_LostTailB` (SIMANTW.SYM seg6:433C, FAR return, args
+    x=[bp+6], y=[bp+8], direction=[bp+10]). See `_lost_tail`.
+    """
+    return _lost_tail(dgroup, simant_data_group, pack, LIFE_PLANE_BASE[2],
+                      find_in_b_list, x, y, direction)
+
+
+def lost_tail_r(dgroup, simant_data_group, pack, x: int, y: int,
+                 direction: int) -> int:
+    """The red-colony twin of `lost_tail_b`.
+
+    Recovered from `_LostTailR` (SIMANTW.SYM seg6:67EE, FAR return, args
+    x=[bp+6], y=[bp+8], direction=[bp+10]).
+    """
+    return _lost_tail(dgroup, simant_data_group, pack, LIFE_PLANE_BASE[3],
+                      find_in_r_list, x, y, direction)
+
+
 def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of combat for a yard ("A"-list) ant: jitter its
     caste, and on a 1-in-16 roll, kill it — recovered from SIMANT1's

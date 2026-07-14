@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.120) — /goal grind: _LostHead*/_LostTail* — trail-marker occupancy family
+- RECOVERED all five `_Lost*` routines: `lost_head_a` (`_LostHeadA`,
+  seg6:0B1E, NEAR return, yard/A-list), `lost_head_b`/`r` (`_LostHeadB`/`R`,
+  seg6:42DE/6790, FAR return, nest/B-R-list), `lost_tail_b`/`r`
+  (`_LostTailB`/`R`, seg6:433C/67EE, FAR return, nest/B-R-list) — each
+  checks whether a trail-head (one step AHEAD in `direction`) or
+  trail-tail (one step in the OPPOSITE direction, `direction ^ 4`) marker
+  cell still holds its expected encoded tile value; if so, trusts it
+  without consulting the ant list; if the tile has changed, falls back to
+  an actual `find_in_a/b/r_list` search to determine whether an ant is
+  still physically there.
+- **Caught and fixed a genuine bug in my own first-pass transcription**
+  before committing: I had the match/no-match branch inverted (assumed
+  "tile matches marker → check the list", when the real ASM is
+  "tile matches marker → trust it, return `0` immediately; only a
+  MISMATCH falls through to the list search"). Caught by writing the
+  state-diff tests BEFORE trusting my own pseudocode read, running them,
+  and getting two failures that pointed straight at the branch — then
+  confirming with a standalone instrumented run of the real ASM before
+  touching the fix, exactly the discipline this project has used all
+  session for every prior branch-polarity mistake.
+- 15 cases (3 scenarios x head-A, head-B/R, tail-B/R) — all green after
+  the fix, confirming the corrected branch against the real ASM in every
+  scenario (fast-path match, list-search hit, list-search miss).
+- Suite: simant 1327 (+15). This closes the entire 5-routine `_Lost*`
+  family from the fresh survey. Next: the food family (`_EatFoodB/R`,
+  `_TryEatFoodB/R`, `_PickupFoodA`) or the larger stretch targets
+  (`_RaidOutB/R`, `_QueenMoveB/R`).
+
 ## 2026-07-14 (cont.119) — /goal grind: _SimEggA — yard egg tick
 - RECOVERED `sim_egg_a` (`_SimEggA`, seg6:0A1C, NEAR return, arg: slot) —
   a tiny (88-byte) routine, only dependency `_SRand1`. Always stamps the
