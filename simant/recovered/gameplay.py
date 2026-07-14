@@ -588,6 +588,110 @@ def get_my_best_dirs(dgroup, pack, inside: bool, plane: int, cur_x: int,
     return best_clear if best_clear >= 0 else best_any
 
 
+def get_my_rand_dirs(dgroup, pack, out1, out2, inside: bool, plane: int,
+                     cur_x: int, cur_y: int, tgt_x: int, tgt_y: int) -> int:
+    """Sticky-direction search: keep the ant moving in roughly the same
+    8-way direction across calls instead of re-picking from scratch each
+    time, only recomputing when the remembered direction becomes blocked.
+
+    Recovered from `_GetMyRandDirs` (SIMANTW.SYM seg6:8928, args: two FAR
+    pointer outputs, then plane, cur_x, cur_y, tgt_x, tgt_y; FAR return).
+    `out1`/`out2` model the two caller-owned far-pointer cells as 1-element
+    lists: `out1[0]` is a tri-state mode flag (0 = "no direction committed
+    yet", 1 = "committed, found via the forward scan", 0xFFFF/-1 =
+    "committed, found via the backward scan") read on entry and written on
+    exit; `out2[0]` is the committed direction index (0..7) on entry (when
+    `out1[0] != 0`) or the compass direction `get_dir(cur, tgt) - 1` on a
+    fresh commit.
+
+    First builds a clearance mask over the 8 neighbours (same delta tables
+    and `tile_can_be_moved_on` gate as `get_my_best_dirs`, plus a special
+    case: a neighbour that exactly matches a PACK-resident "avoid" cell —
+    `pack[0xA0D6]`/`[0xA0DA]` — is forced blocked without even calling
+    `tile_can_be_moved_on`). Returns -1 immediately if already at the
+    target, -2 if no neighbour is clear at all (no pointer writes in either
+    case).
+
+    - `out1[0] == 0` (no prior commitment): sweeps outward from `out2[0]`
+      in both directions at once (`fwd` incrementing, `back` decrementing,
+      mod 8) for the first clear cell; commits it (writes `out1[0]` = 1 for
+      a forward hit, 0xFFFF for a backward hit, and `out2[0]` = the fresh
+      compass direction) and returns its index.
+    - `out1[0] != 0` (already committed): re-checks the SAME remembered
+      index (`out2[0]`, tracked via `chosen1`/`chosen2` depending on which
+      scan found it last time) each of up to 8 iterations; if it is STILL
+      clear, recomputes (returns the index; if the neighbour's distance to
+      target got worse than the last known best, only returns the index —
+      no writes; otherwise also refreshes `out2[0]`/resets `out1[0]` = 0).
+      If it became blocked, both trackers advance (`chosen1`+1, `chosen2`-1,
+      mod 8) and the loop retries. Exhausting all 8 without a hit returns -1.
+    """
+    best_dist = get_dis(cur_x, cur_y, tgt_x, tgt_y)
+    if best_dist <= 0:
+        return -1
+
+    check_adjacent = pack.rw(0x9BC4) == 2
+    cand_plane = pack.rw(0x9BE0)
+    cand_x = pack.rw(0x80C6)
+    cand_y = pack.rw(0x80D2)
+    avoid_x = pack.rw(0xA0D6)
+    avoid_y = pack.rw(0xA0DA)
+
+    mark = [0] * 8
+    last_clear = -2
+    for si in range(8):
+        nx = cur_x + GET_BEST_DIR_DX[si]
+        ny = cur_y + GET_BEST_DIR_DY[si]
+        if nx == avoid_x and ny == avoid_y:
+            continue
+        if tile_can_be_moved_on(dgroup, inside, plane, nx, ny, cand_plane,
+                                cand_x, cand_y, check_adjacent):
+            mark[si] = 1
+            last_clear = si
+
+    if last_clear < 0:
+        return -2
+
+    def recompute(idx):
+        nx = cur_x + GET_BEST_DIR_DX[idx]
+        ny = cur_y + GET_BEST_DIR_DY[idx]
+        dist = get_dis(nx, ny, tgt_x, tgt_y)
+        if dist > best_dist:
+            return idx
+        out2[0] = (get_dir(cur_x, cur_y, tgt_x, tgt_y) - 1) & 0xFFFF
+        out1[0] = 0
+        return idx
+
+    if out1[0] != 0:
+        chosen1 = out2[0]
+        chosen2 = out2[0]
+        for _ in range(8):
+            if _sx16(out1[0]) > 0:
+                if mark[chosen1]:
+                    return recompute(chosen1)
+            else:
+                if mark[chosen2]:
+                    return recompute(chosen2)
+            chosen1 = (chosen1 + 1) & 7
+            chosen2 = (chosen2 - 1) & 7
+        return -1
+
+    fwd = out2[0]
+    back = out2[0]
+    for _ in range(8):
+        if mark[fwd]:
+            out2[0] = (get_dir(cur_x, cur_y, tgt_x, tgt_y) - 1) & 0xFFFF
+            out1[0] = 1
+            return fwd
+        if mark[back]:
+            out2[0] = (get_dir(cur_x, cur_y, tgt_x, tgt_y) - 1) & 0xFFFF
+            out1[0] = 0xFFFF
+            return back
+        fwd = (fwd + 1) & 7
+        back = (back - 1) & 7
+    return -1
+
+
 # The 3x3 neighbour offsets _IsClear3x3 walks (a DGROUP direction table): the 8
 # compass directions around the centre, in the order N, NE, E, SE, S, SW, W, NW.
 CLEAR_3X3_DX = (0, 1, 1, 1, 0, -1, -1, -1)

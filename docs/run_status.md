@@ -1,5 +1,56 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.87) — /goal grind: _GetMyRandDirs (stateful sticky-direction search)
+- RECOVERED `get_my_rand_dirs` (seg6:8928, args: TWO far-pointer outputs then
+  plane, cur_x, cur_y, tgt_x, tgt_y; FAR return; genuine MUTATOR via the
+  pointer outputs, not pure) — `_GetMyBestDirs`'s immediate successor in the
+  symbol table and the biggest/most stateful routine recovered this session.
+  Implements a "keep moving the same way, don't re-pick every tick" search:
+  the two far-pointer cells are a tri-state mode flag (0 = nothing committed,
+  1 = committed via a forward scan, 0xFFFF = committed via a backward scan)
+  and the committed direction index, both READ on entry and WRITTEN on exit
+  — modelled in the recovered Python as 1-element lists standing in for the
+  caller's far-pointer cells (no existing gameplay.py routine needed this
+  in/out-pointer shape before).
+  - Clearance mask over the 8 neighbours reuses `tile_can_be_moved_on` (same
+    PACK-resident candidate-site fields as `get_my_best_dirs`), plus ONE new
+    wrinkle: a neighbour exactly matching a PACK "avoid" cell
+    (`pack[0xA0D6]`/`[0xA0DA]`) is forced blocked WITHOUT even calling
+    `tile_can_be_moved_on` — confirmed this routine has NO life/occupancy
+    check anywhere (unlike `get_my_best_dirs`), verified with a dedicated
+    test case seeding a nonzero life byte on an otherwise-clear cell and
+    confirming it's still treated as clear.
+  - `out1[0] == 0`: sweeps outward from `out2[0]` in both directions at once
+    (`fwd`++, `back`--, mod 8) for the first clear cell.
+  - `out1[0] != 0`: re-validates the SAME remembered index each of up to 8
+    iterations (tracked via two independently-advancing "chosen1"/"chosen2"
+    trackers depending on which mode is active) — recomputes in place if
+    still clear (and only writes fresh output values if the recomputed
+    distance actually improved; otherwise returns the index with NO writes
+    at all — a branch worth its own test case), else advances and retries.
+  - CAUGHT AND FIXED a wrong-direction read mid-decode: my first pass had
+    "if the tracked direction is STILL clear -> advance / keep searching,
+    else -> recompute" — exactly backwards from the real `jz`/`jnz` targets.
+    Re-traced every branch target against its actual destination label
+    (not the trusted-at-a-glance mnemonic) before writing any Python, which
+    caught it before it became a bug — same discipline that saved
+    `_TileCanBeMovedOn` in cont.85.
+  - Verification needed a bespoke harness (not the shared `_run_and_diff*`
+    helpers): a genuine far-pointer ARGUMENT pair on the stack (offset word
+    then segment word, LES-order) pointing at real writable PACK memory,
+    checking both the returned AX and the two output words read back after
+    the run. 12 hand-built scenarios (at-target, nothing-clear, forward-hit,
+    backward-hit, avoid-cell-forces-fallback, both re-entrant recompute
+    paths in both scan-mode directions, the "recompute but distance didn't
+    improve -> no writes" branch, the occupied-but-still-clear case, and the
+    yard-plane threshold gate) — ALL GREEN on the first run.
+- Suite: simant 994 (+12). This is the largest single routine recovered
+  this session by control-flow complexity; the pathfinding-tier thread
+  (`_TileCanBeMovedOn` -> `_GetMyBestDirs` -> `_GetMyRandDirs`) is now fully
+  closed. Continuing per /goal — remaining siblings per cont.84's original
+  survey: `_CheckMyBestDirs` (seg6:8B40, right after this one) and
+  `_GetRedBestDirs` (seg6:9A18, the red-colony twin, last symbol in seg6).
+
 ## 2026-07-14 (cont.86) — /goal grind: _GetMyBestDirs (player-ant pathfinding done)
 - RECOVERED `get_my_best_dirs` (seg6:8828, args: plane, cur_x, cur_y, tgt_x,
   tgt_y; FAR return; PURE READ) — `_TileCanBeMovedOn`'s only remaining caller

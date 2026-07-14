@@ -1202,6 +1202,118 @@ def test_getmybestdirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, tiles,
         f"cand=({cand_plane},{cand_x},{cand_y})): asm={ax:#06x} rec={expect:#06x}")
 
 
+# ---- _GetMyRandDirs (seg6:8928) — sticky-direction search, 2 far-ptr I/O ---
+# Two output words are passed as a genuine far pointer pair (offset, segment
+# words on the stack); seeded/read back at fixed PACK offsets since any
+# writable segment works for a caller-supplied pointer.
+_RANDDIRS_OUT1_OFF, _RANDDIRS_OUT2_OFF = 0x9F00, 0x9F02
+
+
+def _run_getmyranddirs_asm(plane, cur_x, cur_y, tgt_x, tgt_y, out1_init, out2_init,
+                           tiles, lifes, inside, check_adjacent, cand_plane, cand_x,
+                           cand_y, avoid_x, avoid_y):
+    from simant.recovered.gameplay import map_cell_offset, life_cell_offset
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        world = m.mem.rw(dg, 0xC4AC)
+        m.mem.wb(world, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(pack, 0x9BC4, 2 if check_adjacent else 0)
+        m.mem.ww(pack, 0x9BE0, cand_plane & 0xFFFF)
+        m.mem.ww(pack, 0x80C6, cand_x & 0xFFFF)
+        m.mem.ww(pack, 0x80D2, cand_y & 0xFFFF)
+        m.mem.ww(pack, 0xA0D6, avoid_x & 0xFFFF)
+        m.mem.ww(pack, 0xA0DA, avoid_y & 0xFFFF)
+        m.mem.ww(pack, _RANDDIRS_OUT1_OFF, out1_init & 0xFFFF)
+        m.mem.ww(pack, _RANDDIRS_OUT2_OFF, out2_init & 0xFFFF)
+        for si in range(8):
+            nx, ny = cur_x + GET_BEST_DIR_DX[si], cur_y + GET_BEST_DIR_DY[si]
+            moff = map_cell_offset(plane, nx, ny)
+            if moff is not None:
+                m.mem.wb(dg, moff & 0xFFFF, tiles.get(si, 0x40))
+            loff = life_cell_offset(plane, nx, ny)
+            if loff is not None:
+                m.mem.wb(dg, loff & 0xFFFF, lifes.get(si, 0))
+
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    pack_seg = m.seg_bases[_PACK]
+    seed(m)
+    s = m.cpu.s
+    s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[6], 0x8928
+    sp = s.sp
+    args = (tgt_y, tgt_x, cur_y, cur_x, plane,
+           pack_seg, _RANDDIRS_OUT2_OFF, pack_seg, _RANDDIRS_OUT1_OFF)
+    for v in (*args, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(200_000):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError("ASM _GetMyRandDirs did not return")
+    out1 = m.mem.rw(pack_seg, _RANDDIRS_OUT1_OFF)
+    out2 = m.mem.rw(pack_seg, _RANDDIRS_OUT2_OFF)
+    return s.ax & 0xFFFF, out1, out2, m
+
+
+@pytest.mark.parametrize(
+    "plane,cur_x,cur_y,tgt_x,tgt_y,out1_init,out2_init,tiles,lifes,inside,"
+    "check_adjacent,cand_plane,cand_x,cand_y,avoid_x,avoid_y", [
+    # already at target -> -1, no field writes
+    (2, 20, 20, 20, 20, 0, 3, {}, {}, False, False, 0, 0, 0, -100, -100),
+    # nothing clear -> -2, no field writes
+    (2, 20, 20, 25, 25, 0, 3, {}, {}, False, False, 0, 0, 0, -100, -100),
+    # fresh search (out1=0): seed direction itself is clear -> forward hit
+    (2, 20, 20, 25, 25, 0, 3, {3: 0x05}, {}, False, False, 0, 0, 0, -100, -100),
+    # fresh search: seed blocked, but the symmetric backward neighbour is clear
+    (2, 20, 20, 25, 25, 0, 3, {2: 0x05}, {}, False, False, 0, 0, 0, -100, -100),
+    # fresh search: the only clear direction coincides with the "avoid" cell
+    # -> forced blocked, falls back to a farther clear one instead
+    (2, 20, 20, 25, 25, 0, 3, {3: 0x05, 6: 0x05}, {}, False, False, 0, 0, 0,
+     23, 19),  # avoid = cur+DX[3],cur+DY[3] = (23,19)
+    # re-entrant, out1>0 (forward-found last time): chosen1 still clear ->
+    # recompute in place, distance improves -> writes out1=0 + new dir
+    (2, 20, 20, 25, 25, 1, 3, {3: 0x05}, {}, False, False, 0, 0, 0, -100, -100),
+    # re-entrant, out1<0 (backward-found last time): chosen2 still clear
+    (2, 20, 20, 25, 25, 0xFFFF, 3, {3: 0x05}, {}, False, False, 0, 0, 0, -100, -100),
+    # re-entrant, out1>0, chosen1 became blocked -> advances to find chosen1+1
+    (2, 20, 20, 25, 25, 1, 3, {4: 0x05}, {}, False, False, 0, 0, 0, -100, -100),
+    # re-entrant, out1<0, chosen2 became blocked -> advances to chosen2-1
+    (2, 20, 20, 25, 25, 0xFFFF, 3, {2: 0x05}, {}, False, False, 0, 0, 0, -100, -100),
+    # re-entrant, target already very close so the recomputed distance can't
+    # improve -> returns the index with NO field writes (out1/out2 unchanged)
+    (2, 20, 20, 21, 20, 1, 2, {2: 0x05}, {}, False, False, 0, 0, 0, -100, -100),
+    # occupied life cell still counts as "clear" for movement purposes here
+    # (unlike get_my_best_dirs, this routine has no occupied/clear split)
+    (2, 20, 20, 25, 25, 0, 3, {3: 0x05}, {3: 9}, False, False, 0, 0, 0, -100, -100),
+    # yard plane (plane<=1) threshold gate, fresh search
+    (0, 20, 20, 25, 25, 0, 3, {3: 0x50}, {}, False, False, 0, 0, 0, -100, -100),
+])
+def test_getmyranddirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, out1_init,
+                                   out2_init, tiles, lifes, inside, check_adjacent,
+                                   cand_plane, cand_x, cand_y, avoid_x, avoid_y):
+    from simant.recovered.gameplay import get_my_rand_dirs
+    asm_ax, asm_out1, asm_out2, m = _run_getmyranddirs_asm(
+        plane, cur_x, cur_y, tgt_x, tgt_y, out1_init, out2_init, tiles, lifes,
+        inside, check_adjacent, cand_plane, cand_x, cand_y, avoid_x, avoid_y)
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
+    out1, out2 = [out1_init], [out2_init]
+    rec_ax = get_my_rand_dirs(dg_view, pack_view, out1, out2, inside, plane,
+                              cur_x, cur_y, tgt_x, tgt_y) & 0xFFFF
+    assert (rec_ax, out1[0] & 0xFFFF, out2[0] & 0xFFFF) == (asm_ax, asm_out1, asm_out2), (
+        f"(p={plane},cur=({cur_x},{cur_y}),tgt=({tgt_x},{tgt_y}),o1i={out1_init:#x},"
+        f"o2i={out2_init},tiles={tiles},lifes={lifes},adj={check_adjacent},"
+        f"avoid=({avoid_x},{avoid_y})): asm=(ax={asm_ax:#06x},o1={asm_out1:#06x},"
+        f"o2={asm_out2:#06x}) rec=(ax={rec_ax:#06x},o1={out1[0]&0xFFFF:#06x},"
+        f"o2={out2[0]&0xFFFF:#06x})")
+
+
 # ---- _SmoothAlarm (seg6:9380) — 4-neighbour box blur of the alarm grid -----
 # Snapshots the live grid [0x52D2..) into a scratch buffer [0x4AD2..) first,
 # then blurs read-old/write-new; both bands are covered by one region.
