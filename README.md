@@ -27,11 +27,16 @@ it.
 
 SimAnt's simulation is a call tree: colony **orchestrators** drive per-ant
 **behaviors**, which lean on shared **helpers** and, at the bottom, small **leaf**
-predicates and RNG. Recovery proceeds bottom-up — the load-bearing foundation is
-byte-exact, and the frontier is now the behavior layer that sits on top of it.
-The graph below is a real slice of the `seg5`/`seg6`/`seg7` call graph (every edge
-is an actual call); green nodes are proven byte-exact against the original ASM, an
-amber ring marks the most-called routines, dashed nodes are not recovered yet.
+predicates and RNG. Recovery proceeds bottom-up — the whole foundation is byte-exact:
+the leaf predicates and RNG, the map/life-grid query family, **and the pathfinding
+core** (`_GetBestDir` and the helpers it composes) are all recovered. What remains
+is the top two layers — the per-ant **behaviors** (`_DoForageAnt`, `_DoNestAntB`,
+`_DoDigInB`) and the **orchestrators** above them. Those *mutate* world state rather
+than return a value, so they need state-diff verification, not the return-value
+oracle used so far. The graph below is a real slice of the `seg5`/`seg6`/`seg7`
+call graph (every edge is an actual call); green nodes are proven byte-exact against
+the original ASM, an amber ring marks the most-called routines, dashed nodes are the
+not-yet-recovered frontier.
 
 ```mermaid
 flowchart TD
@@ -40,13 +45,13 @@ flowchart TD
     dab["_DoAntSimB"]
     daa["_DoAntSimA"]
   end
-  subgraph L2["behaviors — the frontier"]
+  subgraph L2["behaviors — the frontier (mutating; need state-diff)"]
     dnb["_DoNestAntB"]
     dfor["_DoForageAnt"]
-    gbd["_GetBestDir"]
     ddig["_DoDigInB"]
   end
-  subgraph L3["helpers"]
+  subgraph L3["helpers + pathfinding core"]
+    gbd["_GetBestDir"]
     gmap["_GetMap"]
     ihole["_IsItHole"]
     gdis["_GetDis"]
@@ -74,23 +79,34 @@ flowchart TD
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
   classDef front fill:#5c564b,stroke:#a99e86,color:#f3ece0,stroke-dasharray:5 4;
-  class gmap,ihole,ifood,ipeb,gdis,glife done;
+  class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs done;
   class iva,idirt,iyel,srand load;
-  class das,dab,daa,dnb,dfor,gbd,ddig,inobs front;
+  class das,dab,daa,dnb,dfor,ddig front;
 ```
 
 Coverage by segment — named routines proven byte-exact (an island + A/B oracle):
 
-| Segment | Module | Role | Recovered |
-|---------|--------|------|:---------:|
-| `seg5` | SIMONE | sim primitives — map, life-grid, RNG, predicates | 31 / 169 |
-| `seg6` | SIMANT1 | ant AI — forage, dig, nest, fight behaviors | 2 / 123 |
-| `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 |
-| `seg4` | `_TEXT` | C runtime + tile expanders (MakeTable / Xfer) | 23 / 248 |
+| Segment | Module | Role | Recovered | Status |
+|---------|--------|------|:---------:|--------|
+| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry | 38 / 169 | foundation **done** |
+| `seg6` | SIMANT1 | ant AI — forage, dig, nest, fight behaviors | 3 / 123 | **the frontier** |
+| `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 | mostly rendering |
+| `seg4` | `_TEXT` | C runtime + tile expanders (MakeTable / Xfer) | 23 / 248 | hot paths lifted |
 
 The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88
-callers, `_IsYellowAnt` 28, `_IsValidA` 26, `_IsItDirt` 15, `_GetMap` 10. Regenerate
+callers, `_IsYellowAnt` 28, `_IsValidA` 26, `_GetDir` 17, `_IsItDirt` 15. Regenerate
 the underlying call-graph data with `python -m simant.probes.callgraph`.
+
+**What's done vs. what's missing.** The whole bottom is byte-exact: the leaf
+predicates + RNG, the map/life-grid query family (`_GetMap`, `_IsItHole`,
+`_IsClearTile`, `_IsNotObstacle`, `_IsItDigable`, `_IsValidLocation`, …), the
+geometry (`_GetDir`, `_GetDis`), and the pathfinding core `_GetBestDir`. Missing is
+the per-ant **behavior tier** in `seg6` (`_DoForageAnt`, `_DoNestAntB`, `_DoDigInB`,
+`_DoAntSim*`) and the fight/RNG helpers (`_GetWinner`) — these *mutate* world state,
+so lifting them needs a state-diff oracle (snapshot → run recovered logic on the
+native state → diff against the ASM's mutation) rather than the return-value oracle
+the foundation was built with. That harness is the next milestone toward the
+[VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 
