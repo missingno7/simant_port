@@ -1,5 +1,23 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.61) — SaveAs dialog frontier: WM_SETREDRAW to a list box
+- FRONTIER (owner's `--record cold4 --no-hooks`): the SaveAs file dialog gapped
+  at instr 187,559,268 — `SendDlgItemMessage ListBox msg 0x000B` (control 404)
+  during WM_INITDIALOG.  0x000B = WM_SETREDRAW (disable repaint while the list box
+  is bulk-populated, then re-enable).
+- FIXED (win16_re 25bc492, bumped): handle WM_SETREDRAW before the per-class
+  dispatch in SendDlgItemMessage as a benign no-op (our dialog model paints on
+  demand) for any control.  win16_re 129, simant 547.
+- BONUS confirmation: crash_081759 recorded its callback frames
+  ([DispatchMessage, DialogBox]) — the cont.59 frame-preservation fix works, so a
+  mid-DialogBox crash snapshot is now resumable enough to observe the gap.
+- COULDN'T cleanly observe the SaveAs list box's NEXT messages: resuming past
+  WM_SETREDRAW hits `handle 0176 is not a dialog` (a resume artifact — the dialog
+  was mid-creation at snapshot time, so its object graph isn't fully rebuilt).
+  Per the charter (implement observed behaviour), the list box populate/read
+  messages (LB_RESETCONTENT / LB_ADDSTRING / LB_DIR / LB_GETCURSEL / LB_GETTEXT)
+  await the next fresh run that reaches the dialog — likely the next frontier.
+
 ## 2026-07-14 (cont.60) — recovered _IsThisFood; completes the _IsThis* family
 - RECOVERED `_IsThisFood` (seg5:5F04): plane<=1 tail-calls the recovered
   `_IsItFood` (world-state driven); plane>1 is the yard nest-food band 0x10..0x13.
