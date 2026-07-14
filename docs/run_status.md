@@ -1,5 +1,53 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.102) — /goal grind: _TryMoveDirB <-> _GetOutB — movement EXECUTION DONE
+- RECOVERED `try_move_dir_b`/`get_out_b` (seg6:439E/520A; both FAR return)
+  — the black-colony twins, closing the movement-EXECUTION tier for BOTH
+  colonies. Independently re-disassembled `_TryMoveDirB`'s full body
+  (not trusting the pre-cont.101 research survey, since it predated
+  discovering the AL-clobber bug pattern) and confirmed the SAME field
+  layout as `_TryMoveDirR` (`[0x3736]`=new_x, `[0x392C]`=new_y,
+  `[0x3D18]`=dir-encoded caste byte) and the SAME `mov ax,si` clobber
+  right before the position writes — ported correctly on the first pass
+  by applying cont.101's lesson up front instead of re-deriving it.
+- `_TryMoveDirB` has exactly ONE extra branch its red twin lacks:
+  trophallaxis (food-sharing) with a blocking ant, reached only when the
+  destination LIFE cell is exactly `0xFF` (empty) AND `pack[0x9AF2]` (the
+  `_SetMyHealth` "not-healing" flag) is nonzero AND
+  `simant_data_group[slot+0x3736] < 0x80` — that field is genuinely
+  dual-purpose (a status-ish byte read here, BEFORE this same routine
+  later overwrites it with the new-position X coordinate on ANY completed
+  move) — this is now independently confirmed the field really is
+  overloaded, not evidence of an earlier mislabeling. Since the gate's
+  body calls the unrecovered `SIMANT!_DoTroph` (whose own chain bottoms
+  out in a real sound-engine routine and a dialog/busy-wait UI routine —
+  materially more work than this whole session), the port computes the
+  gate condition exactly and, if it WOULD fire, raises
+  `NotImplementedError` with the call's arguments — per this project's
+  "fail loud, never fake" rule. A dedicated test confirms the gate raises
+  under the exact seeded conditions that would trigger it in the ASM, and
+  every OTHER move outcome (including a plain successful move with the
+  gate correctly NOT firing) is fully byte-exact.
+- `_GetOutB` is byte-for-byte the same shape as `_GetOutR` (own
+  disassembly confirmed, not assumed) — same inverted `hole_x == 0`
+  trigger condition for `make_new_hole_b` that cont.101 caught on the red
+  side, applied correctly here without re-discovering it.
+- 10 scenarios (mirroring `_TryMoveDirR`/`_GetOutR`'s coverage, plus the
+  dedicated trophallaxis-gate-raises test) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1186 (+10). **The movement-EXECUTION tier is now fully
+  recovered for both colonies** (modulo the documented, fail-loud
+  trophallaxis gap). Combined with the movement-SELECTION tier
+  (`_TileCanBeMovedOn`/`_GetMyBestDirs`/`_GetRedBestDirs`/etc.) and the
+  full dig subsystem, SimAnt's entire ant-MOVEMENT pipeline — pick a
+  direction, then actually execute the step, digging through the nest as
+  needed — is byte-exact from seg5/seg6, a substantial fraction of the
+  per-ant behavior tier's real dependencies. Continuing per /goal — next
+  candidates: a fresh survey of what's left in seg5/seg6 now that
+  movement is fully closed (likely combat `_YellowFight`/`_GetWinner`,
+  or the `_GetNewMode*` family in seg7, or attempting a real `_Do*Ant*`
+  top-level behavior routine now that so much of its dependency graph
+  exists).
+
 ## 2026-07-14 (cont.101) — /goal grind: _TryMoveDirR <-> _GetOutR — movement EXECUTION (red)
 - Surveyed whether the movement-EXECUTION mutual-recursion pair
   (`_TryMoveDirB/R` <-> `_GetOutB/R`, flagged since cont.84) is tractable

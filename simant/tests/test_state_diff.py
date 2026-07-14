@@ -855,6 +855,124 @@ def test_getoutr_state_diff_matches_asm(x, hole_marker, hole_x_val, slot, caste,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _TryMoveDirB / _GetOutB (seg6:439E / 520A) — movement EXECUTION,   ----
+# black colony. _TryMoveDirB additionally gates a trophallaxis branch this
+# session deliberately does NOT recover (_DoTroph is out of scope) -- kept
+# out of every seeded scenario below (destination LIFE cell != 0xFF), and
+# a dedicated test confirms the gate itself raises loudly when it WOULD fire.
+def _trymoveb_seed(x, y, tile_at_dest, slot, caste, seed_val, life_at_dest=0x00,
+                   pack_9af2=0):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x3D18 + slot, caste)
+        m.mem.wb(sdg, 0x3736 + slot, 0)   # trophallaxis threshold field, kept < 0x80
+        m.mem.ww(pack, 0x9AF2, pack_9af2)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        if tile_at_dest is not None:
+            for si in range(8):
+                nx = x + GET_BEST_DIR_DX[si]
+                ny = y + GET_BEST_DIR_DY[si]
+                if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x48E8 + (nx << 6) + ny, tile_at_dest)
+                    m.mem.wb(dg, 0x88E8 + (nx << 6) + ny, life_at_dest)
+        m.mem.wb(dg, 0x48E8 + (x << 6) + 0, 0x10)
+        m.mem.wb(sdg, 0x3A4 + (x << 6), 0)
+        for c in (x - 1, x, x + 1):
+            if 0 <= c <= 0x3F:
+                m.mem.wb(dg, 0x48E8 + (c << 6) + 1, 0x40)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,direction,tile_at_dest,slot,caste,seed_val", [
+    (30, 30, -1, 0x10, 0, 0x03, 0x1234),
+    (0, 30, 5, 0x10, 0, 0x03, 0x1234),
+    (30, 0, 0, 0x10, 0, 0x03, 0x1234),
+    (30, 30, 3, 0x20, 0, 0x03, 0x1234),
+    (30, 30, 3, 0x10, 0, 0x03, 0x1234),
+    (30, 30, 3, 0x10, 2, 0xAA, 0x1234),
+])
+def test_trymovedirb_state_diff_matches_asm(x, y, direction, tile_at_dest, slot,
+                                            caste, seed_val):
+    from simant.recovered.gameplay import try_move_dir_b
+    results = _run_and_diff_segs(
+        6, 0x439E, (x, y, direction),
+        lambda d, s, p: try_move_dir_b(d, s, p, x, y, direction),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_trymoveb_seed(x, y, tile_at_dest, slot, caste, seed_val))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} dir={direction} tile={tile_at_dest} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+def test_trymovedirb_trophallaxis_gate_raises():
+    # destination LIFE cell == 0xFF, pack[0x9AF2] != 0, and the acting
+    # ant's [0x3736+slot] < 0x80 -> the trophallaxis branch WOULD fire.
+    from simant.recovered.gameplay import try_move_dir_b
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, direction = 30, 30, 3
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    nx, ny = x + 1, y + 1   # direction 3 -> (+1, +1)
+    dg[0x48E8 + (nx << 6) + ny] = 0x10        # passable
+    dg[0x88E8 + (nx << 6) + ny] = 0xFF        # empty LIFE cell
+    pack_view = ByteBackend(pack, 0)
+    pack_view.ww(0x9AF2, 1)
+    sdg[0x3736] = 0x10                         # < 0x80
+    with pytest.raises(NotImplementedError):
+        try_move_dir_b(ByteBackend(dg, 0), ByteBackend(sdg, 0), pack_view, x, y,
+                       direction)
+
+
+def _getoutb_seed(x, hole_marker, hole_x_val, slot, caste, seed_val, exit_dest_tiles):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x3D18 + slot, caste)
+        m.mem.wb(sdg, 0x3F0E + slot, 5)     # field_e
+        m.mem.wb(sdg, 0x3B22 + slot, 7)     # field_c
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(dg, 0x48E8 + (x << 6) + 0, hole_marker)
+        m.mem.wb(sdg, 0x82D2 + x, hole_x_val)
+        for si in range(8):
+            nx = hole_x_val + GET_BEST_DIR_DX[si]
+            ny = x + GET_BEST_DIR_DY[si]
+            if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, exit_dest_tiles)
+        m.mem.wb(pack, 0x9B6E, 0)
+        m.mem.wb(sdg, 0x3A4 + (x << 6), 0)
+        for c in (x - 1, x, x + 1):
+            if 0 <= c <= 0x3F:
+                m.mem.wb(dg, 0x48E8 + (c << 6) + 1, 0x40)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,hole_marker,hole_x_val,slot,caste,seed_val,exit_dest_tiles", [
+    (20, 0x10, 0, 0, 0x03, 0x1234, 0x00),
+    (20, 0x18, 0, 0, 0x03, 0x1234, 0x00),
+    (20, 0x18, 15, 1, 0x83, 0x0000, 0x00),
+])
+def test_getoutb_state_diff_matches_asm(x, hole_marker, hole_x_val, slot, caste,
+                                        seed_val, exit_dest_tiles):
+    from simant.recovered.gameplay import get_out_b
+    results = _run_and_diff_segs(
+        6, 0x520A, (x,),
+        lambda d, s, p: get_out_b(d, s, p, x),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_getoutb_seed(x, hole_marker, hole_x_val, slot, caste, seed_val,
+                              exit_dest_tiles))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} marker={hole_marker:#x} hole_x={hole_x_val} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only

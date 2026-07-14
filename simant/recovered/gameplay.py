@@ -2338,6 +2338,127 @@ def get_out_r(dgroup, simant_data_group, pack, x: int) -> int:
     return 0
 
 
+def try_move_dir_b(dgroup, simant_data_group, pack, x: int, y: int,
+                   direction: int) -> int:
+    """The black-colony twin of `try_move_dir_r` — structurally identical
+    move-tail (same `[0x3736]`=new_x/`[0x392C]`=new_y/`[0x3D18]`=dir-byte
+    field layout, same AL-clobber-then-write pattern independently
+    re-verified for THIS routine, not assumed from the red twin), but with
+    ONE extra gated branch `_TryMoveDirR` does not have: trophallaxis
+    (food-sharing) with a blocking ant, which calls the UNRECOVERED
+    `SIMANT!_DoTroph` (seg1:846E).
+
+    Recovered from `_TryMoveDirB` (SIMANTW.SYM seg6:439E, args x=[bp+6],
+    y=[bp+8], direction=[bp+10]; FAR return). Bounds/obstacle checks and
+    the `new_y < 1` -> `get_out_b(x)` delegation are identical to the red
+    twin. The gate for the trophallaxis branch — reached only when: the
+    destination LIFE cell is exactly `0xFF` (empty), AND `pack[0x9AF2]`
+    (the "not-healing" `_SetMyHealth` status flag) is nonzero, AND the
+    acting ant's `simant_data_group[slot + 0x3736]` (a status-ish byte —
+    NOT the position field this SAME offset holds after a completed move;
+    the field is genuinely dual-purpose across calls, not a naming error)
+    is `< 0x80` — is fully computed here; if it evaluates true, this
+    function raises `NotImplementedError` (per this project's fail-loud
+    rule: `_DoTroph`'s own dependency chain bottoms out in a real sound-
+    engine routine and a dialog/busy-wait UI routine, a materially larger
+    body of work than the rest of this session, so it is a deliberate,
+    documented gap rather than a silently-wrong guess). Every other move
+    outcome — including a plain successful move with NO trophallaxis, and
+    every rejection case — is fully byte-exact.
+    """
+    if direction < 0:
+        return 0
+
+    new_y = y + GET_BEST_DIR_DY[direction]
+    new_x = x + GET_BEST_DIR_DX[direction]
+    if new_x > 0x3F or new_x < 0:
+        return 0
+    if new_y > 0x3F:
+        return 0
+    if new_y < 1:
+        return get_out_b(dgroup, simant_data_group, pack, x)
+
+    idx = (new_x << 6) + new_y
+    if dgroup.rb(MAP_PLANE_BASE[2] + idx) >= 0x1C:
+        return 0
+
+    if dgroup.rb(LIFE_PLANE_BASE[2] + idx) == 0xFF and pack.rw(0x9AF2) != 0:
+        slot = pack.rw(0x9B6A)
+        if simant_data_group.rb(0x3736 + slot) < 0x80:
+            raise NotImplementedError(
+                "try_move_dir_b: trophallaxis branch reached (_DoTroph not "
+                "recovered) -- x={!r} y={!r} direction={!r}".format(x, y, direction))
+
+    slot = pack.rw(0x9B6A)
+    dir_byte = (simant_data_group.rb(0x3D18 + slot) & 0xF8) | direction
+    dgroup.wb(LIFE_PLANE_BASE[2] + idx, dir_byte)
+    old_idx = (x << 6) + y
+    dgroup.wb(LIFE_PLANE_BASE[2] + old_idx, 0)
+    simant_data_group.wb(0x3736 + slot, new_x & 0xFF)
+    simant_data_group.wb(0x392C + slot, new_y & 0xFF)
+    simant_data_group.wb(0x3D18 + slot, dir_byte)
+    return 1
+
+
+def get_out_b(dgroup, simant_data_group, pack, x: int) -> int:
+    """The black-colony twin of `get_out_r` — identical shape (same
+    inverted `hole_x == 0` trigger condition for `make_new_hole_b`,
+    verified against THIS routine's own disassembly, not assumed).
+
+    Recovered from `_GetOutB` (SIMANTW.SYM seg6:520A, arg: x; FAR return).
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    base = x << 6
+    if dgroup.rb(MAP_PLANE_BASE[2] + base) == 0x18:
+        slot = pack.rw(0x9B6A)
+        old_caste = simant_data_group.rb(0x3D18 + slot)
+        simant_data_group.wb(0x3D18 + slot, 0)
+
+        if simant_data_group.rb(0x82D2 + x) == 0:
+            make_new_hole_b(dgroup, simant_data_group, pack, x)
+
+        slot = pack.rw(0x9B6A)
+        field_e = simant_data_group.rb(0x3F0E + slot)
+        field_c = simant_data_group.rb(0x3B22 + slot)
+        seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        caste_arg = (roll8 + (old_caste & 0xF8)) & 0xFFFF
+        hole_x = simant_data_group.rb(0x82D2 + x)
+
+        ok = exit_hole(dgroup, simant_data_group, pack, hole_x, x, caste_arg,
+                       field_c, field_e)
+        if ok:
+            dgroup.wb(LIFE_PLANE_BASE[2] + base + 1, 0)
+            return 1
+        slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x3D18 + slot, old_caste)
+        simant_data_group.wb(0x3B22 + slot, 0)
+        return 0
+
+    exit_map_val = simant_data_group.rb(0x3A4 + base)
+    if exit_map_val != 0:
+        simant_data_group.wb(0x3A4 + base, exit_map_val - 1)
+
+    seed, roll2 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 1)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll2 != 0:
+        if x > 0:
+            tile = dgroup.rb(MAP_PLANE_BASE[2] + ((x - 1) << 6) + 1)
+            if is_it_dirt(tile):
+                dig_tile_them_b(dgroup, simant_data_group, pack, x - 1, 1)
+    else:
+        if x < 0x3F:
+            tile = dgroup.rb(MAP_PLANE_BASE[2] + ((x + 1) << 6) + 1)
+            if is_it_dirt(tile):
+                dig_tile_them_b(dgroup, simant_data_group, pack, x + 1, 1)
+
+    seed, roll8b = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    try_move_dir_b(dgroup, simant_data_group, pack, x, 1, roll8b)
+    return 0
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
