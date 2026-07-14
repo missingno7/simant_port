@@ -8363,3 +8363,45 @@ def un_recruit(pack, simant_data_group, flag: int) -> None:
                 continue
             simant_data_group.wb(0x44F0 + si, 7)
             budget -= 1
+
+
+def reproduce(dgroup, pack, simant_data_group, x: int, y: int, colony: int) -> None:
+    """Mark a jittered cell of a 12x16 "reproduction" grid as having produced,
+    bumping a colony-wide first-time counter the first time any given cell
+    is hit.
+
+    Recovered from `_Reproduce` (SIMANTW.SYM seg7:3D4C, args x=[bp+6],
+    y=[bp+8], colony=[bp+10]; FAR return, 166 bytes). Jitters `(x, y)` by
+    two independent `sg_s_rand(4)` rolls (composing the already-recovered
+    `sg_s_rand`), clamps the result into a 12-wide (`0..0x0B`) by 16-tall
+    (`0..0x0F`) grid, and — UNLESS the jittered cell equals the untouched
+    input `(x, y)` exactly, in which case the whole routine is a no-op —
+    increments a per-cell BYTE counter at SIMANT_DATA_GROUP `[(di<<4)+si +
+    base]`, where `base` is `0xA4` for `colony == 0` or `0x164` for
+    `colony != 0` (two contiguous 0xC0-byte grids, one per colony). If that
+    cell's counter was `0` before the increment (first hit), also bumps a
+    colony-wide PACK WORD counter — `[0x80D4]` for `colony == 0`, `[0x9C80]`
+    for `colony != 0`.
+    """
+    di = sg_s_rand(dgroup, 4) + x
+    si = sg_s_rand(dgroup, 4) + y
+    if di < 0:
+        di = 0
+    elif di > 0x0B:
+        di = 0x0B
+    if si < 0:
+        si = 0
+    elif si > 0x0F:
+        si = 0x0F
+    if x == di and y == si:
+        return
+
+    if colony != 0:
+        base, counter_off = 0x164, 0x9C80
+    else:
+        base, counter_off = 0xA4, 0x80D4
+
+    idx = (di << 4) + si + base
+    if simant_data_group.rb(idx) == 0:
+        pack.ww(counter_off, (pack.rw(counter_off) + 1) & 0xFFFF)
+    simant_data_group.wb(idx, (simant_data_group.rb(idx) + 1) & 0xFF)

@@ -6928,3 +6928,47 @@ def test_unrecruit_state_diff_matches_asm(baseline, flag, a_slots, b_slots,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _RECRUIT_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _Reproduce (seg7:3D4C) — jittered "reproduction" grid-cell marking ----
+# sg_s_rand outputs are precomputed offline (via the already-verified
+# srand1/srand_pow2 primitives) for each seed below, so every case's exact
+# branch (clamp-low, clamp-high, exact-no-op, already-visited) is deliberate:
+#   seed 0x0000 -> (0, 0)     seed 0x1234 -> (0, +1)   seed 0xABCD -> (-2, 0)
+#   seed 0xBEEF -> (-2, +2)   seed 0x7ACE -> (0, -3)
+_REPRODUCE_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xCB00, 0xCC00),
+    (_PACK, 0x8000, 0x9D00),
+    (_SDG, 0x0000, 0x0300),
+]
+
+
+def _reproduce_seed(seed_val, pre_cell_off, pre_cell_val):
+    def seed(m):
+        dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
+                          m.seg_bases[_SDG])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        if pre_cell_off is not None:
+            m.mem.wb(sdg, pre_cell_off, pre_cell_val)
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,x,y,colony,pre_off,pre_val,label", [
+    (0x0000, 5, 5, 0, None, 0, "exact-jitter-zero-is-noop"),
+    (0x1234, 5, 5, 0, None, 0, "first-hit-bumps-global-counter"),
+    (0x1234, 5, 5, 0, 0xFA, 3, "already-visited-no-global-bump"),
+    (0xABCD, 1, 5, 0, None, 0, "di-clamps-to-lower-bound"),
+    (0xBEEF, 3, 0x0F, 0, None, 0, "si-clamps-to-upper-bound"),
+    (0x7ACE, 0, 2, 0, None, 0, "si-clamps-to-lower-bound"),
+    (0x1234, 5, 5, 1, None, 0, "colony-nonzero-uses-second-grid"),
+])
+def test_reproduce_state_diff_matches_asm(seed_val, x, y, colony, pre_off,
+                                          pre_val, label):
+    from simant.recovered.gameplay import reproduce
+    results = _run_and_diff_segs(
+        7, 0x3D4C, (x, y, colony),
+        lambda d, p, s: reproduce(d, p, s, x, y, colony), _REPRODUCE_REGIONS,
+        seed_fn=_reproduce_seed(seed_val, pre_off, pre_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _REPRODUCE_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

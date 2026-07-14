@@ -1,5 +1,27 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.185) — /goal grind: _Reproduce
+- RECOVERED `reproduce` (`_Reproduce`, SIMANTW.SYM seg7:3D4C, args
+  x=[bp+6], y=[bp+8], colony=[bp+10]; FAR return, 166 bytes). Composes
+  the already-recovered `sg_s_rand` twice to jitter `(x, y)`, clamps
+  the result into a 12-wide (`0..0x0B`) by 16-tall (`0..0x0F`) grid,
+  and — unless the jittered cell equals the untouched input exactly
+  (a genuine no-op branch, confirmed via the raw `cmp`/`jz` pair) —
+  increments a per-cell BYTE counter on SIMANT_DATA_GROUP at
+  `(di<<4)+si+base` (`base=0xA4` for `colony==0`, `0x164` for
+  `colony!=0`: two contiguous 0xC0-byte grids, one per colony). The
+  FIRST time any given cell is hit (counter was `0`), also bumps a
+  colony-wide PACK WORD counter (`[0x80D4]`/`[0x9C80]`).
+- Test strategy: rather than guessing RNG outcomes, precomputed
+  `sg_s_rand`'s exact jitter for each seed offline using the
+  already-verified `srand1`/`srand_pow2` primitives, then chose
+  `(x, y, colony)` per case to deliberately hit every branch (exact
+  no-op, lower/upper clamp on each axis, first-hit-bumps-counter,
+  already-visited-no-bump, the other colony's grid). All 7 cases green
+  on the first real-ASM run — no region-window or segment bug this
+  time.
+- Suite: simant 1823 (+7), full suite green.
+
 ## 2026-07-15 (cont.184) — /goal grind: _Recruit/_UnRecruit
 - RECOVERED `recruit` (`_Recruit`, SIMANTW.SYM seg7:06D2, arg count=
   [bp+6]; FAR return, 184 bytes, NO calls). Converts up to `count` idle
