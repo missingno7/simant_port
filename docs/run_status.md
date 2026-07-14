@@ -1,5 +1,21 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.181) — /goal grind: _StorePillarMap/_ReplacePillarMap
+- RECOVERED `store_pillar_map`/`replace_pillar_map`
+  (`_StorePillarMap`/`_ReplacePillarMap`, SIMANTW.SYM seg7:5304/5372,
+  args x=[bp+6], y=[bp+8]; FAR return, 110/104 bytes) — a save/restore
+  pair caching a single yard map tile into a 6-entry PACK table.
+  Composes the already-recovered `is_valid_a`; a shared local
+  `_pillar_cache_index` picks the slot: `x % 6` when `pack[0x9B1E]`'s
+  low bit is set, else `y % 6`.
+  - `store_pillar_map`: caches `dgroup[MAP_PLANE_BASE[0]+(x<<6)+y]`
+    into `pack[0x7C0E+idx*2]`.
+  - `replace_pillar_map`: the inverse — restores the cached value back
+    onto the map. Both are no-ops when `(x, y)` isn't `is_valid_a`.
+- 6 cases (both flag polarities per routine, plus an invalid-position
+  no-op each) — ALL GREEN ON THE FIRST REAL-ASM RUN.
+- Suite: simant 1799 (+6), full suite green.
+
 ## 2026-07-15 (cont.180) — /goal grind: _PlacePillTile/_PillGetLife
 - RECOVERED `place_pill_tile`/`pill_get_life` (`_PlacePillTile`/
   `_PillGetLife`, SIMANTW.SYM seg7:56DA/5702, args x=[bp+6], y=[bp+8]

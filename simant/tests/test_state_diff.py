@@ -6710,3 +6710,53 @@ def test_pillgetlife_matches_asm(x, y, tile, label):
     dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
     result = pill_get_life(dg_view, x, y)
     assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
+
+
+# ---- _StorePillarMap/_ReplacePillarMap (seg7:5304/5372) — 6-entry cache --
+_PILLARMAP_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0x48E8),
+    (_PACK, 0x7C00, 0x9B20),
+]
+
+
+def _pillarmap_seed(x, y, tile, flag, cache):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, tile)
+        m.mem.ww(pack, 0x9B1E, flag & 0xFFFF)
+        for i, v in enumerate(cache):
+            m.mem.ww(pack, 0x7C0E + i * 2, v & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tile,flag,label", [
+    (20, 21, 0x11, 1, "flag-set-indexes-by-x"),
+    (20, 21, 0x11, 0, "flag-clear-indexes-by-y"),
+    (0x80, 21, 0x11, 1, "invalid-x-noop"),
+])
+def test_storepillarmap_state_diff_matches_asm(x, y, tile, flag, label):
+    from simant.recovered.gameplay import store_pillar_map
+    results = _run_and_diff_segs(
+        7, 0x5304, (x, y), lambda d, p: store_pillar_map(d, p, x, y),
+        _PILLARMAP_REGIONS, seed_fn=_pillarmap_seed(x, y, tile, flag, [0] * 6))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _PILLARMAP_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("x,y,tile,flag,cache,label", [
+    (20, 21, 0x99, 1, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+     "flag-set-restores-by-x"),
+    (20, 21, 0x99, 0, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+     "flag-clear-restores-by-y"),
+    (0x80, 21, 0x99, 1, [0x11, 0x22, 0x33, 0x44, 0x55, 0x66],
+     "invalid-x-noop"),
+])
+def test_replacepillarmap_state_diff_matches_asm(x, y, tile, flag, cache, label):
+    from simant.recovered.gameplay import replace_pillar_map
+    results = _run_and_diff_segs(
+        7, 0x5372, (x, y), lambda d, p: replace_pillar_map(d, p, x, y),
+        _PILLARMAP_REGIONS, seed_fn=_pillarmap_seed(x, y, tile, flag, cache))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _PILLARMAP_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

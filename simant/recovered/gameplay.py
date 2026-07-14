@@ -8110,3 +8110,46 @@ def pill_get_life(dgroup, x: int, y: int) -> int:
     if is_valid_a(x, y) == 0:
         return 0
     return dgroup.rb(LIFE_PLANE_BASE[0] + (x << 6) + y)
+
+
+def _pillar_cache_index(pack, x: int, y: int) -> int:
+    """Shared index rule `store_pillar_map`/`replace_pillar_map` use for
+    their 6-entry PACK cache: `x % 6` when `pack[0x9B1E]`'s low bit is
+    set, else `y % 6`."""
+    return (x if pack.rw(0x9B1E) & 1 else y) % 6
+
+
+def store_pillar_map(dgroup, pack, x: int, y: int) -> None:
+    """Cache the yard map tile at `(x, y)` into a 6-entry PACK table,
+    for `replace_pillar_map` to restore later.
+
+    Recovered from `_StorePillarMap` (SIMANTW.SYM seg7:5304, args
+    x=[bp+6], y=[bp+8]; FAR return, 110 bytes). Composes the
+    already-recovered `is_valid_a`. A no-op when `(x, y)` isn't valid.
+    Otherwise stores `dgroup[MAP_PLANE_BASE[0] + (x<<6) + y]` into
+    `pack[0x7C0E + idx*2]` (a WORD slot, though the value is always a
+    zero-extended byte), `idx` per `_pillar_cache_index`.
+    """
+    if is_valid_a(x, y) != 1:
+        return
+    tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+    idx = _pillar_cache_index(pack, x, y)
+    pack.ww(0x7C0E + (idx << 1), tile)
+
+
+def replace_pillar_map(dgroup, pack, x: int, y: int) -> None:
+    """Restore a yard map tile at `(x, y)` from `store_pillar_map`'s
+    6-entry PACK cache — the inverse operation.
+
+    Recovered from `_ReplacePillarMap` (SIMANTW.SYM seg7:5372, args
+    x=[bp+6], y=[bp+8]; FAR return, 104 bytes). Composes the
+    already-recovered `is_valid_a`. A no-op when `(x, y)` isn't valid.
+    Otherwise reads `pack[0x7C0E + idx*2]` (SAME `idx` rule as
+    `store_pillar_map`) and writes it onto `dgroup[MAP_PLANE_BASE[0] +
+    (x<<6) + y]`.
+    """
+    if is_valid_a(x, y) != 1:
+        return
+    idx = _pillar_cache_index(pack, x, y)
+    tile = pack.rb(0x7C0E + (idx << 1))
+    dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, tile)
