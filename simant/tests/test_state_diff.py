@@ -762,6 +762,48 @@ class _ConstWordView:
         return self._value
 
 
+# ---- _TallyModePop (seg6:038E) — roll up tallies, maybe spawn an initiator -
+_TALLY_PACK_REGION = (_PACK, 0x7800, 0xA100)     # covers all 12 tally fields,
+# plus [0x80F0]/[0x9D74] (make_red_initiator's PACK fields, when the gate fires)
+_TALLY_SDG_REGION = (_SDG, 0x2B00, 0x8B00)       # make_red_initiator's SDG range
+
+
+@pytest.mark.parametrize("gate,rate,slots", [
+    (5, 0x1E, []),                  # gate skips (>=1) -> no call, tally only
+    (1, 0x1E, []),                  # gate boundary (==1) -> still skips
+    (0, 0x1E, [0x81]),              # gate fires (<1); candidate present
+    (-3, 0x1E, []),                 # negative gate -> fires; empty A-list
+])
+def test_tallymodepop_state_diff_matches_asm(gate, rate, slots):
+    from simant.recovered.gameplay import tally_mode_pop
+
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        for off, val in [(0x786E, 3), (0x7870, 4), (0x7872, 5), (0x7874, 6),
+                        (0x786C, 7), (0x7878, 8), (0x7882, 9), (0x7876, 10),
+                        (0x7BE8, 11), (0x7BEA, 12), (0x7BEC, 13), (0x7BEE, 14),
+                        (0x7BE6, 15), (0x7BF2, 16), (0x7BFC, 17), (0x7BF0, 18)]:
+            m.mem.ww(pack, off, val)
+        m.mem.ww(pack, 0x7C0A, gate & 0xFFFF)
+        # make_red_initiator's own inputs, only relevant when the gate fires:
+        m.mem.wb(sdg, 0x8A64, 0xEE)
+        m.mem.ww(pack, 0x9D74, 0xCAFE & 0xFFFF)
+        m.mem.ww(pack, 0x80F0, len(slots))
+        for i, caste in enumerate(slots):
+            m.mem.wb(sdg, 0x2F62 + i, caste)
+            m.mem.wb(sdg, 0x2B78 + i, 0x55)
+            m.mem.wb(sdg, 0x334C + i, 0x66)
+
+    regions = [_TALLY_PACK_REGION, _TALLY_SDG_REGION]
+    results = _run_and_diff_segs(
+        6, 0x038E, (),
+        lambda p, s: tally_mode_pop(p, _ConstWordView(rate & 0xFFFF), s),
+        regions, seed={0xAC82: rate}, seed_fn=seed, near=True)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, (
+            f"gate={gate} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _ClrModePop (seg6:034A) — reset mode-population tally arrays ---------
 @pytest.mark.parametrize("c1,c2", [(0, 0), (1, 1), (5, 0), (0, 9), (100, 200)])
 def test_clrmodepop_state_diff_matches_asm(c1, c2):

@@ -1,6 +1,28 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.82) — CRITICAL harness bug found+fixed; caught a real logic bug
+## 2026-07-14 (cont.83) — /goal grind: _TallyModePop (chained mutator-calls-mutator)
+- RECOVERED `tally_mode_pop` (seg6:038E, no args): rolls up 12 mode-population
+  tally fields (all PACK-resident — confirmed all 4 "world selector" globals it
+  reads resolve to PACK) into an 11-field summary structure, then conditionally
+  invokes `make_red_initiator` when `pack[0x7C0A]` (signed) is < 1.  Confirmed the
+  call target precisely by decoding the raw relative-call bytes by hand (the
+  disassembler had garbled it as `0xffff967c`) — a `push cs; call rel16` NEAR-call
+  construct whose target (0x967C) is `_MakeRedInitiator`, which itself ends in a
+  FAR `retf`; the manually-pushed CS makes the mismatched near-call/far-return
+  ABI work (the callee is normally called far from elsewhere too).
+- Hit and fixed a SIMPLE instance of the SAME class of harness mistake from
+  cont.82: forgot `near=True` for this near-`ret` routine, so the completion
+  check compared against the wrong CS and ran the CPU straight into garbage
+  past the intended return.  Caught immediately by tracing raw CS:IP in
+  isolation before assuming a logic bug — a useful diagnostic pattern to reuse.
+- 4 state-diff cases green, including TWO where the gate genuinely fires and
+  `make_red_initiator` executes for real through the chained near-call/far-
+  return — verifying a mutator invoking ANOTHER already-recovered mutator, not
+  just leaf routines in isolation.
+- Suite: simant 926.  This closes out the mode-population/red-initiator
+  subsystem entirely (ClrModePop + TallyModePop + MakeRedInitiator all
+  recovered and cross-verified).  Continuing per /goal.
+
 - Recovered 5 more routines this stretch (`_MakeRedInitiator`, `_ClrModePop`,
   `_FillHolesBN`/`RN`, and confirmed `_TallyModePop`/`_DrownBList` neighbors) —
   but while writing `_MakeRedInitiator`'s test, caught a SERIOUS bug in the

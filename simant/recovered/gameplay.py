@@ -807,6 +807,55 @@ def make_red_initiator(dgroup, pack, simant_data_group) -> None:
             return
 
 
+def tally_mode_pop(pack, dgroup, simant_data_group) -> None:
+    """Roll up specific mode-population buckets into an 11-field summary
+    structure, then conditionally spawn a red-colony initiator.
+
+    Recovered from `_TallyModePop` (SIMANTW.SYM seg6:038E, no args).  All
+    fields are PACK-resident (the several DGROUP pointer-globals this routine
+    reads all resolve to PACK).  Field mapping (sum-of-2 or copy-of-1):
+
+        pack[0x9E70] = pack[0x786E] + pack[0x7870]
+        pack[0x9E72] = pack[0x7872] + pack[0x7874]
+        pack[0x9E74] = pack[0x786C]
+        pack[0x9E76] = pack[0x7878]
+        pack[0x9E78] = pack[0x7882]
+        pack[0x9E7A] = pack[0x7876]
+        pack[0xA084] = pack[0x7BE8] + pack[0x7BEA]
+        pack[0xA086] = pack[0x7BEC] + pack[0x7BEE]
+        pack[0xA088] = pack[0x7BE6]
+        pack[0xA08A] = pack[0x7BF2]
+        pack[0xA08C] = pack[0x7BFC]
+        pack[0xA08E] = pack[0x7BF0]
+
+    Then, if `pack[0x7C0A]` (signed) is < 1, calls `make_red_initiator` (a
+    NEAR call in the ASM with a manually pushed CS, matching that callee's
+    far-return ABI — confirmed by tracing the raw relative-call bytes, not
+    assumed).
+    """
+    def add(dst, a, b):
+        pack.ww(dst, (pack.rw(a) + pack.rw(b)) & 0xFFFF)
+
+    def copy(dst, src):
+        pack.ww(dst, pack.rw(src))
+
+    add(0x9E70, 0x786E, 0x7870)
+    add(0x9E72, 0x7872, 0x7874)
+    copy(0x9E74, 0x786C)
+    copy(0x9E76, 0x7878)
+    copy(0x9E78, 0x7882)
+    copy(0x9E7A, 0x7876)
+    add(0xA084, 0x7BE8, 0x7BEA)
+    add(0xA086, 0x7BEC, 0x7BEE)
+    copy(0xA088, 0x7BE6)
+    copy(0xA08A, 0x7BF2)
+    copy(0xA08C, 0x7BFC)
+    copy(0xA08E, 0x7BF0)
+
+    if _sx16(pack.rw(0x7C0A)) < 1:
+        make_red_initiator(dgroup, pack, simant_data_group)
+
+
 def clr_mode_pop(pack) -> None:
     """Reset the two 20-word "mode population" count arrays to all zero
     (`pack[0x7BE4..+0x28)` and `pack[0x786A..+0x28)`), then decrement two
