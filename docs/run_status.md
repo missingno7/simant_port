@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.68) — STATE-DIFF ORACLE bootstrapped; _SetMap (first mutator)
+- Built the verification tier for MUTATING routines (the seg6 behavior layer needs
+  it — return-value proof doesn't apply when a routine changes world state).
+  Harness (simant/tests/test_state_diff.py): seed the sim-state arrays, run the
+  ORIGINAL ASM with its screen-redraw far-call STUBBED (a no-op far return, so only
+  sim state changes), then diff the resulting DGROUP map region against the
+  recovered Python mutator applied to the same seed.  Byte-identical delta =
+  byte-exact.
+- The redraw side call is ubiquitous on write-side routines: _SetMap / _SetLife /
+  _ClearLife all `lcall 0x18C0:0` = ANTEDIT!_ZapEuMapAt (draw the changed tile).
+  Stubbing it is the key that makes sim-state diffing clean.
+- RECOVERED `set_map` (seg5:617A), the write twin of get_map: writes value's low
+  byte at map_cell_offset(plane,x,y) when in range, else no-op.  Operates on a
+  bridge ByteBackend (the state-view seam) — the shape a native backend uses.
+  10 state-diff cases green (valid/all-planes/out-of-range/byte-truncation).
+- Suite: simant 695.  This harness now unlocks the mutating behavior tier; next
+  is a real behavior (start small — e.g. a food pickup/drop) verified by state
+  diff, growing toward _DoAntSim.
+
+
 ## 2026-07-14 (cont.67) — _GetBestDir: FIRST BEHAVIOUR routine (return-value tier)
 - RECOVERED `_GetBestDir` (seg6:405E), the ant pathfinding core — the routine that
   composes the recovered movement predicates.  For each of 8 neighbours it scores

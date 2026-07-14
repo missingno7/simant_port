@@ -206,6 +206,22 @@ def map_cell_offset(plane: int, x: int, y: int) -> int | None:
     return _cell_offset(plane, x, y, MAP_PLANE_BASE)
 
 
+def set_map(view, plane: int, x: int, y: int, value: int) -> int | None:
+    """Write map cell (plane, x, y) = value (low byte) into the DGROUP map planes.
+
+    Recovered from `_SetMap` (SIMANTW.SYM seg5:617A) — the write-side twin of
+    `map_cell_offset`/`get_map`.  The write lands only when the cell is in range
+    (`map_cell_offset` is not None); an out-of-range (plane, x, y) is a no-op.
+    The original then redraws the tile (a rendering side effect, not sim state);
+    that is the caller's concern.  `view` is a DGROUP byte view (a bridge backend
+    with `wb`).  Returns the written offset, or None if out of range.
+    """
+    off = map_cell_offset(plane, x, y)
+    if off is not None:
+        view.wb(off, value & 0xFF)
+    return off
+
+
 def life_cell_offset(plane: int, x: int, y: int) -> int | None:
     """DGROUP byte offset of life-grid cell (plane, x, y), or None if out of range.
 
