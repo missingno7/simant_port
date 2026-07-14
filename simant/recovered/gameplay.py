@@ -8080,3 +8080,33 @@ def frac_cos(table_view, table_off: int, angle: int) -> int:
     table `frac_sin` does.
     """
     return _frac_trig(table_view, table_off, angle, 0xC0)
+
+
+def place_pill_tile(dgroup, x: int, y: int, value: int) -> None:
+    """Write a yard map tile at `(x, y)` after an `is_valid_a` bounds
+    check — a validated cousin of `set_map(plane=0, ...)`, but gated
+    on `is_valid_a` directly rather than `set_map`'s own
+    `map_cell_offset` range check (independently confirmed via the raw
+    disassembly to be the SAME `_IsValidA` call, not assumed
+    equivalent).
+
+    Recovered from `_PlacePillTile` (SIMANTW.SYM seg7:56DA, args
+    x=[bp+6], y=[bp+8], value=[bp+10]; FAR return, 40 bytes). Composes
+    the already-recovered `is_valid_a`.
+    """
+    if is_valid_a(x, y) == 1:
+        dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, value & 0xFF)
+
+
+def pill_get_life(dgroup, x: int, y: int) -> int:
+    """Read a yard life-plane tile at `(x, y)` after an `is_valid_a`
+    bounds check; an invalid position returns `0` rather than an
+    empty-cell sentinel.
+
+    Recovered from `_PillGetLife` (SIMANTW.SYM seg7:5702, args
+    x=[bp+6], y=[bp+8]; FAR return, 40 bytes). Composes the
+    already-recovered `is_valid_a`.
+    """
+    if is_valid_a(x, y) == 0:
+        return 0
+    return dgroup.rb(LIFE_PLANE_BASE[0] + (x << 6) + y)

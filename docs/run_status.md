@@ -1,5 +1,23 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.180) — /goal grind: _PlacePillTile/_PillGetLife
+- RECOVERED `place_pill_tile`/`pill_get_life` (`_PlacePillTile`/
+  `_PillGetLife`, SIMANTW.SYM seg7:56DA/5702, args x=[bp+6], y=[bp+8]
+  (+value=[bp+10] for place); FAR return, 40 bytes each). Composes the
+  already-recovered `is_valid_a`. Despite the "pill" naming, these
+  operate on the plain yard MAP/LIFE planes (`MAP_PLANE_BASE[0]`/
+  `LIFE_PLANE_BASE[0]`, confirmed via the raw disassembly's own
+  offsets) — validated cousins of `set_map`/a plain life read, but
+  gated on a direct `is_valid_a` call rather than `set_map`'s own
+  `map_cell_offset` range check.
+  - `place_pill_tile`: writes the map tile only when `is_valid_a(x,y)
+    == 1`; a no-op otherwise.
+  - `pill_get_life`: returns `0` for an invalid position (not the
+    usual empty-cell sentinel), else the life-plane tile.
+- 6 cases (3 each: in-range, x-out-of-range, y-out-of-range) — ALL
+  GREEN ON THE FIRST REAL-ASM RUN.
+- Suite: simant 1793 (+6), full suite green.
+
 ## 2026-07-15 (cont.179) — /goal grind: _fracSIN/_fracCOS — fixed-point trig
 - RECOVERED `frac_sin`/`frac_cos` (`_fracSIN`/`_fracCOS`, SIMANTW.SYM
   seg7:69C8/6A0E, arg angle=[bp+6]; FAR return, 70/74 bytes) —

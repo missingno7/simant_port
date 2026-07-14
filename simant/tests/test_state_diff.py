@@ -6665,3 +6665,48 @@ def test_fraccos_matches_asm(angle, label):
     dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
     result = frac_cos(dg_view, _FRACTRIG_TABLE_OFF, angle)
     assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
+
+
+# ---- _PlacePillTile/_PillGetLife (seg7:56DA/5702) — validated map/life --
+_PLACEPILLTILE_REGIONS = [(hooks.DG_SEG_INDEX, 0x28E8, 0x48E8)]
+
+
+def _placepilltile_seed():
+    def seed(m):
+        pass
+    return seed
+
+
+@pytest.mark.parametrize("x,y,value,label", [
+    (20, 20, 0x55, "in-range-writes"),
+    (0x80, 20, 0x55, "x-out-of-range-noop"),
+    (20, 0x40, 0x55, "y-out-of-range-noop"),
+])
+def test_placepilltile_state_diff_matches_asm(x, y, value, label):
+    from simant.recovered.gameplay import place_pill_tile
+    results = _run_and_diff_segs(
+        7, 0x56DA, (x, y, value), lambda d: place_pill_tile(d, x, y, value),
+        _PLACEPILLTILE_REGIONS, seed_fn=_placepilltile_seed())
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _PLACEPILLTILE_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def _pillgetlife_seed(x, y, tile):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        m.mem.wb(dg, 0x68E8 + (x << 6) + y, tile)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tile,label", [
+    (20, 20, 0x77, "in-range-reads"),
+    (0x80, 20, 0x77, "x-out-of-range-returns0"),
+    (20, 0x40, 0x77, "y-out-of-range-returns0"),
+])
+def test_pillgetlife_matches_asm(x, y, tile, label):
+    from simant.recovered.gameplay import pill_get_life
+    ax, m = _run_and_get_ax(7, 0x5702, (x, y), seed_fn=_pillgetlife_seed(x, y, tile))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    result = pill_get_life(dg_view, x, y)
+    assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
