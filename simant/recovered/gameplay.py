@@ -850,6 +850,47 @@ def get_my_rand_dirs(dgroup, pack, out1, out2, inside: bool, plane: int,
     return -1
 
 
+def get_my_initial_rand_dir(dgroup, pack, plane: int, cur_x: int, cur_y: int,
+                            tgt_x: int, tgt_y: int) -> int:
+    """Commit a fresh sticky-direction search for `get_my_rand_dirs`,
+    seeded from the straight-line compass direction to the target.
+
+    Recovered from `_GetMyInitialRandDir` (SIMANTW.SYM seg6:8CDE, args
+    plane=[bp+14], cur_x=[bp+16], cur_y=[bp+18], tgt_x=[bp+20],
+    tgt_y=[bp+22]; FAR return — 4 leading stack words at `[bp+6..0xd]`
+    are genuinely unused by this routine's body, likely present only for
+    calling-convention uniformity with sibling routines).
+
+    Initializes `get_my_rand_dirs`'s own PACK-resident output cells
+    before calling it: `pack[0xA0D8]` (its "committed direction" cell,
+    `out2`) to `get_dir(cur_x, cur_y, tgt_x, tgt_y) - 1`, and
+    `pack[0x78A4]` (its "commitment mode" cell, `out1`) to `0` — a fresh
+    "no prior commitment" state, forcing `get_my_rand_dirs`'s
+    bidirectional sweep-from-this-direction path on this call.  Also
+    always stamps `pack[0x72E4] = 0x10` (a new, unrelated field; not
+    consumed by anything else already recovered).  Reads `pack[0x9B6E]`
+    itself for `get_my_rand_dirs`'s "inside" flag — that routine's real
+    ASM never takes it as a stack argument; every already-recovered
+    caller in this chain (`get_my_best_dirs`, `check_my_best_dirs`)
+    treats it as a caller-supplied convenience threading a world-state
+    read, not a real parameter.  Returns `get_my_rand_dirs`'s own return
+    value directly.
+    """
+    dir_minus_1 = (get_dir(cur_x, cur_y, tgt_x, tgt_y) - 1) & 0xFFFF
+    pack.ww(0xA0D8, dir_minus_1)
+    pack.ww(0x72E4, 0x10)
+    pack.ww(0x78A4, 0)
+
+    out1 = [pack.rw(0x78A4)]
+    out2 = [pack.rw(0xA0D8)]
+    inside = pack.rw(0x9B6E) != 0
+    result = get_my_rand_dirs(dgroup, pack, out1, out2, inside, plane,
+                              cur_x, cur_y, tgt_x, tgt_y)
+    pack.ww(0x78A4, out1[0] & 0xFFFF)
+    pack.ww(0xA0D8, out2[0] & 0xFFFF)
+    return result
+
+
 def check_my_best_dirs(dgroup, pack, out, inside: bool, plane: int, cur_x: int,
                        cur_y: int, tgt_x: int, tgt_y: int) -> int:
     """Walk `get_my_best_dirs` forward up to 64 steps toward the target,

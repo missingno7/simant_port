@@ -4446,6 +4446,72 @@ def test_getmyranddirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, out1_init,
         f"o2={out2[0]&0xFFFF:#06x})")
 
 
+# ---- _GetMyInitialRandDir (seg6:8CDE) — commit a fresh get_my_rand_dirs ----
+# search.  A plain FAR call (no far-pointer args of its own); its own stack
+# has 4 leading unused words before plane/cur_x/cur_y/tgt_x/tgt_y.
+_GETMYINITIALRANDDIR_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_PACK, 0x7000, 0xA100),
+]
+
+
+def _getmyinitialranddir_seed(plane, cur_x, cur_y, tgt_x, tgt_y, tiles, inside,
+                              check_adjacent, cand_plane, cand_x, cand_y,
+                              avoid_x, avoid_y):
+    from simant.recovered.gameplay import map_cell_offset, life_cell_offset
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(pack, 0x9BC4, 2 if check_adjacent else 0)
+        m.mem.ww(pack, 0x9BE0, cand_plane & 0xFFFF)
+        m.mem.ww(pack, 0x80C6, cand_x & 0xFFFF)
+        m.mem.ww(pack, 0x80D2, cand_y & 0xFFFF)
+        m.mem.ww(pack, 0xA0D6, avoid_x & 0xFFFF)
+        m.mem.ww(pack, 0xA0DA, avoid_y & 0xFFFF)
+        m.mem.ww(pack, 0x78A4, 0x1234)   # garbage pre-state, must be overwritten
+        m.mem.ww(pack, 0xA0D8, 0x5678)   # garbage pre-state, must be overwritten
+        m.mem.ww(pack, 0x72E4, 0x9999)   # garbage, must become 0x10
+        for si in range(8):
+            nx, ny = cur_x + GET_BEST_DIR_DX[si], cur_y + GET_BEST_DIR_DY[si]
+            moff = map_cell_offset(plane, nx, ny)
+            if moff is not None:
+                m.mem.wb(dg, moff & 0xFFFF, tiles.get(si, 0x40))
+            loff = life_cell_offset(plane, nx, ny)
+            if loff is not None:
+                m.mem.wb(dg, loff & 0xFFFF, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "plane,cur_x,cur_y,tgt_x,tgt_y,tiles,inside,check_adjacent,cand_plane,"
+    "cand_x,cand_y,avoid_x,avoid_y", [
+    (2, 20, 20, 25, 25, {3: 0x05}, False, False, 0, 0, 0, -100, -100),
+    (2, 20, 20, 25, 25, {2: 0x05}, False, False, 0, 0, 0, -100, -100),
+    (2, 20, 20, 20, 20, {}, False, False, 0, 0, 0, -100, -100),   # already at target
+    (2, 20, 20, 25, 25, {}, False, False, 0, 0, 0, -100, -100),   # nothing clear
+    (0, 20, 20, 25, 25, {3: 0x50}, False, False, 0, 0, 0, -100, -100),  # yard plane
+    (2, 20, 20, 25, 25, {3: 0x05}, True, True, 2, 20, 20, -100, -100),  # inside + adjacent
+])
+def test_getmyinitialranddir_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y,
+                                         tiles, inside, check_adjacent,
+                                         cand_plane, cand_x, cand_y,
+                                         avoid_x, avoid_y):
+    from simant.recovered.gameplay import get_my_initial_rand_dir
+    results = _run_and_diff_segs(
+        6, 0x8CDE, (0, 0, 0, 0, plane, cur_x, cur_y, tgt_x, tgt_y),
+        lambda d, p: get_my_initial_rand_dir(d, p, plane, cur_x, cur_y, tgt_x, tgt_y),
+        _GETMYINITIALRANDDIR_REGIONS,
+        seed_fn=_getmyinitialranddir_seed(
+            plane, cur_x, cur_y, tgt_x, tgt_y, tiles, inside, check_adjacent,
+            cand_plane, cand_x, cand_y, avoid_x, avoid_y))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _GETMYINITIALRANDDIR_REGIONS):
+        assert asm_after == rec_after, (
+            f"plane={plane} cur=({cur_x},{cur_y}) tgt=({tgt_x},{tgt_y}) "
+            f"tiles={tiles} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _CheckMyBestDirs (seg6:8B40) — walk get_my_best_dirs up to 64 steps ---
 # Genuine caller of `_GetMyBestDirs` via the near-call/far-retf ABI bridge;
 # each call can itself run for tens of thousands of CPU steps, so a full

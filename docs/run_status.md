@@ -1,5 +1,31 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.143) — /goal grind: _GetMyInitialRandDir — commit a fresh sticky search
+- RECOVERED `get_my_initial_rand_dir` (`_GetMyInitialRandDir`,
+  seg6:8CDE, args plane=[bp+14], cur_x=[bp+16], cur_y=[bp+18],
+  tgt_x=[bp+20], tgt_y=[bp+22], FAR return — 4 leading stack words at
+  `[bp+6..0xd]` genuinely unused by the body) — commits a fresh
+  `get_my_rand_dirs` search: sets its "committed direction" PACK cell
+  (`[0xA0D8]`) to `get_dir(cur,tgt) - 1` and its "commitment mode" cell
+  (`[0x78A4]`) to `0` (forcing the bidirectional fresh-search path),
+  stamps an unrelated new field (`pack[0x72E4] = 0x10`), then calls the
+  already-recovered `get_my_rand_dirs` and writes its two output cells
+  back to PACK.
+- Untangled a genuine ambiguity across `get_my_best_dirs`/
+  `check_my_best_dirs`/`get_my_rand_dirs`'s existing docstrings: none of
+  them list "inside" among their real ASM stack args, yet their Python
+  signatures all take it as an explicit parameter — confirmed by
+  cross-referencing this routine's own call site (which passes exactly
+  5 words: plane/cur_x/cur_y/tgt_x/tgt_y, matching the documented count)
+  that "inside" is a world-state PACK read (`pack[0x9B6E]`) every
+  caller in this chain is expected to compute itself, not a real
+  parameter — resolved by having this routine read it directly, per the
+  same convention `is_it_food_at`/`make_new_hole_b` already established.
+- 6 cases (fresh-search forward/backward hits, already-at-target,
+  nothing-clear, the yard-plane threshold band, and an inside+adjacent
+  variant) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1527 (+6), full suite green.
+
 ## 2026-07-14 (cont.142) — /goal grind: _SGIRand/_SGRand/_SGSRand — two-roll RNG combinators
 - RECOVERED `sg_i_rand`/`sg_rand`/`sg_s_rand` (`_SGIRand`/`_SGRand`/
   `_SGSRand`, seg5:147C/14A4/14CC, arg n=[bp+6], FAR return) — three
