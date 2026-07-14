@@ -1,5 +1,32 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.149) — /goal grind: _StayInR — idle-in-nest: nibble food or wander
+- RECOVERED `stay_in_r` (`_StayInR`, seg6:5C16, args x=[bp+6], y=[bp+8],
+  direction=[bp+10], FAR return) — the last item in this session's
+  research-survey batch. Composes the already-recovered
+  `try_move_dir_r` and `get_enter_dir_r`. If the red nest map tile at
+  `(x, y)` is in the food-pile band (`0x10..0x13`): a depleted (`0x10`)
+  tile rerolls via `_SRand8()`, otherwise decrements by 1; either way
+  bumps the slot's R-list `field_c`/caste flags and falls to a shared
+  tail. Otherwise: rerolls a new direction and tries `try_move_dir_r`;
+  on failure, looks for an entry direction via `get_enter_dir_r`
+  (falling back to a fresh `_SRand1(8)` roll if none found) and tries
+  again — either successful move returns immediately. The shared tail
+  (food branch, or both movement attempts failing) just re-stamps the
+  slot's current caste onto the life-grid cell.
+- Region reused `_TRYMOVE_GETOUT_REGIONS` directly (identical bounds to
+  `_MAKENEWHOLEB_REGIONS`) since it already covers everything this
+  composition touches.
+- 5 cases (food reroll, food decrement with the counter both nonzero
+  and zero, a movement branch where the first try succeeds, and one
+  where it fails and falls through the `get_enter_dir_r`/fallback-roll
+  path) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1564 (+5), full suite green. This closes out the 5th
+  research-survey batch dispatched in cont.141 — all zero-blocker leads
+  from that survey are now recovered or explicitly deferred
+  (`_DropFoodA`/`_FoodFall`). Next session should dispatch a fresh
+  survey before continuing.
+
 ## 2026-07-14 (cont.148) — /goal grind: _DigOutBNest/_DigOutRNest — wander a nest tunnel up
 - RECOVERED `dig_out_b_nest`/`dig_out_r_nest` (`_DigOutBNest`/
   `_DigOutRNest`, seg7:62DE/63B8, arg count=[bp+6], FAR return) via a

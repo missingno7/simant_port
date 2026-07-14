@@ -3520,6 +3520,81 @@ def try_move_dir_r(dgroup, simant_data_group, pack, x: int, y: int,
     return 1
 
 
+def stay_in_r(dgroup, simant_data_group, pack, x: int, y: int, direction: int) -> None:
+    """Handle a red ant idling in the nest at `(x, y)`: nibble a food
+    pile if standing on one, otherwise try to keep wandering.
+
+    Recovered from `_StayInR` (SIMANTW.SYM seg6:5C16, args x=[bp+6],
+    y=[bp+8], direction=[bp+10]; FAR return).  Composes the already-
+    recovered `try_move_dir_r` and `get_enter_dir_r`.
+
+    If the red nest map tile at `(x, y)` is in `0x10..0x13` (the food-
+    pile band `is_this_food` recognizes): a tile of exactly `0x10`
+    (depleted) rerolls to a fresh `_SRand8()` value, otherwise decrements
+    the tile by 1 (shrinking the pile). Either way, decrements
+    `pack[0x72DE]` if positive (an unrelated counter), stamps the
+    slot's R-list `field_c = 3` and ORs `0x08` into its caste
+    (`simant_data_group[0x46E6+slot]`), then falls to the shared tail.
+
+    Otherwise: rerolls a new direction (`_SRand1(3) + direction - 2`,
+    masked to `0..7`), stamps it into the slot's caste (keeping the high
+    bits), and tries `try_move_dir_r` there. If that fails, looks for an
+    entry direction via `get_enter_dir_r(exclude=direction & 7)`,
+    falling back to a fresh `_SRand1(8)` roll if none is found, and
+    tries `try_move_dir_r` again with THAT direction. Either successful
+    move returns immediately with no further writes.
+
+    Shared tail (food branch, or both movement attempts failing):
+    re-stamps the slot's CURRENT caste onto the red nest life-grid cell
+    at `(x, y)` — a "make it visually consistent" write, not a move.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    idx = (x << 6) + y
+    tile = dgroup.rb(MAP_PLANE_BASE[3] + idx)
+
+    if 0x10 <= tile <= 0x13:
+        if tile == 0x10:
+            seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            dgroup.wb(MAP_PLANE_BASE[3] + idx, roll8 & 0xFF)
+        else:
+            dgroup.wb(MAP_PLANE_BASE[3] + idx, (tile - 1) & 0xFF)
+
+        if pack.rw(0x72DE) > 0:
+            pack.ww(0x72DE, (pack.rw(0x72DE) - 1) & 0xFFFF)
+
+        slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x44F0 + slot, 3)
+        simant_data_group.wb(0x46E6 + slot,
+                             simant_data_group.rb(0x46E6 + slot) | 8)
+    else:
+        seed = dgroup.rw(SRAND_SEED_OFF)
+        seed, roll3 = srand1(seed, 3)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        new_direction = (roll3 + direction - 2) & 7
+
+        slot = pack.rw(0x9B6A)
+        caste = (simant_data_group.rb(0x46E6 + slot) & 0xF8) | new_direction
+        simant_data_group.wb(0x46E6 + slot, caste & 0xFF)
+
+        if try_move_dir_r(dgroup, simant_data_group, pack, x, y, new_direction) != 0:
+            return
+
+        enter_dir = get_enter_dir_r(dgroup, simant_data_group, x, y, direction & 7)
+        if _sx16(enter_dir) < 0:
+            seed = dgroup.rw(SRAND_SEED_OFF)
+            seed, enter_dir = srand1(seed, 8)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+
+        if try_move_dir_r(dgroup, simant_data_group, pack, x, y, enter_dir) != 0:
+            return
+
+    slot = pack.rw(0x9B6A)
+    caste = simant_data_group.rb(0x46E6 + slot)
+    dgroup.wb(LIFE_PLANE_BASE[3] + idx, caste & 0xFF)
+
+
 def get_out_r(dgroup, simant_data_group, pack, x: int) -> int:
     """Handle the acting red ant reaching row 0 (the surface): either
     complete an already-marked exit hole, or nudge the dig frontier

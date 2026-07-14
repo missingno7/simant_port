@@ -1252,6 +1252,56 @@ def test_trymovedirr_state_diff_matches_asm(x, y, direction, tile_at_dest, slot,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _StayInR (seg6:5C16) — idle-in-nest: nibble food or keep wandering ---
+# Composes try_move_dir_r + get_enter_dir_r; reuses _TRYMOVE_GETOUT_REGIONS.
+def _stayinr_seed(x, y, tile, caste, field_c, counter_72de, slot, seed_val,
+                  move_tile):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(dg, 0x58E8 + (x << 6) + y, tile)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x46E6 + slot, caste)
+        m.mem.wb(sdg, 0x44F0 + slot, field_c)
+        m.mem.ww(pack, 0x72DE, counter_72de)
+        if move_tile is not None:
+            for si in range(8):
+                nx, ny = x + GET_BEST_DIR_DX[si], y + GET_BEST_DIR_DY[si]
+                if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x58E8 + (nx << 6) + ny, move_tile)
+            m.mem.wb(dg, 0x58E8 + (x << 6) + 0, 0x10)
+            m.mem.wb(sdg, 0x13A4 + (x << 6), 0)
+            for c in (x - 1, x, x + 1):
+                if 0 <= c <= 0x3F:
+                    m.mem.wb(dg, 0x58E8 + (c << 6) + 1, 0x40)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,tile,caste,field_c,counter_72de,slot,seed_val,move_tile,label", [
+    (30, 30, 0x10, 0x03, 1, 5, 0, 0x1234, None, "food-reroll"),
+    (30, 30, 0x12, 0x03, 1, 5, 1, 0x1234, None, "food-decrement-counter-nonzero"),
+    (30, 30, 0x12, 0x03, 1, 0, 0, 0x1234, None, "food-decrement-counter-zero"),
+    (30, 30, 0x40, 0x03, 1, 5, 0, 0x1234, 0x10, "move-first-try-succeeds"),
+    (30, 30, 0x40, 0xAA, 1, 5, 2, 0x1234, 0x20, "move-first-try-fails-fallback"),
+])
+def test_stayinr_state_diff_matches_asm(x, y, tile, caste, field_c,
+                                        counter_72de, slot, seed_val,
+                                        move_tile, label):
+    from simant.recovered.gameplay import stay_in_r
+    direction = 3
+    results = _run_and_diff_segs(
+        6, 0x5C16, (x, y, direction),
+        lambda d, s, p: stay_in_r(d, s, p, x, y, direction),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_stayinr_seed(x, y, tile, caste, field_c, counter_72de, slot,
+                              seed_val, move_tile))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 def _getout_seed(x, hole_marker, hole_x_val, slot, caste, seed_val, exit_dest_tiles):
     def seed(m):
         dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
