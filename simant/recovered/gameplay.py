@@ -510,6 +510,37 @@ def s_get_dis(x1: int, y1: int, x2: int, y2: int) -> int:
     return abs(x2 - x1) + abs(y2 - y1)
 
 
+def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
+    """Remove a black-colony ant's tail segment from the sim.
+
+    Recovered from `_KillTailB` (SIMANTW.SYM seg6:42B0, arg: ant_idx).  Clears
+    the ant's has-tail flag (`simant_data_group[0x3D18 + ant_idx]`), reads its
+    recorded position (x = `simant_data_group[0x392C + ant_idx]`, y = the low
+    byte of `simant_data_group` word `[0x3736 + ant_idx]`), and clears the life
+    grid cell at that position on plane 2 (the black colony's nest life plane;
+    `dgroup`, since the ASM's life-grid write has no ES override — it targets
+    the default DS/DGROUP, unlike the per-ant fields which go through ES =
+    SIMANT_DATA_GROUP).  No bounds check on (x, y) — matches the ASM exactly,
+    including wraparound if the recorded position were ever out of range.
+    """
+    simant_data_group.wb(0x3D18 + ant_idx, 0)
+    x = simant_data_group.rb(0x392C + ant_idx)
+    y = simant_data_group.rw(0x3736 + ant_idx) & 0xFF
+    dgroup.wb(LIFE_PLANE_BASE[2] + x + (y << 6), 0)
+
+
+def kill_tail_r(dgroup, simant_data_group, ant_idx: int) -> None:
+    """Remove a red-colony ant's tail segment from the sim — the twin of
+    `kill_tail_b` on the red colony's per-ant fields and life plane 3.
+
+    Recovered from `_KillTailR` (SIMANTW.SYM seg6:6762, arg: ant_idx).
+    """
+    simant_data_group.wb(0x46E6 + ant_idx, 0)
+    x = simant_data_group.rb(0x42FA + ant_idx)
+    y = simant_data_group.rw(0x4104 + ant_idx) & 0xFF
+    dgroup.wb(LIFE_PLANE_BASE[3] + x + (y << 6), 0)
+
+
 def dec_eat_b(dgroup, simant_data_group, pack) -> None:
     """Tick the black colony's hunger-decay clock; starve it by one food unit
     on each expiry, unless the "no-starve" cheat flag is set.

@@ -283,6 +283,60 @@ def test_deceatr_state_diff_matches_asm(timer, reset_rate, food):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _KillTailB / _KillTailR (seg6:42B0 / 6762) — remove an ant's tail -----
+# Each spans DGROUP (the life-grid cell write, no ES override -> default DS)
+# and SIMANT_DATA_GROUP (the per-ant has-tail flag + recorded x/y, all indexed
+# by ant_idx as a raw byte offset -- not scaled).
+_LIFE_NEST2, _LIFE_NEST3 = 0x88E8, 0x98E8
+_NEST_SPAN = 0x1000
+_KILLTAILB_REGIONS = [
+    (hooks.DG_SEG_INDEX, _LIFE_NEST2, _LIFE_NEST2 + _NEST_SPAN),  # life plane 2
+    (_SDG, 0x3700, 0x3F00),           # covers Y[0x3736+idx], X[0x392C+idx],
+]                                     # flag[0x3D18+idx] for idx up to ~0x1C8
+_KILLTAILR_REGIONS = [
+    (hooks.DG_SEG_INDEX, _LIFE_NEST3, _LIFE_NEST3 + _NEST_SPAN),  # life plane 3
+    (_SDG, 0x4100, 0x4800),           # covers Y[0x4104+idx], X[0x42FA+idx],
+]                                     # flag[0x46E6+idx] for idx up to ~0x1C8
+
+
+@pytest.mark.parametrize("ant_idx,x,y,flag", [
+    (0, 0, 0, 1), (1, 63, 63, 1), (50, 32, 16, 0), (99, 5, 60, 1),
+    (150, 40, 40, 1),
+])
+def test_killtailb_state_diff_matches_asm(ant_idx, x, y, flag):
+    from simant.recovered.gameplay import kill_tail_b
+    m = runtime.create_machine()
+    sdg = m.seg_bases[_SDG]
+    m.mem.wb(sdg, 0x3D18 + ant_idx, flag)
+    m.mem.wb(sdg, 0x392C + ant_idx, x)
+    m.mem.ww(sdg, 0x3736 + ant_idx, y)      # low byte is what matters
+
+    results = _run_and_diff_segs(6, 0x42B0, (ant_idx,),
+                                 lambda d, s: kill_tail_b(d, s, ant_idx),
+                                 _KILLTAILB_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _KILLTAILB_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("ant_idx,x,y,flag", [
+    (0, 0, 0, 1), (1, 63, 63, 1), (50, 32, 16, 0), (99, 5, 60, 1),
+    (150, 40, 40, 1),
+])
+def test_killtailr_state_diff_matches_asm(ant_idx, x, y, flag):
+    from simant.recovered.gameplay import kill_tail_r
+    m = runtime.create_machine()
+    sdg = m.seg_bases[_SDG]
+    m.mem.wb(sdg, 0x46E6 + ant_idx, flag)
+    m.mem.wb(sdg, 0x42FA + ant_idx, x)
+    m.mem.ww(sdg, 0x4104 + ant_idx, y)
+
+    results = _run_and_diff_segs(6, 0x6762, (ant_idx,),
+                                 lambda d, s: kill_tail_r(d, s, ant_idx),
+                                 _KILLTAILR_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _KILLTAILR_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 def _sx(v):
     return v - 0x10000 if v & 0x8000 else v
 

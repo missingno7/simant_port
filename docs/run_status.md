@@ -1,6 +1,24 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.72) — /goal autonomous grind: _DecEatB / _DecEatR (colony hunger)
+## 2026-07-14 (cont.73) — /goal grind: _KillTailB/R — the per-ant record array
+- RECOVERED `kill_tail_b`/`kill_tail_r` (seg6:42B0 / 6762): clear an ant's
+  has-tail flag and clear the corresponding life-grid cell.  DISCOVERS the
+  per-ant record layout in SIMANT_DATA_GROUP: parallel flat arrays indexed by
+  ant_idx as a RAW BYTE offset (not scaled) — an X-coordinate byte array
+  (0x392C B / 0x42FA R), a Y-coordinate word array where only the low byte
+  matters (0x3736 B / 0x4104 R, so consecutive ants' "words" overlap by one
+  byte — read-and-mask, harmless, replicated exactly), and a has-tail flag byte
+  array (0x3D18 B / 0x46E6 R).  The life-grid write itself has NO ES override in
+  the ASM (defaults to DS=DGROUP), unlike the per-ant field reads (ES=
+  SIMANT_DATA_GROUP) — confirms life planes 2/3 are DGROUP-resident (matches the
+  bridge's existing LIFE_PLANE_BASE) while the ant records live in a separate
+  fixed segment.  No bounds check on the recorded (x,y) in the ASM — replicated
+  exactly (no clamping in the recovered fn either).
+  10 state-diff cases green.  Suite: simant 749.
+- Continuing per /goal — next: the scent/alarm system (_JamScentBN/RN/BT/RT,
+  _ColonySmellBN/RN/BT/RT, _AlarmHere/_AlarmHere2) that _DoForageAnt/_DoRandAntA
+  call directly for pheromone-trail AI.
+
 - User set an autonomous /goal: continue core game logic recovery until stopped
   or genuinely blocked.  Surveyed all un-recovered seg5/seg6 routines ranked by
   subcall count to find the next batch of clean mutators for the state-diff
