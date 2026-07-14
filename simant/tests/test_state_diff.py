@@ -1123,6 +1123,85 @@ def test_tilecanbemovedon_matches_asm(plane, x, y, tile, inside, cand_plane,
         f"asm={ax:#06x} rec={expect:#06x}")
 
 
+# ---- _GetMyBestDirs (seg6:8828) — my-ant pathfinding (composes 3 recovered --
+# routines: _GetDis, _TileCanBeMovedOn, _IsClearTile/_GetLife via raw reads) --
+# Pure read: seeds the 8-neighbour map/life cells around (cur_x, cur_y), the
+# PACK "candidate site" fields _GetMyBestDirs reads internally, and the same
+# [0xC4AC] world flag `_TileCanBeMovedOn` needs for its plane<=1 branch.
+GET_BEST_DIR_DX = (0, 1, 1, 1, 0, -1, -1, -1)
+GET_BEST_DIR_DY = (-1, -1, 0, 1, 1, 1, 0, -1)
+
+
+def _getmybestdirs_seed(plane, cur_x, cur_y, tiles, lifes, inside, check_adjacent,
+                        cand_plane, cand_x, cand_y):
+    def seed(m):
+        from simant.recovered.gameplay import map_cell_offset, life_cell_offset
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        world = m.mem.rw(dg, 0xC4AC)
+        m.mem.wb(world, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(pack, 0x9BC4, 2 if check_adjacent else 0)
+        m.mem.ww(pack, 0x9BE0, cand_plane & 0xFFFF)
+        m.mem.ww(pack, 0x80C6, cand_x & 0xFFFF)
+        m.mem.ww(pack, 0x80D2, cand_y & 0xFFFF)
+        for si in range(8):
+            nx, ny = cur_x + GET_BEST_DIR_DX[si], cur_y + GET_BEST_DIR_DY[si]
+            moff = map_cell_offset(plane, nx, ny)
+            if moff is not None:
+                m.mem.wb(dg, moff & 0xFFFF, tiles.get(si, 0x40))
+            loff = life_cell_offset(plane, nx, ny)
+            if loff is not None:
+                m.mem.wb(dg, loff & 0xFFFF, lifes.get(si, 0))
+    return seed
+
+
+@pytest.mark.parametrize(
+    "plane,cur_x,cur_y,tgt_x,tgt_y,tiles,lifes,inside,check_adjacent,"
+    "cand_plane,cand_x,cand_y", [
+    # already at target -> -1, no scan needed (tiles/lifes irrelevant)
+    (2, 20, 20, 20, 20, {}, {}, False, False, 0, 0, 0),
+    # everything blocked (default tile 0x40) -> best_any=-2 sentinel, both -1/-2
+    (2, 20, 20, 25, 25, {}, {}, False, False, 0, 0, 0),
+    # one clear unoccupied direction (si=3, tile<0x18) among blocked others
+    (2, 20, 20, 25, 25, {3: 0x05}, {}, False, False, 0, 0, 0),
+    # two clear directions at different distances -> picks the closer one
+    (2, 20, 20, 25, 25, {3: 0x05, 2: 0x05}, {}, False, False, 0, 0, 0),
+    # clear but OCCUPIED (life>0) -> falls back to best_any, not best_clear
+    (2, 20, 20, 25, 25, {3: 0x05}, {3: 7}, False, False, 0, 0, 0),
+    # clear+occupied AND a separate clear+unoccupied -> clear wins over any
+    (2, 20, 20, 25, 25, {3: 0x05, 5: 0x06}, {3: 7}, False, False, 0, 0, 0),
+    # pebble tile (0x30-0x31) also counts as hard-clear
+    (2, 20, 20, 25, 25, {6: 0x30}, {}, False, False, 0, 0, 0),
+    # near a boundary so some directions are out-of-range (skipped, not crash)
+    (2, 0, 0, 5, 5, {3: 0x05}, {}, False, False, 0, 0, 0),
+    # candidate-site self-exclusion suppresses the one clear direction
+    (2, 20, 20, 25, 25, {3: 0x05}, {}, False, False, 2, 21, 19),
+    # check_adjacent + extended dirt-band tile, neighbour clear -> counts
+    (2, 20, 20, 25, 25, {3: 0x22}, {}, False, True, 2, 21, 19),
+    # yard plane (plane<=1), inside=False threshold gate
+    (0, 20, 20, 25, 25, {3: 0x50}, {}, False, False, 0, 0, 0),
+    (0, 20, 20, 25, 25, {3: 0x54}, {}, False, False, 0, 0, 0),
+    # yard plane, inside=True widens the threshold
+    (1, 20, 20, 25, 25, {3: 0x80}, {}, True, False, 0, 0, 0),
+])
+def test_getmybestdirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, tiles,
+                                   lifes, inside, check_adjacent, cand_plane,
+                                   cand_x, cand_y):
+    from simant.recovered.gameplay import get_my_best_dirs
+    ax, m = _run_and_get_ax(
+        6, 0x8828, (plane, cur_x, cur_y, tgt_x, tgt_y),
+        seed_fn=_getmybestdirs_seed(plane, cur_x, cur_y, tiles, lifes, inside,
+                                    check_adjacent, cand_plane, cand_x, cand_y))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
+    expect = get_my_best_dirs(dg_view, pack_view, inside, plane, cur_x, cur_y,
+                              tgt_x, tgt_y)
+    assert ax == (expect & 0xFFFF), (
+        f"(p={plane},cur=({cur_x},{cur_y}),tgt=({tgt_x},{tgt_y}),tiles={tiles},"
+        f"lifes={lifes},in={inside},adj={check_adjacent},"
+        f"cand=({cand_plane},{cand_x},{cand_y})): asm={ax:#06x} rec={expect:#06x}")
+
+
 # ---- _SmoothAlarm (seg6:9380) — 4-neighbour box blur of the alarm grid -----
 # Snapshots the live grid [0x52D2..) into a scratch buffer [0x4AD2..) first,
 # then blurs read-old/write-new; both bands are covered by one region.

@@ -531,6 +531,63 @@ def get_best_dir(plane, cur_x, cur_y, tgt_x, tgt_y, read_map, read_life, inside)
     return best_clear if best_clear >= 0 else best_any
 
 
+def get_my_best_dirs(dgroup, pack, inside: bool, plane: int, cur_x: int,
+                     cur_y: int, tgt_x: int, tgt_y: int) -> int:
+    """The best 8-way step from (cur_x, cur_y) toward (tgt_x, tgt_y) for the
+    player-controlled ("my") ant — the movement-candidate sibling of
+    `get_best_dir`.
+
+    Recovered from `_GetMyBestDirs` (SIMANTW.SYM seg6:8828, args: plane,
+    cur_x, cur_y, tgt_x, tgt_y; FAR return).  Same scan-and-keep-the-closer-
+    neighbour shape as `get_best_dir`, but composed from different building
+    blocks: the movement gate is `tile_can_be_moved_on` (not
+    `is_not_obstacle`/`is_this_pebble`), and it reads a genuine `_GetLife`-
+    style life value for the occupied check, then re-derives the raw life
+    byte and map tile for `is_clear_tile` — the two checks are provably the
+    same (`_GetLife`'s 0-> 0xFFFF transform only changes the *empty* case,
+    and empty means "not occupied" either way), so this reads the raw byte
+    once and reuses it for both.
+
+    Before the scan, three PACK-resident "candidate site" fields (a fixed
+    world-state slot the ASM reads through DGROUP pointer-globals
+    `[0xC3BE]`/`[0xC3B8]`/`[0xC3BC]`, all of which resolve to the PACK
+    segment) and a PACK flag (`[0xC3AE]:[0x9BC4] == 2`, via `[0xC3AE]`) are
+    read ONCE and threaded into every `tile_can_be_moved_on` call as its
+    `cand_plane`/`cand_x`/`cand_y`/`check_adjacent` — the ant's own current
+    position and a "strict adjacency" mode flag.
+    """
+    best_dist = get_dis(cur_x, cur_y, tgt_x, tgt_y)
+    if best_dist <= 0:
+        return -1
+    check_adjacent = pack.rw(0x9BC4) == 2
+    cand_plane = pack.rw(0x9BE0)
+    cand_x = pack.rw(0x80C6)
+    cand_y = pack.rw(0x80D2)
+    best_clear, best_any = -1, -2
+    for si in range(8):
+        nx = cur_x + GET_BEST_DIR_DX[si]
+        ny = cur_y + GET_BEST_DIR_DY[si]
+        if not tile_can_be_moved_on(dgroup, inside, plane, nx, ny, cand_plane,
+                                    cand_x, cand_y, check_adjacent):
+            continue
+        dist = get_dis(nx, ny, tgt_x, tgt_y)
+        if dist >= best_dist:
+            continue
+        best_dist = dist
+        life_off = life_cell_offset(plane, nx, ny)
+        raw_life = dgroup.rb(life_off) if life_off is not None else 0
+        if raw_life > 0:                                  # occupied -> fallback
+            best_any = si
+        else:
+            tile_off = map_cell_offset(plane, nx, ny)
+            tile = dgroup.rb(tile_off) if tile_off is not None else 0
+            if is_clear_tile(plane, tile, raw_life):
+                best_clear = si
+            else:
+                best_any = si
+    return best_clear if best_clear >= 0 else best_any
+
+
 # The 3x3 neighbour offsets _IsClear3x3 walks (a DGROUP direction table): the 8
 # compass directions around the centre, in the order N, NE, E, SE, S, SW, W, NW.
 CLEAR_3X3_DX = (0, 1, 1, 1, 0, -1, -1, -1)

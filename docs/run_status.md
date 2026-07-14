@@ -1,5 +1,58 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.86) — /goal grind: _GetMyBestDirs (player-ant pathfinding done)
+- RECOVERED `get_my_best_dirs` (seg6:8828, args: plane, cur_x, cur_y, tgt_x,
+  tgt_y; FAR return; PURE READ) — `_TileCanBeMovedOn`'s only remaining caller
+  from cont.85's survey, and the last unlock needed for the player-ant
+  pathfinding tier. Same scan-8-neighbours-keep-the-closer shape as the
+  already-recovered `get_best_dir`, but composed from different building
+  blocks: the movement gate is `tile_can_be_moved_on` (not
+  `is_not_obstacle`/`is_this_pebble`), and it genuinely CALLS `_GetLife` and
+  `_IsClearTile(plane,x,y)` as subroutines (confirmed via the scratch
+  disassembler) rather than inlining the reads the way `_GetBestDir` does.
+  Proved the `_GetLife` 0->0xFFFF sentinel transform is a no-op for this
+  routine's own "occupied" check (byte 0 -> sentinel -1 signed -> "not
+  occupied"; byte 1..255 -> itself, always positive-signed -> "occupied") so
+  a single raw life-byte read serves both the occupied check AND (unlike
+  `_GetLife`) the OWN raw-byte input `is_clear_tile` needs — no need to
+  duplicate the read or carry the transformed sentinel around.
+  - Before the scan it reads 4 PACK-resident fields ONCE through DGROUP
+    pointer-globals `[0xC3AE]`/`[0xC3BE]`/`[0xC3B8]`/`[0xC3BC]` (confirmed
+    all four resolve to the PACK segment, not SIMANT_DATA_GROUP, by reading
+    a fresh machine's actual selector values) and threads them into every
+    `tile_can_be_moved_on` call as `cand_plane`/`cand_x`/`cand_y`/
+    `check_adjacent` — this is the "self/candidate site" cont.85 could only
+    infer the SHAPE of from `_TileCanBeMovedOn`'s own body; this routine's
+    call site confirms it really is read from fixed world state, not passed
+    down from a further caller.
+  - Confirmed empirically (not by reading a table dump) that the two 8-entry
+    delta tables this routine reads via DGROUP pointer-globals `[0xC3C4]`/
+    `[0xC3CA]` (offsets `+8`/`+0` within, byte-sized, sign-extended) hold the
+    EXACT SAME compass values as the already-recovered `GET_BEST_DIR_DX`/
+    `GET_BEST_DIR_DY` constants — read a fresh machine's actual bytes at
+    both locations and diffed against the constants rather than assuming.
+  - Building the scratch disassembler in cont.85 paid for itself again here:
+    caught mid-decode that a run of four `push`es reading FIXED (non-`si`-
+    indexed) DGROUP-selector offsets were the "candidate site" scalars, not
+    a second direction table as first assumed from the raw mnemonic text —
+    resolved by checking the modrm byte's addressing mode by hand (mod=00,
+    rm=110 = direct address, no index register) rather than trusting the
+    printed `es:[80D2]`-style text at face value.
+  - 13 hand-built scenarios (already-at-target, all-blocked, one-clear,
+    two-clear-picks-closer, clear-but-occupied-falls-back, clear-beats-
+    occupied-when-both-present, pebble-tile-clear, boundary-adjacent
+    (skips out-of-range directions without crashing), candidate-site self-
+    exclusion suppressing the only clear direction, check_adjacent +
+    extended-dirt-band tile, and both yard-plane threshold-gate cases)
+    all passed on the FIRST run.
+- Suite: simant 982 (+13). This closes out the `_TileCanBeMovedOn` /
+  `_GetMyBestDirs` pathfinding-unlock thread from cont.85 entirely.
+  Continuing per /goal — next candidates per cont.84's original survey are
+  `_GetMyRandDirs` (seg6:8928, immediately after `_GetMyBestDirs` in the
+  symbol table, likely a close sibling) and `_GetRedBestDirs` (the red-
+  colony twin), or re-surveying seg5/seg6 fan-in now that this pathfinding
+  branch is closed.
+
 ## 2026-07-14 (cont.85) — /goal grind: _TileCanBeMovedOn (yellow-ant pathfinding unlock)
 - Built a scratch linear disassembler (`dos_re.lift.decode.decode_one` for
   static instruction lengths + the CPU's own `execute_opcode` capture for
