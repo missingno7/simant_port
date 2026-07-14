@@ -7940,3 +7940,86 @@ def get_nearby_patches(dgroup, simant_data_group, x: int, y: int) -> int:
         if simant_data_group.rb(0x164 + cell) != 0:
             score -= 3
     return score
+
+
+def start_migrate(pack, simant_data_group, x: int, y: int) -> None:
+    """Begin a grass-patch "migration": project the screen-space
+    `(x, y)` onto the SAME 12x16 grass-patch grid `get_nearby_patches`
+    scores, recording the target slot in `pack[0x9CEE]` (`-1` marks
+    "no migration in progress") — `end_migrate`'s own later call reads
+    both this and `pack[0x9D72]` to know where the migration started.
+
+    Recovered from `_StartMigrate` (SIMANTW.SYM seg7:3DF2, args
+    x=[bp+6], y=[bp+8]; FAR return, 122 bytes).
+
+    `y_bucket = (y - 0x42) // 10` (C-style truncating division) is
+    stored in `pack[0x9D72]` unconditionally. `combined =
+    (x + y - 0xEE) // 28` is stored in `pack[0x9CEE]`. If EITHER is
+    negative, or `combined > 0xB`, or `y_bucket > 0xF`: `pack[0x9CEE]`
+    is reset to `-1` (out of grid range, migration cancelled).
+    Otherwise: the grid cell `(combined << 4) + y_bucket` is checked
+    against `simant_data_group[0xA4 + cell]` (the SAME grass-patch
+    grid `get_nearby_patches` reads) — `0` there ALSO cancels
+    (`pack[0x9CEE] = -1`, nothing to migrate from); any other value
+    leaves `pack[0x9CEE]` as the computed slot.
+    """
+    def tdiv(v, d):
+        q = abs(v) // d
+        return -q if v < 0 else q
+
+    y_bucket = tdiv(y - 0x42, 10)
+    pack.ww(0x9D72, y_bucket & 0xFFFF)
+
+    combined = tdiv(x + y - 0xEE, 28)
+    pack.ww(0x9CEE, combined & 0xFFFF)
+
+    if combined < 0 or y_bucket < 0 or combined > 0xB or y_bucket > 0xF:
+        pack.ww(0x9CEE, 0xFFFF)
+        return
+
+    cell = (combined << 4) + y_bucket
+    if simant_data_group.rb(0xA4 + cell) == 0:
+        pack.ww(0x9CEE, 0xFFFF)
+
+
+def end_migrate(pack, simant_data_group, x: int, y: int) -> None:
+    """Complete a grass-patch "migration" `start_migrate` began: move
+    HALF of the origin cell's grass count into the destination cell at
+    screen-space `(x, y)`, capped at `0xFA` (250).
+
+    Recovered from `_EndMigrate` (SIMANTW.SYM seg7:3E6C, args x=[bp+6],
+    y=[bp+8]; FAR return, 140 bytes). `pack[0x9CEE] < 0` (no migration
+    in progress, per `start_migrate`'s own cancel convention) is a
+    no-op. Otherwise projects `(x, y)` onto the grid the SAME way
+    `start_migrate` does; out of range (either axis) is ALSO a no-op —
+    no partial effect, the origin cell is untouched either way.
+
+    In range: halves the ORIGIN cell (`simant_data_group[0xA4 +
+    (pack[0x9CEE]<<4) + pack[0x9D72]]`, i.e. `start_migrate`'s saved
+    slot/y-bucket pair — floor division by 2, so an odd count leaves a
+    remainder behind) and subtracts that half from it; adds the SAME
+    half onto the NEWLY computed destination cell, clamping the result
+    to `0xFA` rather than letting it exceed that cap.
+    """
+    def tdiv(v, d):
+        q = abs(v) // d
+        return -q if v < 0 else q
+
+    old_slot = _sx16(pack.rw(0x9CEE))
+    if old_slot < 0:
+        return
+
+    y_bucket = tdiv(y - 0x42, 10)
+    combined = tdiv(x + y - 0xEE, 28)
+    if combined < 0 or y_bucket < 0 or combined > 0xB or y_bucket > 0xF:
+        return
+
+    old_y_bucket = _sx16(pack.rw(0x9D72))
+    old_cell = ((old_slot << 4) + old_y_bucket) & 0xFFFF
+    old_val = simant_data_group.rb(0xA4 + old_cell)
+    half = old_val >> 1
+    simant_data_group.wb(0xA4 + old_cell, (old_val - half) & 0xFF)
+
+    new_cell = (combined << 4) + y_bucket
+    total = simant_data_group.rb(0xA4 + new_cell) + half
+    simant_data_group.wb(0xA4 + new_cell, 0xFA if total >= 0xFB else total & 0xFF)

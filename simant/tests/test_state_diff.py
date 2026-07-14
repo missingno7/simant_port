@@ -6546,3 +6546,70 @@ def test_getnearbypatches_matches_asm(x, y, dx, dy, grid1, grid2, label):
     sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
     result = get_nearby_patches(dg_view, sdg_view, x, y)
     assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"
+
+
+# ---- _StartMigrate/_EndMigrate (seg7:3DF2/3E6C) — grass-patch migration --
+_MIGRATE_REGIONS = [
+    (_SDG, 0x00, 0x200),
+    (_PACK, 0x9C00, 0x9D80),
+]
+
+
+def _startmigrate_seed(cell_value):
+    def seed(m):
+        sdg = m.seg_bases[_SDG]
+        if cell_value is not None:
+            cell, v = cell_value
+            m.mem.wb(sdg, 0xA4 + cell, v)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,cell_value,label", [
+    (50, 60, None, "negative-combined-cancels"),
+    (132, 166, ((2 << 4) + 10, 5), "valid-nonzero-cell-succeeds"),
+    (132, 166, ((2 << 4) + 10, 0), "valid-but-zero-cell-cancels"),
+])
+def test_startmigrate_state_diff_matches_asm(x, y, cell_value, label):
+    from simant.recovered.gameplay import start_migrate
+    results = _run_and_diff_segs(
+        7, 0x3DF2, (x, y), lambda s, p: start_migrate(p, s, x, y),
+        _MIGRATE_REGIONS, seed_fn=_startmigrate_seed(cell_value))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _MIGRATE_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def _endmigrate_seed(slot_9cee, ybucket_9d72, old_cell_val, new_cell, new_cell_val):
+    def seed(m):
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        pack_view_9cee = slot_9cee & 0xFFFF
+        m.mem.ww(pack, 0x9CEE, pack_view_9cee)
+        m.mem.ww(pack, 0x9D72, ybucket_9d72 & 0xFFFF)
+        if slot_9cee >= 0:
+            old_cell = ((slot_9cee << 4) + ybucket_9d72) & 0xFFFF
+            m.mem.wb(sdg, 0xA4 + old_cell, old_cell_val)
+        if new_cell is not None:
+            m.mem.wb(sdg, 0xA4 + new_cell, new_cell_val)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,slot_9cee,ybucket_9d72,old_cell_val,"
+                         "new_cell,new_cell_val,label", [
+    (132, 166, -1, 0, 0, None, 0, "no-migration-in-progress-noop"),
+    (50, 60, 2, 10, 20, None, 0, "destination-out-of-range-noop"),
+    (132, 166, 2, 10, 21, (2 << 4) + 10, 0, "same-cell-roundtrip"),
+    (100, 200, 5, 3, 200, ((100 + 200 - 0xEE) // 28 << 4) + (200 - 0x42) // 10,
+     10, "different-cell-halves-and-caps-check"),
+])
+def test_endmigrate_state_diff_matches_asm(x, y, slot_9cee, ybucket_9d72,
+                                           old_cell_val, new_cell,
+                                           new_cell_val, label):
+    from simant.recovered.gameplay import end_migrate
+    results = _run_and_diff_segs(
+        7, 0x3E6C, (x, y), lambda s, p: end_migrate(p, s, x, y),
+        _MIGRATE_REGIONS,
+        seed_fn=_endmigrate_seed(slot_9cee, ybucket_9d72, old_cell_val,
+                                 new_cell, new_cell_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _MIGRATE_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

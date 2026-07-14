@@ -1,5 +1,43 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.178) — /goal grind: _StartMigrate/_EndMigrate
+- RECOVERED `start_migrate`/`end_migrate` (`_StartMigrate`/
+  `_EndMigrate`, SIMANTW.SYM seg7:3DF2/3E6C, args x=[bp+6], y=[bp+8];
+  FAR return, 122/140 bytes) — a grass-patch "migration" mechanic
+  projecting screen-space `(x, y)` onto the SAME 12x16 grid
+  `get_nearby_patches` scores.
+  - `start_migrate`: `y_bucket = (y-0x42)//10`, `combined =
+    (x+y-0xEE)//28` (both C-style truncating division), stored in
+    `pack[0x9D72]`/`[0x9CEE]`. Out-of-`[0,15]`/`[0,11]` range, or a
+    zero grid cell at the computed slot, resets `pack[0x9CEE] = -1`
+    (the "no migration in progress" sentinel `end_migrate` checks).
+  - `end_migrate`: a no-op if no migration is in progress, OR if the
+    NEWLY projected `(x, y)` is out of range (no partial effect either
+    way — the origin cell is untouched on an out-of-range abort).
+    Otherwise halves the ORIGIN cell (`start_migrate`'s saved slot/
+    y-bucket pair) and adds that half onto the newly-projected
+    destination cell, capped at `0xFA`.
+  - Given two prior decimal-vs-hex transcription slips this session
+    (cont.163, cont.177), cross-checked EVERY offset against the raw
+    bytes before writing any code (disambiguating hex-digit-containing
+    or `h`-suffixed immediates, which are safe, from all-decimal-digit
+    memory displacements, which this disassembler prints in decimal)
+    — plus an extra direct instrumented single-call trace against a
+    hand-picked in-range `(x, y)` before writing the test suite, to
+    catch anything the audit missed. No offset bug this time.
+  - Still caught the SAME region-window class of bug this session has
+    now hit four times (cont.163, cont.165, cont.170 x2): the `_PACK`
+    test region started at `0x9D00`, excluding `pack[0x9CEE]` (just
+    below it) — surfaced as `end_migrate` silently leaving both grid
+    cells at their seeded values instead of mutating them. Diagnosed
+    by reproducing the exact failing scenario via a plain unwindowed
+    `ByteBackend` call, which gave the CORRECT result — proving the
+    recovered Python was right and the test region was the bug (same
+    diagnostic pattern as every prior instance of this bug class).
+- 7 cases (3 `start_migrate`, 4 `end_migrate`) — all green after the
+  one region-window fix.
+- Suite: simant 1775 (+7), full suite green.
+
 ## 2026-07-15 (cont.177) — /goal grind: _GetNearbyPatches — score 6 delta cells
 - RECOVERED `get_nearby_patches` (`_GetNearbyPatches`, SIMANTW.SYM
   seg7:3CE4, args x=[bp+6], y=[bp+8]; FAR return, 104 bytes) — a PURE
