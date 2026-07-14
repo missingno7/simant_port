@@ -567,6 +567,84 @@ def find_in_r_list(pack, simant_data_group, y: int, x: int, caste: int) -> int:
     return 0xFFFF
 
 
+def add_ant_to_a_list(pack, simant_data_group, dgroup, target0: int,
+                      target1: int, caste: int, field_c: int,
+                      field_e: int) -> None:
+    """Append a new yard ("A") ant record, unless the list is already at its
+    1000-slot (0x3E8) cap.
+
+    Recovered from `_AddAntToAList` (SIMANTW.SYM seg5:2EF0, args target0=[bp+6],
+    target1=[bp+8], caste=[bp+0xa], field_c=[bp+0xc], field_e=[bp+0xe]).  The
+    new slot is the current count (`pack[0x80F0]`, appended at the end, then
+    incremented).  Per-slot fields (SIMANT_DATA_GROUP byte arrays, matching
+    `find_in_a_list`'s [0x23A4]/[0x278E]/[0x2F62]): `[0x23A4+slot]=target0`,
+    `[0x278E+slot]=target1`, `[0x2F62+slot]=caste` (the same field
+    `find_in_a_list` checks nonzero), plus two fields with unconfirmed meaning:
+    `[0x2B78+slot]=field_c`, `[0x334C+slot]=field_e`.  Also stamps `caste` into
+    the yard life-grid (plane 0) at `dgroup[LIFE_PLANE_BASE[0] + target1 +
+    (target0 << 6)]` — target0 is the *64 (row) term here, target1 the +1 term
+    (note: the OPPOSITE assignment from `map_cell_offset`'s x/y convention;
+    this is this per-ant array's own established layout, matching
+    `kill_tail_b`'s y/x roles one-for-one).
+    """
+    count = pack.rw(0x80F0)
+    if count >= 0x3E8:
+        return
+    simant_data_group.wb(0x23A4 + count, target0 & 0xFF)
+    simant_data_group.wb(0x278E + count, target1 & 0xFF)
+    simant_data_group.wb(0x2B78 + count, field_c & 0xFF)
+    simant_data_group.wb(0x2F62 + count, caste & 0xFF)
+    simant_data_group.wb(0x334C + count, field_e & 0xFF)
+    dgroup.wb(LIFE_PLANE_BASE[0] + target1 + ((target0 & 0xFF) << 6), caste & 0xFF)
+    pack.ww(0x80F0, (count + 1) & 0xFFFF)
+
+
+def add_ant_to_b_list(pack, simant_data_group, dgroup, y: int, x: int,
+                      caste: int, field_c: int, field_e: int) -> None:
+    """Append a new black-colony ant record, unless the list is already at its
+    500-slot (0x1F4) cap — the black-colony twin of `add_ant_to_a_list`.
+
+    Recovered from `_AddAntToBList` (SIMANTW.SYM seg5:2F4A, args y=[bp+6],
+    x=[bp+8], caste=[bp+0xa], field_c=[bp+0xc], field_e=[bp+0xe]).  New slot =
+    `pack[0x99D4]` (appended, then incremented).  Per-slot fields match
+    `find_in_b_list`/`kill_tail_b`: `[0x3736+slot]=y`, `[0x392C+slot]=x`,
+    `[0x3D18+slot]=caste`, plus `[0x3B22+slot]=field_c`, `[0x3F0E+slot]=field_e`
+    (unconfirmed meaning).  Stamps `caste` into life plane 2 at
+    `dgroup[LIFE_PLANE_BASE[2] + x + (y << 6)]` (matching `kill_tail_b`'s x/y
+    roles).
+    """
+    count = pack.rw(0x99D4)
+    if count >= 0x1F4:
+        return
+    simant_data_group.wb(0x3736 + count, y & 0xFF)
+    simant_data_group.wb(0x392C + count, x & 0xFF)
+    simant_data_group.wb(0x3B22 + count, field_c & 0xFF)
+    simant_data_group.wb(0x3D18 + count, caste & 0xFF)
+    simant_data_group.wb(0x3F0E + count, field_e & 0xFF)
+    dgroup.wb(LIFE_PLANE_BASE[2] + (x & 0xFF) + ((y & 0xFF) << 6), caste & 0xFF)
+    pack.ww(0x99D4, (count + 1) & 0xFFFF)
+
+
+def add_ant_to_r_list(pack, simant_data_group, dgroup, y: int, x: int,
+                      caste: int, field_c: int, field_e: int) -> None:
+    """The red-colony twin of `add_ant_to_b_list` (500-slot cap; matching
+    `find_in_r_list`/`kill_tail_r`'s arrays and life plane 3).
+
+    Recovered from `_AddAntToRList` (SIMANTW.SYM seg5:2FA4, args y=[bp+6],
+    x=[bp+8], caste=[bp+0xa], field_c=[bp+0xc], field_e=[bp+0xe]).
+    """
+    count = pack.rw(0x72CC)
+    if count >= 0x1F4:
+        return
+    simant_data_group.wb(0x4104 + count, y & 0xFF)
+    simant_data_group.wb(0x42FA + count, x & 0xFF)
+    simant_data_group.wb(0x44F0 + count, field_c & 0xFF)
+    simant_data_group.wb(0x46E6 + count, caste & 0xFF)
+    simant_data_group.wb(0x48DC + count, field_e & 0xFF)
+    dgroup.wb(LIFE_PLANE_BASE[3] + (x & 0xFF) + ((y & 0xFF) << 6), caste & 0xFF)
+    pack.ww(0x72CC, (count + 1) & 0xFFFF)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 

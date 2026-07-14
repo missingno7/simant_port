@@ -1,6 +1,27 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.75) — /goal grind: _FindInAList/BList/RList (pure predicates)
+## 2026-07-14 (cont.76) — /goal grind: _AddAntToAList/BList/RList (list insert)
+- RECOVERED the insert side of the ant lists (seg5:2EF0/2F4A/2FA4): append a new
+  ant record at the current count (capped at 1000/A, 500/B, 500/R — jge skip, a
+  full list is a silent no-op), writing the SAME per-ant arrays discovered
+  across kill_tail_*/find_in_*_list, PLUS TWO NEW per-ant fields each (0x2B78/
+  0x334C for A, 0x3B22/0x3F0E for B, 0x44F0/0x48DC for R — meaning not yet
+  confirmed, documented honestly as such).  Also stamps the caste value into the
+  ant's LIFE-GRID cell (plane 0/2/3 matching A/B/R) — the SAME arithmetic
+  kill_tail_[br] uses in reverse (add vs clear).  Increments the count last.
+- Confirmed the per-ant array's own x/y-role convention (the *64 term vs the +1
+  term) is CONSISTENT across all three lists and matches find_in_*_list's arg
+  order exactly (arg1=[bp+6] is always the *64 term, arg2=[bp+8] the +1 term) —
+  cross-checked against kill_tail_b's naming, which uses the SAME (if
+  map_cell_offset-inverted) convention; no naming bug, just a locally-consistent
+  scheme distinct from the map grid's own x=*64/y=+1 convention.
+  18 state-diff cases green (including the exact list-full boundary: count ==
+  cap-1 succeeds, count == cap and cap+1 both no-op).
+- Suite: simant 824.  Continuing per /goal — the ant-list CRUD is now largely
+  recovered (find + add); next: survey what's left in the leaf queue (the
+  DecTSmell/DropFoodB/DropFoodR family, or move up a tier toward
+  _DoAntSim/_DoForageAnt now that most of their leaf dependencies exist).
+
 - RECOVERED the three ant-list search predicates (seg5:2C42/2C86/2CCE): search
   the yard/black/red ant lists BACKWARD (highest slot first — last-added wins on
   a tie) for a slot whose recorded fields match, using the SAME per-ant arrays

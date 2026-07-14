@@ -524,6 +524,70 @@ def test_findinlist_matches_asm(routine, off, count_off, y_off, x_off, c_off,
     assert ax == (expect & 0xFFFF), f"{routine}: asm={ax:#06x} rec={expect:#06x}"
 
 
+# ---- _AddAntToAList/BList/RList (seg5:2EF0/2F4A/2FA4) — list insert --------
+_YARD_SPAN = 0x2000
+_ADDANTA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x68E8, 0x68E8 + _YARD_SPAN),   # life plane 0
+    (_SDG, 0x2300, 0x3800),           # covers 0x23A4/278E/2B78/2F62/334C+slot
+    (_PACK, 0x80E0, 0x8100),          # covers [0x80F0] (count)
+]
+_ADDANTB_REGIONS = [
+    (hooks.DG_SEG_INDEX, _LIFE_NEST2, _LIFE_NEST2 + _NEST_SPAN),
+    (_SDG, 0x3700, 0x4200),           # covers 0x3736/392C/3B22/3D18/3F0E+slot
+    (_PACK, 0x9900, 0x9A00),          # covers [0x99D4] (count)
+]
+_ADDANTR_REGIONS = [
+    (hooks.DG_SEG_INDEX, _LIFE_NEST3, _LIFE_NEST3 + _NEST_SPAN),
+    (_SDG, 0x4100, 0x4C00),           # covers 0x4104/42FA/44F0/46E6/48DC+slot
+    (_PACK, 0x7280, 0x7300),          # covers [0x72CC] (count)
+]
+
+
+@pytest.mark.parametrize("count", [0, 1, 5, 0x3E7, 0x3E8, 0x3E9])
+def test_addanttoalist_state_diff_matches_asm(count):
+    from simant.recovered.gameplay import add_ant_to_a_list
+    t0, t1, caste, fc, fe = 5, 9, 3, 7, 11
+    m = runtime.create_machine()
+    m.mem.ww(m.seg_bases[_PACK], 0x80F0, count)
+
+    results = _run_and_diff_segs(
+        5, 0x2EF0, (t0, t1, caste, fc, fe),
+        lambda d, s, p: add_ant_to_a_list(p, s, d, t0, t1, caste, fc, fe),
+        _ADDANTA_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTA_REGIONS):
+        assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("count", [0, 1, 5, 0x1F3, 0x1F4, 0x1F5])
+def test_addanttoblist_state_diff_matches_asm(count):
+    from simant.recovered.gameplay import add_ant_to_b_list
+    y, x, caste, fc, fe = 40, 20, 4, 8, 12
+    m = runtime.create_machine()
+    m.mem.ww(m.seg_bases[_PACK], 0x99D4, count)
+
+    results = _run_and_diff_segs(
+        5, 0x2F4A, (y, x, caste, fc, fe),
+        lambda d, s, p: add_ant_to_b_list(p, s, d, y, x, caste, fc, fe),
+        _ADDANTB_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTB_REGIONS):
+        assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("count", [0, 1, 5, 0x1F3, 0x1F4, 0x1F5])
+def test_addanttorlist_state_diff_matches_asm(count):
+    from simant.recovered.gameplay import add_ant_to_r_list
+    y, x, caste, fc, fe = 50, 30, 6, 10, 14
+    m = runtime.create_machine()
+    m.mem.ww(m.seg_bases[_PACK], 0x72CC, count)
+
+    results = _run_and_diff_segs(
+        5, 0x2FA4, (y, x, caste, fc, fe),
+        lambda d, s, p: add_ant_to_r_list(p, s, d, y, x, caste, fc, fe),
+        _ADDANTR_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _ADDANTR_REGIONS):
+        assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 def _sx(v):
     return v - 0x10000 if v & 0x8000 else v
 
