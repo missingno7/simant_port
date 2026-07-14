@@ -2899,6 +2899,77 @@ def get_rand_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int) -> 
     return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + roll))
 
 
+def get_defend_dir(dgroup, simant_data_group, pack, x: int, y: int,
+                    caste_low3: int) -> int:
+    """Pick a "defend the colony" direction — behavior depends entirely on
+    `dgroup[0xCE80]`, a global game-mode selector: mode 2/3 just delegate
+    wholesale to `get_nest_dir` (colony B/R); mode 1 steers toward a fixed
+    attack-marker point, either directly or at random once close enough;
+    any other mode is a no-op that echoes `caste_low3` back as if it were
+    already a direction.
+
+    Recovered from `_GetDefendDir` (SIMTWO.SYM seg7:1026, args x=[bp+6],
+    y=[bp+8], caste_low3=[bp+10]; FAR return).
+
+    Yard-edge handling is `_Bounce`'s formula compiled inline again (same
+    as `_GetNestDir`/`_GetAlarmDir`).
+
+    Strictly interior: mode 2 calls `get_nest_dir(..., colony_flag=0x00)`;
+    mode 3 calls `get_nest_dir(..., colony_flag=0x80)` — both are near-
+    calls to `_GetNestDir`'s own address in the original ASM (this project's
+    established near-call-to-far-retf bridge pattern), ported as ordinary
+    Python calls. Any mode other than 1/2/3 returns `caste_low3` unchanged
+    (a defensive no-op, presumably unreachable during normal play).
+
+    Mode 1: if `pack[0x72EC] == 1`, calls `get_dir` toward a DGROUP-resident
+    attack marker (`dgroup[0xAC7C]`/`[0xAC7E]`, each `>> 4` — a coarser
+    coordinate system scaled down to the map grid) and uses that direction
+    (or `caste_low3` if already there). Otherwise, checks the squared
+    distance (`get_dis`, truncated to a signed word, matching the ASM's own
+    `mov si,ax` truncation) from `(x, y)` to a PACK-resident target
+    (`pack[0x9FE4]`/`[0x9FEA]`) against half of `pack[0x9E7A]`: close enough
+    picks a `_SRand1(8)`-random direction; too far calls `get_dir` toward
+    that same target directly (no RNG on this path).
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    def use_dir(dir_result: int) -> int:
+        if dir_result == 0:
+            return caste_low3
+        return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + (dir_result - 1)))
+
+    edge = bounce(dgroup, x, y)
+    if edge != 0:
+        return (edge - 1) & 7
+
+    mode = dgroup.rw(0xCE80)
+    if mode == 2:
+        return get_nest_dir(dgroup, simant_data_group, x, y, caste_low3, 0x00)
+    if mode == 3:
+        return get_nest_dir(dgroup, simant_data_group, x, y, caste_low3, 0x80)
+    if mode != 1:
+        return caste_low3
+
+    if pack.rw(0x72EC) == 1:
+        target_x = _sx16(dgroup.rw(0xAC7C)) >> 4
+        target_y = _sx16(dgroup.rw(0xAC7E)) >> 4
+        return use_dir(get_dir(x, y, target_x, target_y))
+
+    target_x = pack.rw(0x9FE4)
+    target_y = pack.rw(0x9FEA)
+    threshold_half = _sx16(pack.rw(0x9E7A)) >> 1
+    dist = _sx16(get_dis(x, y, target_x, target_y) & 0xFFFF)
+    if threshold_half >= dist:
+        seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 8)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return use_dir(roll + 1)
+    return use_dir(get_dir(x, y, target_x, target_y))
+
+
 def do_dig_out_ant_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of a yard ant "digging out" — aging/mode-transition,
     or a move (with a natural-decay kill chance) toward a `_Bounce`-biased or

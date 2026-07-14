@@ -1,5 +1,39 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.111) — /goal grind: _GetDefendDir — game-mode-switched defend direction
+- RECOVERED `get_defend_dir` (`_GetDefendDir`, seg7:1026, FAR return, args
+  x/y/caste_low3, plus `pack`) — fifth of the seg7 `_Get*Dir` family, and
+  the first whose behavior is entirely gated on a global game-mode selector
+  (`dgroup[0xCE80]`), not just colony/scent state. Independently
+  disassembled the full 366-byte body.
+- Yard-edge handling: `_Bounce`'s formula compiled inline (as in
+  `_GetNestDir`/`_GetAlarmDir`/`_GetRandDir`), checked BEFORE the mode
+  dispatch — an on-edge ant returns via that path regardless of mode.
+- Mode 2/3: delegate WHOLESALE to `_GetNestDir` (colony B/R respectively)
+  via a near-call to its own address in the original ASM — this project's
+  established near-call-to-far-retf bridge pattern, ported as an ordinary
+  call to the already-recovered `get_nest_dir` (which redundantly re-runs
+  its own edge check on the now-known-interior position — harmless, since
+  interior `_Bounce` costs no RNG, and faithfully mirrors what the ASM
+  itself does). Any OTHER mode (not 1/2/3) is a no-op that echoes
+  `caste_low3` back as if it were already a direction — presumably dead
+  code, unreachable during normal play.
+- Mode 1: if `pack[0x72EC] == 1`, steers via the already-recovered `get_dir`
+  toward a DGROUP-resident attack marker (`dgroup[0xAC7C]`/`[0xAC7E]`,
+  each `>> 4` — a finer coordinate system scaled down to the map grid).
+  Otherwise, checks the squared distance (`get_dis`, truncated to a
+  SIGNED word exactly as the ASM's own `mov si,ax` does) from the ant to a
+  PACK-resident target (`pack[0x9FE4]`/`[0x9FEA]`) against half of
+  `pack[0x9E7A]`: close enough picks a `_SRand1(8)`-random direction
+  (genuinely random, unlike the other family members' `_SRand8()`); too
+  far calls `get_dir` toward that same target directly — no RNG on that
+  path, an asymmetry preserved exactly.
+- 8 cases (edge, both mode-2/3 delegations, both other-mode no-ops, the
+  mode-1 attack-marker path, and both mode-1 distance-threshold branches)
+  — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1257 (+8). Five of six seg7 `_Get*Dir` routines now
+  recovered; only `_GetRedDefendDir` remains.
+
 ## 2026-07-14 (cont.110) — /goal grind: _GetRandDir — purely random direction
 - RECOVERED `get_rand_dir` (`_GetRandDir`, seg7:0F72, FAR return, args
   x/y/caste_low3) — fourth of the seg7 `_Get*Dir` family, and the simplest

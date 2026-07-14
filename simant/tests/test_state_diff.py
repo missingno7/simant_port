@@ -1453,6 +1453,97 @@ def test_getranddir_matches_asm(x, y, caste_low3, seed_val):
         f"x={x:#x} y={y:#x} seed={seed_val:#x}: seed mismatch")
 
 
+# ---- _GetDefendDir (seg7:1026) — game-mode-switched defend direction ------
+# Modes 2/3 delegate wholesale to `_GetNestDir` (a near-call in the ASM);
+# mode 1 steers toward a fixed attack marker; any other mode is a no-op.
+def _getdefenddir_seed(mode, *, flag=0, ac7c=0, ac7e=0, target_x=0,
+                       target_y=0, threshold=0, nest_own_scent=0,
+                       nest_neighbor_dir=None, nest_neighbor_scent=0,
+                       colony_flag=0x00):
+    def seed(m):
+        dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
+                         m.seg_bases[_SDG])
+        m.mem.ww(dg, 0xCE80, mode)
+        m.mem.ww(pack, 0x72EC, flag)
+        m.mem.ww(dg, 0xAC7C, ac7c & 0xFFFF)
+        m.mem.ww(dg, 0xAC7E, ac7e & 0xFFFF)
+        m.mem.ww(pack, 0x9FE4, target_x & 0xFFFF)
+        m.mem.ww(pack, 0x9FEA, target_y & 0xFFFF)
+        m.mem.ww(pack, 0x9E7A, threshold & 0xFFFF)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        _getnestdir_seed(nest_own_scent, nest_neighbor_dir,
+                         nest_neighbor_scent, colony_flag)(m)
+    return seed
+
+
+def _run_getdefenddir(x, y, caste_low3, seed_val, seeder):
+    from simant.recovered.gameplay import get_defend_dir
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+        seeder(m)
+
+    ax, m = _run_and_get_ax(7, 0x1026, (x, y, caste_low3), seed_fn=seed)
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    asm_seed_after = m.mem.rw(dg, 0xCBF2)
+
+    buf = bytearray(m.mem.block(dg, 0, 0x10000))
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg = m.seg_bases[_SDG]
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    pack = m.seg_bases[_PACK]
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    rec_ax = get_defend_dir(dgroup_view, sdg_view, pack_view, x, y, caste_low3)
+
+    assert ax == (rec_ax & 0xFFFF), f"x={x:#x} y={y:#x} seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, (
+        f"x={x:#x} y={y:#x} seed={seed_val:#x}: seed mismatch")
+
+
+def test_getdefenddir_edge_matches_asm():
+    _run_getdefenddir(0x00, 0x00, 5, 0x1234, _getdefenddir_seed(1))   # TL corner
+
+
+def test_getdefenddir_mode2_delegates_to_getnestdir_matches_asm():
+    _run_getdefenddir(20, 20, 5, 0x1234,
+                      _getdefenddir_seed(2, target_x=20, target_y=20,
+                                         colony_flag=0x00))
+
+
+def test_getdefenddir_mode3_delegates_to_getnestdir_matches_asm():
+    _run_getdefenddir(20, 20, 5, 0x1234,
+                      _getdefenddir_seed(3, target_x=20, target_y=20,
+                                         colony_flag=0x80))
+
+
+@pytest.mark.parametrize("mode", [0, 4])
+def test_getdefenddir_othermode_echoes_caste_matches_asm(mode):
+    _run_getdefenddir(20, 20, 5, 0x1234, _getdefenddir_seed(mode))
+
+
+def test_getdefenddir_mode1_flag_matches_asm():
+    _run_getdefenddir(20, 20, 5, 0x1234,
+                      _getdefenddir_seed(1, flag=1, ac7c=25 << 4, ac7e=20 << 4))
+
+
+def test_getdefenddir_mode1_close_uses_random_matches_asm():
+    _run_getdefenddir(20, 20, 5, 0x1234,
+                      _getdefenddir_seed(1, flag=0, target_x=20, target_y=20,
+                                         threshold=1000))
+
+
+def test_getdefenddir_mode1_far_uses_getdir_matches_asm():
+    _run_getdefenddir(20, 20, 5, 0x1234,
+                      _getdefenddir_seed(1, flag=0, target_x=25, target_y=20,
+                                         threshold=0))
+
+
 # ---- _DoDigOutAntA (seg6:1480) — second top-level `_Do*Ant*` routine -------
 # NEAR call/return, composes `_Bounce`, `_GetNewMode`, and (on a successful
 # move with a nonzero carried-dirt counter) `_JamScentBN`/`_JamScentRN`.
