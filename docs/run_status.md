@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.107) — /goal grind: _GetForageDir — TRAIL-scent gradient direction
+- RECOVERED `get_forage_dir` (`_GetForageDir`, seg7:0AB0, FAR return, args
+  x/y/caste_low3/colony_flag) — first of the seg7 `_Get*Dir` family.
+  Independently disassembled the full 384-byte body; its yard-edge handling
+  superficially resembles `_Bounce` but is a genuinely DIFFERENT, simpler
+  scheme (confirmed by tracing every branch, not assumed from the visual
+  similarity): all four corners return a FIXED constant with NO RNG call at
+  all (1/3/5/7), the left/top/right general edges roll `_SRand1(3)` plus the
+  adjacent corner's offset, and the general BOTTOM edge alone uses a
+  different transform, `(_SRand1(3) - 1) & 7`, not `+7`.
+- Strictly interior: scans the 8 compass neighbors of the half-res
+  `(x>>1, y>>1)` cell on the colony's TRAIL scent grid (the SAME grids
+  `jam_scent_bt`/`rt` write, confirmed via the same selector-verification
+  discipline as every prior slice) for the highest-scent direction, falling
+  back to the `_DoDigOutAntA`-style `caste_low3`-indexed mode table when no
+  neighbor beats zero, or returning a `-1` sentinel when the ant's own cell
+  already out-scents every neighbor.
+- Pure aside from the SRand seed (like `_Bounce`): tested with the same
+  fresh-view-seeded-PRE-state pattern, extended to a 2-segment (DGROUP +
+  SDG) version since this routine ALSO reads SDG — SDG is untouched by the
+  routine itself, so its post-execution state was safe to reuse directly
+  for the recovered call (no separate "before" SDG snapshot needed, unlike
+  the seed word).
+- 8 cases (2 corners, general-left-edge, general-bottom-edge's special
+  formula, gradient-found for both colonies, own-cell-already-best, and
+  no-gradient-anywhere) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1236 (+8).
+
 ## 2026-07-14 (cont.106) — /goal grind: _GetNewModeB / _GetNewModeR — thin per-colony wrappers
 - RECOVERED `get_new_mode_b`/`get_new_mode_r` (`_GetNewModeB`/`_GetNewModeR`,
   seg7:09D0/0A50, FAR return, arg: sub). Found while scoping the seg7

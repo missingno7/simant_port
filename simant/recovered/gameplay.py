@@ -2652,6 +2652,91 @@ def bounce(dgroup, x: int, y: int) -> int:
     return 0
 
 
+def get_forage_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int,
+                    colony_flag: int) -> int:
+    """Pick a foraging direction: follow the gradient of the caller's colony
+    TRAIL scent grid around `(x, y)`'s half-res cell, or handle the yard
+    edge with a simpler (non-`_Bounce`) scheme.
+
+    Recovered from `_GetForageDir` (SIMTWO.SYM seg7:0AB0, args x=[bp+6],
+    y=[bp+8], caste_low3=[bp+10], colony_flag=[bp+12]; FAR return). The edge
+    handling looks like `_Bounce` but is NOT it — a genuinely different,
+    simpler scheme independently disassembled and confirmed distinct: all
+    four corners return a FIXED constant with no RNG at all (left=1, top=3,
+    TL=3/BL=1/TR=5/BR=7, no per-corner jitter), the three "left/top/right"
+    general edges roll `_SRand1(3)` plus the same offset as the adjacent
+    corner, and the general BOTTOM edge alone uses a different
+    transform, `(_SRand1(3) - 1) & 7`, not `+7`.
+
+    Strictly interior: scans the 8 compass neighbors of the half-res cell
+    `(x >> 1, y >> 1)` on the colony's TRAIL grid (`colony_flag & 0x80` picks
+    red `[0x7AD2..)` vs black `[0x6AD2..)`, the SAME grids `jam_scent_bt`/
+    `rt` write), tracking the neighbor with the highest scent (ties keep the
+    lowest index, pre-seeded with a random `_SRand8()` roll so an
+    all-tied-at-zero scan still picks *some* index). If no neighbor beats
+    zero, the direction comes from the same `caste_low3`-indexed mode table
+    `_DoDigOutAntA` uses (`simant_data_group[0x24 + (caste_low3 << 3) + i]`)
+    at a fresh random roll. Otherwise: if the ant's OWN cell already out-
+    scents every neighbor, returns `-1` (a "no better direction, stay put"
+    sentinel); else the mode table is read again, at the winning neighbor's
+    index.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    def roll3() -> int:
+        seed, r = srand1(dgroup.rw(SRAND_SEED_OFF), 3)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return r
+
+    def roll8() -> int:
+        seed, r = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return r
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    if x == 0:
+        if y == 0:
+            return 3
+        if y == 0x3F:
+            return 1
+        return roll3() + 1
+    if y == 0:
+        if x == 0x7F:
+            return 5
+        return roll3() + 3
+    if x == 0x7F:
+        if y == 0x3F:
+            return 7
+        return roll3() + 5
+    if y == 0x3F:
+        return (roll3() - 1) & 7
+
+    hx, hy = x >> 1, y >> 1
+    trail_base = 0x7AD2 if colony_flag & 0x80 else 0x6AD2
+    own_scent = simant_data_group.rb(trail_base + (hx << 5) + hy)
+
+    best_dir = roll8()
+    best_val = 0
+    for i in range(8):
+        dx = sx8(simant_data_group.rb(i))
+        dy = sx8(simant_data_group.rb(8 + i))
+        nx = (hx + dx) & 0x3F
+        ny = (hy + dy) & 0x1F
+        val = simant_data_group.rb(trail_base + (nx << 5) + ny)
+        if val > best_val:
+            best_val = val
+            best_dir = i
+
+    if best_val <= 0:
+        return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + roll8()))
+    if own_scent > best_val:
+        return -1
+    return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + best_dir))
+
+
 def do_dig_out_ant_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of a yard ant "digging out" — aging/mode-transition,
     or a move (with a natural-decay kill chance) toward a `_Bounce`-biased or
