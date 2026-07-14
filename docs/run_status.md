@@ -1,5 +1,32 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.139) — /goal grind: _UnRecruitRed/_RecruitRed — task recruitment flag
+- DEFERRED `_DropFoodA`/`_FoodFall` (seg5:0D86/0EAA) after partial
+  disassembly: a cascading food-pile-growth routine with a genuine
+  outward search over a 4-direction table (`dgroup[0x22BE..)`/
+  `[0x22C2..)`) driven by a PACK-resident "current search direction"
+  index (`pack[0x9C66]`, set by some OTHER unrecovered caller, never
+  written here) — and the ASM zero-extends (not sign-extends) the signed
+  delta bytes before scaling one of them by 64, which reads like either
+  a genuine quirk or a subtlety I haven't nailed down yet. Bigger and
+  less certain than its size estimate suggested; deferred rather than
+  guess, same call as `_CreateNewHole` earlier this session.
+- RECOVERED `un_recruit_red`/`recruit_red` instead (`_UnRecruitRed`/
+  `_RecruitRed`, seg7:08DA/0866) — the companion pair `_RecruitRed(n)`
+  scans the yard A-list backward, marking up to `n` red ants (caste
+  `>0x7F`, whose caste's `(caste&0x78)>>3` "mode" sub-field is `2` or
+  `6`, and whose current `field_c` isn't already `0x13` or `6`) as
+  recruited (`field_c=6`, `field_e=0`); `_UnRecruitRed()` (no args)
+  clears that same `field_c==6` marker off every red ant. Confirmed via
+  `symbols.nearest_symbol` that the address range immediately after
+  `_UnRecruitRed` is actually `_GetNewMode`/`_GetNewModeB`/`_GetNewModeR`
+  (already recovered) rather than a third undiscovered routine — caught
+  before wasting a disassembly pass re-deriving already-done work.
+- 12 cases (list-scan edge cases: mode 2, mode 6, already-recruited
+  skip, wrong-mode skip, black-ant skip, count-exhausted, count=0
+  no-op, empty list) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1473 (+12), full suite green.
+
 ## 2026-07-14 (cont.138) — /goal grind: _FindAntIndex — colony-dispatching list search
 - RECOVERED `find_ant_index` (`_FindAntIndex`, seg5:59FC, args
   colony=[bp+6], field0=[bp+8], field1=[bp+10], caste=[bp+0xc], FAR

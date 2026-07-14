@@ -675,6 +675,70 @@ def test_addredants_state_diff_matches_asm(count, seed_val, alist_count):
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _UnRecruitRed/_RecruitRed (seg7:08DA/0866) — A-list "recruited" flag -
+_RECRUITRED_REGIONS = [
+    (_PACK, 0x80E0, 0x8100),   # covers [0x80F0] (A-list count)
+    (_SDG, 0x2300, 0x3800),    # covers 0x2B78/2F62/334C+slot
+]
+
+
+def _recruitred_seed(slots):
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x80F0, len(slots))
+        for slot, (caste, field_c) in enumerate(slots):
+            m.mem.wb(sdg, 0x2F62 + slot, caste)
+            m.mem.wb(sdg, 0x2B78 + slot, field_c)
+            m.mem.wb(sdg, 0x334C + slot, 0xAA)   # sentinel to verify clearing
+    return seed
+
+
+@pytest.mark.parametrize("slots", [
+    [(0x82, 6), (0x86, 6), (0x03, 6)],   # 2 red-recruited (cleared), 1 black (untouched)
+    [(0x82, 0), (0x00, 6)],              # red not-recruited (no-op), empty slot (no-op)
+    [],                                    # empty list
+])
+def test_unrecruitred_state_diff_matches_asm(slots):
+    from simant.recovered.gameplay import un_recruit_red
+    results = _run_and_diff_segs(
+        7, 0x8DA, (),
+        lambda p, s: un_recruit_red(p, s),
+        _RECRUITRED_REGIONS, seed_fn=_recruitred_seed(slots))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _RECRUITRED_REGIONS):
+        assert asm_after == rec_after, f"slots={slots} {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("count,slots", [
+    # mode 2 (caste&0x78>>3==2 -> caste bits 0x10) red ant, recruitable -> 1 recruit
+    (1, [(0x90, 0)]),
+    # mode 6 (caste bits 0x30) red ant, recruitable -> 1 recruit
+    (1, [(0xB0, 0)]),
+    # already field_c==0x13 -> skipped, second slot (mode 2) recruited instead
+    (1, [(0x90, 0x13), (0x90, 0)]),
+    # already field_c==6 -> skipped
+    (1, [(0x90, 6)]),
+    # mode not 2/6 -> skipped entirely
+    (1, [(0x88, 0)]),
+    # black ant (caste<=0x7F) -> skipped
+    (1, [(0x10, 0)]),
+    # count exhausted after 1 -> second eligible slot untouched
+    (1, [(0x90, 0), (0x90, 0)]),
+    # count=0 -> pure no-op even though eligible slots exist
+    (0, [(0x90, 0)]),
+    # empty list
+    (1, []),
+])
+def test_recruitred_state_diff_matches_asm(count, slots):
+    from simant.recovered.gameplay import recruit_red
+    results = _run_and_diff_segs(
+        7, 0x866, (count,),
+        lambda p, s: recruit_red(p, s, count),
+        _RECRUITRED_REGIONS, seed_fn=_recruitred_seed(slots))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _RECRUITRED_REGIONS):
+        assert asm_after == rec_after, (
+            f"count={count} slots={slots} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _IsItFoodAt (seg5:5F7E) — bounds-checked (plane,x,y) food predicate --
 @pytest.mark.parametrize("plane,x,y,tile,inside", [
     (0, 10, 20, 0x18, True),     # nest food range via is_it_food

@@ -2570,6 +2570,57 @@ def add_red_ants(dgroup, simant_data_group, pack, count: int) -> None:
     _add_ants(dgroup, simant_data_group, pack, count, range(0x7F, 0x3F, -1), 0x80)
 
 
+def un_recruit_red(pack, simant_data_group) -> None:
+    """Clear the "recruited" flag off every red yard ant.
+
+    Recovered from `_UnRecruitRed` (SIMANTW.SYM seg7:08DA, NO args; FAR
+    return).  Scans the yard A-list backward; for every red-colony ant
+    (`caste > 0x7F`) whose `field_c` (`simant_data_group[0x2B78+slot]`)
+    is exactly `6` (the "recruited" marker `recruit_red` stamps), clears
+    it back to `0`.
+    """
+    count = pack.rw(0x80F0)
+    for slot in range(count - 1, -1, -1):
+        caste = simant_data_group.rb(0x2F62 + slot)
+        if caste == 0 or caste <= 0x7F:
+            continue
+        if simant_data_group.rb(0x2B78 + slot) == 6:
+            simant_data_group.wb(0x2B78 + slot, 0)
+
+
+def recruit_red(pack, simant_data_group, count: int) -> None:
+    """Mark up to `count` red yard ants as "recruited" for a task.
+
+    Recovered from `_RecruitRed` (SIMANTW.SYM seg7:0866, arg count=[bp+6];
+    FAR return; the companion `_UnRecruitRed` undoes this).  Scans the
+    yard A-list backward; a slot qualifies when its caste is red
+    (`>0x7F`), its caste's `(caste & 0x78) >> 3` "mode" sub-field is `2`
+    or `6`, and its CURRENT `field_c` is neither `0x13` nor `6` (not
+    already recruited/reserved).  Each qualifying slot gets `field_c=6`
+    and `field_e` (`simant_data_group[0x334C+slot]`) cleared, counting
+    down; stops as soon as `count` reaches 0 or the list is exhausted —
+    the check happens BEFORE every slot, including the first, so
+    `count<=0` is a pure no-op.
+    """
+    list_count = pack.rw(0x80F0)
+    remaining = count
+    for slot in range(list_count - 1, -1, -1):
+        if remaining <= 0:
+            break
+        caste = simant_data_group.rb(0x2F62 + slot)
+        if caste == 0 or caste <= 0x7F:
+            continue
+        field_c = simant_data_group.rb(0x2B78 + slot)
+        mode = (caste & 0x78) >> 3
+        if mode not in (2, 6):
+            continue
+        if field_c in (0x13, 6):
+            continue
+        simant_data_group.wb(0x2B78 + slot, 6)
+        simant_data_group.wb(0x334C + slot, 0)
+        remaining -= 1
+
+
 HOLE_EDGE_TILES = (0x19, 0x1A, 0x1C, 0x1F, 0x1E, 0x1D, 0x1B, 0x18)  # dgroup[0x230C..)
 
 
