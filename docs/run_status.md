@@ -1,5 +1,27 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.140) — /goal grind: _SFoundAnt — locate an ant near the attack marker
+- RECOVERED `s_found_ant` (`_SFoundAnt`, seg5:53F6, NO args, FAR return) —
+  the routine `_FindAntIndex` unblocked. Locates an ant near the current
+  attack-marker target (`dgroup[0xAC7C]`/`[0xAC7E]`, the SAME fixed-point
+  `>>4` target `get_defend_dir`/`scan_for_ants` already use), dispatched
+  on `pack[0x7D60]`'s exact value:
+  - `==7`: searches the yard A-list backward for an ant within squared
+    distance `0x320` of the target; on no match, falls back to a fixed
+    marker position gated on `pack[0x9FE8]==0` AND `dgroup[0xCE80]==1`.
+  - anything else: walks up to 20 steps outward along a FIXED compass
+    direction (`dgroup[0xAC80]` indexes the SAME compass table
+    `sim_queen_a`/`make_blk_queen` use), requiring `is_valid_a` and range
+    at each step; an occupied cell either aborts on the player's yellow
+    ant or resolves via the just-recovered `find_ant_index`.
+  Composes 4 already-recovered routines (`get_dis`, `is_valid_a`,
+  `is_yellow_ant`, `find_ant_index`) with no new primitives needed.
+- 10 cases (5 per branch, covering every early-return path in both) —
+  ALL GREEN ON THE FIRST RUN despite the routine's size — the
+  compositional approach (reuse already-verified primitives, trust their
+  own proofs) kept this tractable where `_DropFoodA` wasn't.
+- Suite: simant 1483 (+10), full suite green.
+
 ## 2026-07-14 (cont.139) — /goal grind: _UnRecruitRed/_RecruitRed — task recruitment flag
 - DEFERRED `_DropFoodA`/`_FoodFall` (seg5:0D86/0EAA) after partial
   disassembly: a cascading food-pile-growth routine with a genuine

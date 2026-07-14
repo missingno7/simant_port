@@ -3327,6 +3327,93 @@ def test_findantindex_matches_asm(colony, count_off, f0_off, f1_off, c_off,
     assert ax == (expect & 0xFFFF), f"colony={colony}: asm={ax:#06x} rec={expect:#06x}"
 
 
+# ---- _SFoundAnt (seg5:53F6) — locate an ant near the attack-marker target -
+_SFOUNDANT_TARGET = (32, 20)   # (target_x, target_y), post >>4
+
+
+def _sfoundant7_seed(alist_slots, pack9fe8, ce80, marker_x, marker_y):
+    def seed(m):
+        dg, pack, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK], m.seg_bases[_SDG]
+        tx, ty = _SFOUNDANT_TARGET
+        m.mem.ww(dg, 0xAC7C, (tx << 4) & 0xFFFF)
+        m.mem.ww(dg, 0xAC7E, (ty << 4) & 0xFFFF)
+        m.mem.ww(pack, 0x7D60, 7)
+        m.mem.ww(pack, 0x80F0, len(alist_slots))
+        for slot, (sx, sy, caste) in enumerate(alist_slots):
+            m.mem.wb(sdg, 0x23A4 + slot, sx)
+            m.mem.wb(sdg, 0x278E + slot, sy)
+            m.mem.wb(sdg, 0x2F62 + slot, caste)
+        m.mem.ww(pack, 0x9FE8, pack9fe8)
+        m.mem.ww(dg, 0xCE80, ce80)
+        m.mem.ww(dg, 0xCD88, marker_x)
+        m.mem.ww(dg, 0xCE7E, marker_y)
+    return seed
+
+
+@pytest.mark.parametrize("alist_slots,pack9fe8,ce80,marker_x,marker_y,label", [
+    ([(33, 21, 0x50)], 0, 1, 200, 200, "alist-match"),   # A-list ant within range -> its slot
+    ([], 0, 1, 32, 20, "marker-found"),                   # empty list, marker matches exactly
+    ([], 1, 1, 32, 20, "9fe8-blocks"),                    # pack[9FE8]!=0 -> skip marker check
+    ([], 0, 2, 32, 20, "ce80-blocks"),                    # dgroup[CE80]!=1 -> skip marker check
+    ([], 0, 1, 200, 200, "marker-too-far"),                # marker out of range
+])
+def test_sfoundant_mode7_matches_asm(alist_slots, pack9fe8, ce80, marker_x, marker_y, label):
+    from simant.recovered.gameplay import s_found_ant
+    ax, m = _run_and_get_ax(
+        5, 0x53F6, (),
+        seed_fn=_sfoundant7_seed(alist_slots, pack9fe8, ce80, marker_x, marker_y))
+    dg, pack, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK], m.seg_bases[_SDG]
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    expect = s_found_ant(dgroup_view, sdg_view, pack_view)
+    assert ax == (expect & 0xFFFF), f"{label}: asm={ax:#06x} rec={expect:#06x}"
+
+
+def _sfoundant_walk_seed(target_x, target_y, dir_idx, life_cells, alist_slots):
+    def seed(m):
+        dg, pack, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xAC7C, (target_x << 4) & 0xFFFF)
+        m.mem.ww(dg, 0xAC7E, (target_y << 4) & 0xFFFF)
+        m.mem.ww(pack, 0x7D60, 0)
+        m.mem.ww(dg, 0xAC80, dir_idx)
+        # clear a wide strip along both walk directions so the default 20-step
+        # exhaustion path is deterministic, then apply the specific overrides
+        for dx in range(-25, 26):
+            cx = target_x + dx
+            if 0 <= cx <= 0x7F:
+                m.mem.wb(dg, 0x68E8 + (cx << 6) + target_y, 0)
+        for (cx, cy), tile in life_cells.items():
+            m.mem.wb(dg, 0x68E8 + (cx << 6) + cy, tile)
+        m.mem.ww(pack, 0x80F0, len(alist_slots))
+        for slot, (sx, sy, caste) in enumerate(alist_slots):
+            m.mem.wb(sdg, 0x23A4 + slot, sx)
+            m.mem.wb(sdg, 0x278E + slot, sy)
+            m.mem.wb(sdg, 0x2F62 + slot, caste)
+    return seed
+
+
+@pytest.mark.parametrize("target_x,target_y,dir_idx,life_cells,alist_slots,label", [
+    (10, 20, 2, {}, [], "exhausted-all-empty"),
+    (10, 20, 2, {(11, 20): 0xFE}, [], "yellow-ant-aborts"),
+    (10, 20, 2, {(11, 20): 0x50}, [(11, 20, 0x50)], "alist-match-mid-walk"),
+    (10, 20, 2, {(11, 20): 0x50}, [], "occupied-unmatched-continues"),
+    (125, 20, 2, {}, [], "walks-off-grid-edge"),
+])
+def test_sfoundant_walk_matches_asm(target_x, target_y, dir_idx, life_cells,
+                                    alist_slots, label):
+    from simant.recovered.gameplay import s_found_ant
+    ax, m = _run_and_get_ax(
+        5, 0x53F6, (),
+        seed_fn=_sfoundant_walk_seed(target_x, target_y, dir_idx, life_cells, alist_slots))
+    dg, pack, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK], m.seg_bases[_SDG]
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    expect = s_found_ant(dgroup_view, sdg_view, pack_view)
+    assert ax == (expect & 0xFFFF), f"{label}: asm={ax:#06x} rec={expect:#06x}"
+
+
 # ---- _AddAntToAList/BList/RList (seg5:2EF0/2F4A/2FA4) — list insert --------
 _YARD_SPAN = 0x2000
 _ADDANTA_REGIONS = [

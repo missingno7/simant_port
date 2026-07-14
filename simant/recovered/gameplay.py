@@ -1048,6 +1048,84 @@ def find_ant_index(pack, simant_data_group, colony: int, field0: int,
     return 0xFFFF
 
 
+def s_found_ant(dgroup, simant_data_group, pack) -> int:
+    """Locate an ant near the current attack-marker target
+    (`dgroup[0xAC7C]`/`[0xAC7E]`, the SAME fixed-point `>>4` target
+    `get_defend_dir`/`scan_for_ants` use), dispatched on `pack[0x7D60]`'s
+    exact value.
+
+    Recovered from `_SFoundAnt` (SIMANTW.SYM seg5:53F6, NO args; FAR
+    return).  Composes the already-recovered `get_dis`, `is_valid_a`,
+    `is_yellow_ant`, and `find_ant_index`.
+
+    `pack[0x7D60]==7`: searches the yard A-list backward for an ant
+    within squared distance `0x320` (800) of the target; returns the
+    first (highest-slot) match.  If none found (or the list is empty),
+    falls back to a fixed marker position (`dgroup[0xCD88]`/`[0xCE7E]`)
+    ONLY when `pack[0x9FE8]==0` AND `dgroup[0xCE80]==1`: returns `0xFFFF`
+    if that marker is within the same range, else `0xFFFE` throughout.
+
+    Any other `pack[0x7D60]` value: instead walks up to 20 steps outward
+    from the target along a FIXED compass direction
+    (`simant_data_group[dir_idx]`/`[8+dir_idx]` where
+    `dir_idx = dgroup[0xAC80]` — the SAME compass tables
+    `sim_queen_a`/`make_blk_queen` use), each step requiring `is_valid_a`
+    and squared distance `<= 0x190` (400) from the target, or the whole
+    search fails (`0xFFFE`).  An empty yard-life cell there just advances
+    to the next step.  An occupied cell that IS the player's yellow ant
+    (`is_yellow_ant`) aborts the search immediately, returning `0xFFFF`.
+    Otherwise looks the occupant up via `find_ant_index(colony=1, x, y,
+    tile)`: a confirmed A-list match returns THAT slot directly; no match
+    just advances.  Exhausting all 20 steps returns `0xFFFE`.
+    """
+    target_x = _sx16(dgroup.rw(0xAC7C)) >> 4
+    target_y = _sx16(dgroup.rw(0xAC7E)) >> 4
+
+    if pack.rw(0x7D60) == 7:
+        count = pack.rw(0x80F0)
+        for slot in range(count - 1, -1, -1):
+            if simant_data_group.rb(0x2F62 + slot) == 0:
+                continue
+            slot_x = simant_data_group.rb(0x23A4 + slot)
+            slot_y = simant_data_group.rb(0x278E + slot)
+            if get_dis(target_x, target_y, slot_x, slot_y) <= 0x320:
+                return slot
+
+        if pack.rw(0x9FE8) != 0 or dgroup.rw(0xCE80) != 1:
+            return 0xFFFE
+        marker_x = dgroup.rw(0xCD88)
+        marker_y = dgroup.rw(0xCE7E)
+        if get_dis(target_x, target_y, marker_x, marker_y) <= 0x320:
+            return 0xFFFF
+        return 0xFFFE
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    dir_idx = dgroup.rw(0xAC80)
+    dx = sx8(simant_data_group.rb(dir_idx))
+    dy = sx8(simant_data_group.rb(8 + dir_idx))
+
+    x, y = target_x, target_y
+    for _ in range(0x14):
+        y += dy
+        x += dx
+        if not is_valid_a(x, y):
+            return 0xFFFE
+        if get_dis(target_x, target_y, x, y) > 0x190:
+            return 0xFFFE
+        tile = dgroup.rb(LIFE_PLANE_BASE[0] + (x << 6) + y)
+        if tile == 0:
+            continue
+        if is_yellow_ant(tile) != 0:
+            return 0xFFFF
+        found = find_ant_index(pack, simant_data_group, 1, x, y, tile)
+        if _sx16(found) >= 0:
+            return found
+    return 0xFFFE
+
+
 def exit_hole(dgroup, simant_data_group, pack, x: int, y: int, caste: int,
              field_c: int, field_e_hint: int) -> int:
     """Find a clear yard cell adjacent to (x, y) and append it to the A-list
