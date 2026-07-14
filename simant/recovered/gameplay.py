@@ -4120,6 +4120,137 @@ def sim_egg_a(dgroup, simant_data_group, slot: int) -> None:
     dgroup.wb(life_off, 0)
 
 
+def sim_egg_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """Advance a black nest egg/larva's growth-stage counter, and once
+    every 8 ticks (`counter & 0xF == 8`), possibly hatch it into a real
+    ant via `get_new_mode_b`.
+
+    Recovered from `_SimEggB` (SIMANTW.SYM seg6:3CA0, args x=[bp+6],
+    y=[bp+8]; FAR return). Composes the already-recovered `sg_rand` and
+    `get_new_mode_b`.
+
+    A bitmask gate first: `pack[0x75FC] & (0x7F if dgroup[0xAC82] > 2
+    else 0x1F)` nonzero skips everything below, leaving the counter at
+    its CURRENT (un-incremented) value. Otherwise increments the
+    counter; if its low nibble isn't exactly `8`, that's the whole
+    effect (just the increment).
+
+    On a `counter & 0xF == 8` tick: if `pack[0x9FCE] == 0`, rolls
+    `sg_rand(0xFF)` and compares it against `pack[0x9C78] >> 7`; a
+    roll that beats the threshold resets the counter to `0` and bumps a
+    32-bit PACK accumulator (`[0x7C1E:0x7C20]`) instead of hatching.
+    Otherwise (gate set, or the roll lost): reads a "hatch mode" byte
+    from `simant_data_group[0x8A56]`, recomputes the counter as `(mode
+    << 3) + 2`, and sets the slot's `field_c`: mode `== 2` hardcodes
+    `1`; any other mode composes `get_new_mode_b(mode)`.
+
+    Always finishes by stamping the (possibly updated) counter onto
+    both the black nest life-grid cell at `(x, y)` and the slot's own
+    caste field, clearing `field_e`. The real ASM also has a
+    presentation-only speech-balloon path here (`ANTEDIT!_EggBalloons`,
+    gated on `simant_data_group[0x85FC]!=0` AND no hatch-mode branch
+    having run this tick) — deliberately NOT ported.
+    """
+    slot = pack.rw(0x9B6A)
+    growth = simant_data_group.rb(0x3D18 + slot)
+
+    mask = 0x7F if dgroup.rw(0xAC82) > 2 else 0x1F
+    if (pack.rw(0x75FC) & mask) == 0:
+        growth = (growth + 1) & 0xFF
+        if (growth & 0x0F) == 8:
+            if pack.rw(0x9FCE) == 0:
+                roll = sg_rand(dgroup, 0xFF)
+                threshold = pack.rw(0x9C78) >> 7
+                do_hatch = threshold >= roll
+            else:
+                do_hatch = True
+
+            if do_hatch:
+                mode = simant_data_group.rw(0x8A56)
+                growth = ((mode << 3) + 2) & 0xFFFF
+                slot = pack.rw(0x9B6A)
+                if mode == 2:
+                    simant_data_group.wb(0x3B22 + slot, 1)
+                else:
+                    field_c = get_new_mode_b(dgroup, simant_data_group, pack, mode)
+                    simant_data_group.wb(0x3B22 + slot, field_c & 0xFF)
+            else:
+                growth = 0
+                _acc_add32(pack, 0x7C1E, 0x7C20, 1)
+
+    slot = pack.rw(0x9B6A)
+    dgroup.wb(LIFE_PLANE_BASE[2] + (x << 6) + y, growth & 0xFF)
+    simant_data_group.wb(0x3D18 + slot, growth & 0xFF)
+    simant_data_group.wb(0x3F0E + slot, 0)
+
+
+def sim_egg_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """The red-colony twin of `sim_egg_b` — same bitmask gate and
+    growth-counter shape, but a GENUINELY DIFFERENT hatch mechanism
+    (confirmed by independent disassembly, not assumed symmetric): no
+    `pack[0x9FCE]` gate at all, and the hatch mode comes from a fresh
+    `_SRand8()` roll combined with a `PACK[0x7690] % 7`-indexed table
+    lookup, unconditionally composing `get_new_mode_r` every hatch tick
+    (no `mode==2` special case like `_SimEggB` has).
+
+    Recovered from `_SimEggR` (SIMANTW.SYM seg6:62A6, args x=[bp+6],
+    y=[bp+8]; FAR return).
+
+    Same bitmask gate as `_SimEggB` (`dgroup[0xAC84] == 1` selects mask
+    `0x1F`, else `0x7F` — note: INVERTED comparison direction from
+    `_SimEggB`'s `dgroup[0xAC82] > 2`, a different DGROUP field
+    entirely) and same counter-increment/skip shape.
+
+    On a hatch tick (`counter & 0xF == 8`): rolls `_SRand8()`, computes
+    `remainder = PACK[0x7690] % 7` (C-style truncating remainder, since
+    the real ASM sign-extends and uses a signed `idiv`), looks up
+    `mode = simant_data_group[0x897E + (remainder << 3) + roll8]`
+    (signed byte), recomputes the counter as `(mode << 3) + 0x82`, and
+    ALWAYS sets `field_c = get_new_mode_r(mode)` — unconditionally,
+    unlike `_SimEggB`'s conditional gate.
+
+    Always finishes by stamping the counter onto the red nest life-grid
+    cell and the slot's caste field, clearing `field_e`
+    (`simant_data_group[0x48DC+slot]`). Same presentation-only
+    `_EggBalloons` path omitted (called with a literal type `3` here,
+    vs `_SimEggB`'s `2` — confirmed the SAME UI routine, just a
+    different argument, not a different call).
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    slot = pack.rw(0x9B6A)
+    growth = simant_data_group.rb(0x46E6 + slot)
+
+    mask = 0x1F if dgroup.rw(0xAC84) == 1 else 0x7F
+    if (pack.rw(0x75FC) & mask) == 0:
+        growth = (growth + 1) & 0xFF
+        if (growth & 0x0F) == 8:
+            from .simone import SRAND_SEED_OFF, srand_pow2
+
+            seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+
+            raw = _sx16(pack.rw(0x7690))
+            q = abs(raw) // 7
+            remainder = abs(raw) - q * 7
+            if raw < 0:
+                remainder = -remainder
+
+            mode = sx8(simant_data_group.rb(0x897E + (remainder << 3) + roll8))
+            growth = ((mode << 3) + 0x82) & 0xFFFF
+
+            field_c = get_new_mode_r(dgroup, simant_data_group, pack, mode)
+            slot = pack.rw(0x9B6A)
+            simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
+
+    slot = pack.rw(0x9B6A)
+    dgroup.wb(LIFE_PLANE_BASE[3] + (x << 6) + y, growth & 0xFF)
+    simant_data_group.wb(0x46E6 + slot, growth & 0xFF)
+    simant_data_group.wb(0x48DC + slot, 0)
+
+
 def sim_queen_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Stamp the yard queen's caste onto the life grid, and — once her
     caste's low 7 bits exceed `0x67` — check whether she should vanish

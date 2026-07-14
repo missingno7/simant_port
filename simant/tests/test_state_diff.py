@@ -1918,6 +1918,99 @@ def test_simegga_state_diff_matches_asm(slot, a_x, a_y, caste, seed_val, label):
             f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _SimEggB (seg6:3CA0) — black nest egg/larva growth tick --------------
+# Composes sg_rand + get_new_mode_b.
+_SIMEGG_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0x3700, 0x8B00),
+    (_PACK, 0x7500, 0xA000),
+]
+
+
+def _simeggb_seed(seed_val, ac82, mask_flags, slot, caste, gate_9fce,
+                  threshold_9c78, mode_8a56, tbl_direct):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(dg, 0xAC82, ac82)
+        m.mem.ww(pack, 0x75FC, mask_flags)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x3D18 + slot, caste)
+        m.mem.ww(pack, 0x9FCE, gate_9fce)
+        m.mem.ww(pack, 0x9C78, threshold_9c78)
+        m.mem.ww(sdg, 0x8A56, mode_8a56)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, tbl_direct)
+        m.mem.ww(pack, 0x7C1E, 0)
+        m.mem.ww(pack, 0x7C20, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,ac82,mask_flags,slot,caste,gate_9fce,threshold_9c78,mode_8a56,"
+    "tbl_direct,seed_val,label", [
+    (20, 30, 1, 0x1F, 0, 0x25, 0, 0, 4, 0x50, 0x1234, "bitmask-blocks-noop"),
+    (20, 30, 1, 0x00, 0, 0x21, 0, 0, 4, 0x50, 0x1234, "increment-not-a-hatch-tick"),
+    (20, 30, 1, 0x00, 1, 0x27, 1, 0, 2, 0x50, 0x1234, "hatch-tick-gate-set-mode2-fc1"),
+    (20, 30, 1, 0x00, 1, 0x27, 1, 0, 4, 0x50, 0x1234, "hatch-tick-gate-set-mode4-getnewmode"),
+    (20, 30, 1, 0x00, 2, 0x27, 0, 4000, 4, 0x50, 0x1234, "hatch-tick-roll-favors-hatch"),
+    (20, 30, 1, 0x00, 3, 0x27, 0, 0, 4, 0x50, 0x1234, "hatch-tick-roll-fails-reset-counter"),
+])
+def test_simeggb_state_diff_matches_asm(x, y, ac82, mask_flags, slot, caste,
+                                        gate_9fce, threshold_9c78, mode_8a56,
+                                        tbl_direct, seed_val, label):
+    from simant.recovered.gameplay import sim_egg_b
+    results = _run_and_diff_segs(
+        6, 0x3CA0, (x, y),
+        lambda d, s, p: sim_egg_b(d, s, p, x, y),
+        _SIMEGG_REGIONS,
+        seed_fn=_simeggb_seed(seed_val, ac82, mask_flags, slot, caste,
+                              gate_9fce, threshold_9c78, mode_8a56, tbl_direct))
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _SIMEGG_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _SimEggR (seg6:62A6) — red nest egg/larva growth tick, genuinely -----
+# NOT symmetric with _SimEggB — no gate, always hatches via a table lookup.
+def _simeggr_seed(seed_val, ac84, mask_flags, slot, caste, task_7690,
+                  table_bytes):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(dg, 0xAC84, ac84)
+        m.mem.ww(pack, 0x75FC, mask_flags)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x46E6 + slot, caste)
+        m.mem.ww(pack, 0x7690, task_7690)
+        for i in range(56):
+            m.mem.wb(sdg, 0x897E + i, table_bytes)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, 0x50)   # get_new_mode_r's direct-lookup table
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,ac84,mask_flags,slot,caste,task_7690,table_bytes,seed_val,label", [
+    (20, 30, 1, 0x1F, 0, 0x25, 3, 4, 0x1234, "bitmask-blocks-noop"),
+    (20, 30, 1, 0x00, 0, 0x21, 3, 4, 0x1234, "increment-not-a-hatch-tick"),
+    (20, 30, 1, 0x00, 1, 0x27, 3, 4, 0x1234, "hatch-tick-unconditional"),
+    (20, 30, 2, 0x00, 2, 0x27, 3, 4, 0x1234, "hatch-tick-other-ac84-mask"),
+])
+def test_simeggr_state_diff_matches_asm(x, y, ac84, mask_flags, slot, caste,
+                                        task_7690, table_bytes, seed_val, label):
+    from simant.recovered.gameplay import sim_egg_r
+    results = _run_and_diff_segs(
+        6, 0x62A6, (x, y),
+        lambda d, s, p: sim_egg_r(d, s, p, x, y),
+        _SIMEGG_REGIONS,
+        seed_fn=_simeggr_seed(seed_val, ac84, mask_flags, slot, caste,
+                              task_7690, table_bytes))
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _SIMEGG_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _SimQueenA (seg6:0A74) — yard queen tick, may vanish into the nest ---
 _SIMQUEENA_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x68E8, 0x78E8),   # yard life plane

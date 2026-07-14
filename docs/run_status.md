@@ -1,5 +1,31 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.153) — /goal grind: _SimEggB/_SimEggR — nest egg/larva growth tick
+- RECOVERED `sim_egg_b`/`sim_egg_r` (`_SimEggB`/`_SimEggR`, seg6:3CA0/
+  62A6, args x=[bp+6], y=[bp+8], FAR return). Both advance a nest egg/
+  larva's growth-stage counter each tick (gated on a bitmask check
+  against `pack[0x75FC]`), and possibly hatch it into a real ant every
+  8 ticks (`counter & 0xF == 8`) by composing the already-recovered
+  `get_new_mode_b`/`r`.
+- Confirmed a genuine, SUBSTANTIAL asymmetry by independent
+  disassembly of both (not assumed): `_SimEggB`'s hatch path is gated
+  on `pack[0x9FCE]`, optionally rolls `sg_rand(0xFF)` against a
+  threshold to decide between hatching (reads a mode byte from
+  `simant_data_group[0x8A56]`, with a `mode==2` special case) or
+  resetting the counter to 0 and bumping an unrelated 32-bit counter.
+  `_SimEggR` has NO gate at all — it unconditionally rolls a fresh
+  `_SRand8()`, combines it with a `pack[0x7690] % 7`-indexed table
+  lookup, and ALWAYS composes `get_new_mode_r` every hatch tick, with
+  no reset-counter path and no mode==2 special case. Even the bitmask
+  gate's own DGROUP field and comparison direction differ
+  (`dgroup[0xAC82] > 2` for B vs `dgroup[0xAC84] == 1` for R).
+- 10 cases (6 for B covering every branch — bitmask block, plain
+  increment, hatch-with-gate-set both mode==2 and mode!=2, hatch-
+  without-gate both roll outcomes; 4 for R covering bitmask block,
+  plain increment, and hatch under two different `dgroup[0xAC84]`
+  values) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1592 (+10), full suite green.
+
 ## 2026-07-14 (cont.152) — /goal grind: _GetMyNextRandDirs — probe ahead, dispatch on outcome
 - DEFERRED `_GetMyDis` after partial disassembly: the 6th survey's
   "thin wrapper around `get_dis`" characterization was WRONG — it's a
