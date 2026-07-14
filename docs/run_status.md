@@ -1,5 +1,50 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.91) — /goal grind: _DeadAntHere (100-slot corpse ring buffer)
+- RECOVERED `dead_ant_here` (seg6:28C0, args: new_x, new_y, mode; FAR
+  return) — the strongest pure-gameplay pick from cont.90's survey (fan-in
+  9 across top-level caste dispatchers and combat/predation routines,
+  zero new dependencies beyond already-recovered `_SRand1`/`_SRand4`/
+  `_SRand16`).
+  - Decoded a 100-slot ring buffer living entirely in PACK: a word counter
+    (`[0x9EA8]`, incremented + wrapped to 0 at 100 every call), a byte-per-
+    slot X table (`[0x9C82..)`), and a word-per-slot-but-byte-written Y
+    table (`[0x9D76..)`) — both indexed by the RAW counter value (not
+    counter*width), the same convention the per-ant list arrays already
+    use. Each call reads the slot the counter now points at (the position
+    recorded ~100 calls ago), fades whatever corpse-marker tile is there
+    (random via `_SRand16` outside the nest, a deterministic `(tile-8)>>2`
+    inside), then overwrites that slot with the caller's OWN (new_x,
+    new_y) and — if the map's already-quiet there — plants a fresh marker
+    (`_SRand4`-based outside, `_SRand1(2)`-based inside), and finally
+    always clears the yard life-grid cell at the new position.
+  - Resolved all four DGROUP pointer-globals this routine reads
+    (`[0xC344]/[0xC346]/[0xC348]/[0xC320]`) by reading real memory rather
+    than assuming — ALL FOUR resolve to PACK (not SIMANT_DATA_GROUP),
+    including the `[0x9B6E]` "inside" world flag, which turns out to be
+    PACK-resident too (same field `is_it_food`/`tile_can_be_moved_on`
+    already read through a different selector alias — confirms this is
+    the SAME shared flag, just reached via yet another of the project's
+    many redundant DGROUP pointer-globals into the same fixed segment).
+  - Threaded the shared `_SRand*` LFSR seed through up to two RNG calls per
+    invocation (one for the evicted slot's fade, one for the fresh marker)
+    in exact ASM call order, mirroring `drop_water`'s existing seed-
+    threading convention.
+  - First test run hit a HARNESS bug, not a logic bug: `_run_and_diff_segs`
+    takes one window per SEGMENT, but this routine touches THREE separate
+    DGROUP sub-ranges (yard map, yard life, the RNG seed) — the initial
+    3-DGROUP-window + 1-PACK-window region list crashed with a wrong-arg-
+    count TypeError (the harness treats each region as its own segment
+    slot, not each window within one segment). Fixed by combining the
+    three DGROUP windows into one wide `[0x28E8, 0xCBF4)` region; all 11
+    scenarios (fade bands on/off, RNG vs. deterministic paths, the mode
+    flag both ways, the counter wrap boundary at 99->0, and a slot-equals-
+    new-position self-overlap case) then passed on the first re-run.
+- Suite: simant 1037 (+11). Continuing per /goal — next per cont.90's
+  survey: `__aFulmul` (seg4:096E, `__aFldiv`'s unsigned-multiply sibling
+  and a hard prerequisite for `_rand`/`_RRand`) is the cheapest follow-on
+  in `crt_math.py`.
+
 ## 2026-07-14 (cont.90) — /goal grind: __aFldiv (dig-subsystem unlock, new module)
 - Ran a fresh survey (dispatched to a research subagent) now that the whole
   pathfinding-selection tier is closed. Confirmed `_TryMoveDirB/R` and

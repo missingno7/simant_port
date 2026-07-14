@@ -279,6 +279,85 @@ def drop_water(view, x: int) -> None:
             view.wb(off, val & 0xFF)
 
 
+def dead_ant_here(dgroup, pack, new_x: int, new_y: int, mode: int) -> None:
+    """Ring-buffer corpse-decay marker: record where an ant just died, and
+    fade/remove the mark left ~100 ticks ago at the slot now cycling out.
+
+    Recovered from `_DeadAntHere` (SIMANTW.SYM seg6:28C0, args: new_x,
+    new_y, mode; FAR return).  A 100-slot ring buffer lives in PACK: a word
+    counter at `[0x9EA8]` (incremented and wrapped to 0 at 100 on every
+    call), a byte-per-slot X table at `[0x9C82..)`, and a word-per-slot
+    (but only ever read masked to a byte, and only ever WRITTEN a byte) Y
+    table at `[0x9D76..)` — both indexed by the raw counter value, not
+    counter*width (the same convention the per-ant list arrays use).  Every
+    call:
+
+    1. Advances the counter and reads the OLD (x, y) recorded in the slot
+       it now points at — the position from ~100 calls ago — then reads the
+       yard map tile there.
+    2. If PACK's `[0x9B6E]` "inside" flag is clear (outside the nest) and
+       that tile is in `0x10..0x17`, replaces it with a fresh `_SRand16()`
+       (0..15) — fading an old marker back to generic terrain.  If the flag
+       is set (inside) and the tile is in `0x08..0x17`, replaces it with
+       `(tile - 8) >> 2` instead — a coarser, non-random fade specific to
+       the nest tile encoding.
+    3. Overwrites the ring-buffer slot with the caller's (new_x, new_y).
+    4. Reads the yard map tile at the NEW position; if it's below the same
+       mode-specific threshold as step 2 (0x18 outside / 4 inside), plants
+       a fresh marker there: outside, `_SRand4() + (0x14 if mode else
+       0x10)`; inside, `_SRand1(2) + tile*4 + 0xA` when `mode` else
+       `_SRand1(2) + (tile + 2)*4` (`tile` here is this same fresh read at
+       the new position, not the ring buffer's evicted entry).
+    5. Always clears the yard life-grid cell at the new position.
+
+    Threads the shared `_SRand*` LFSR seed at `dgroup[SRAND_SEED_OFF]`
+    through every RNG call, in ASM call order (up to two calls per
+    invocation: one for the evicted slot's fade, one for the fresh marker).
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    counter = (pack.rw(0x9EA8) + 1) & 0xFFFF
+    if counter >= 0x64:
+        counter = 0
+    pack.ww(0x9EA8, counter)
+
+    old_x = pack.rb(0x9C82 + counter)
+    old_y = pack.rw(0x9D76 + counter) & 0xFF
+    old_off = MAP_PLANE_BASE[0] + (old_x << 6) + old_y
+    old_tile = dgroup.rb(old_off)
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    inside = pack.rw(0x9B6E) != 0
+
+    if not inside:
+        if 0x10 <= old_tile < 0x18:
+            seed, val = srand_pow2(seed, 0xF)
+            dgroup.wb(old_off, val & 0xFF)
+    else:
+        if 8 <= old_tile < 0x18:
+            dgroup.wb(old_off, ((old_tile - 8) >> 2) & 0xFF)
+
+    pack.wb(0x9C82 + counter, new_x & 0xFF)
+    pack.wb(0x9D76 + counter, new_y & 0xFF)
+
+    new_off = MAP_PLANE_BASE[0] + (new_x << 6) + new_y
+    new_tile = dgroup.rb(new_off)
+
+    if not inside:
+        if new_tile < 0x18:
+            seed, val = srand_pow2(seed, 3)
+            val += 0x14 if mode else 0x10
+            dgroup.wb(new_off, val & 0xFF)
+    else:
+        if new_tile < 4:
+            seed, val = srand1(seed, 2)
+            val += new_tile * 4 + 0xA if mode else (new_tile + 2) * 4
+            dgroup.wb(new_off, val & 0xFF)
+
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y, 0)
+
+
 def life_cell_offset(plane: int, x: int, y: int) -> int | None:
     """DGROUP byte offset of life-grid cell (plane, x, y), or None if out of range.
 

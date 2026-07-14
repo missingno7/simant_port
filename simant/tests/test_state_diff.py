@@ -278,6 +278,66 @@ def test_dropwater_state_diff_matches_asm(x, seed_val):
     assert asm_after == rec_after, _first_diff(asm_after, rec_after)
 
 
+# ---- _DeadAntHere (seg6:28C0) — 100-slot corpse ring buffer ----------------
+# One combined DGROUP window spans the yard map plane through the SRand seed
+# (0x28E8..0xCBF4) -- _run_and_diff_segs takes one window per SEGMENT, so the
+# map/life/seed reads (all DGROUP) share a single wide region, not three.
+_DEADANT_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_PACK, 0x9B00, 0x9F00),  # covers 0x9B6E/0x9C82+/0x9D76+/0x9EA8
+]
+
+
+def _deadant_seed(counter, old_x, old_y, old_tile, inside, seed_val):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x9EA8, counter)
+        next_slot = (counter + 1) % 0x64
+        m.mem.wb(pack, 0x9C82 + next_slot, old_x)
+        m.mem.ww(pack, 0x9D76 + next_slot, old_y)     # word slot, high byte poison-free
+        m.mem.wb(dg, 0x28E8 + (old_x << 6) + old_y, old_tile)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+    return seed
+
+
+@pytest.mark.parametrize("counter,old_x,old_y,old_tile,inside,new_x,new_y,mode,seed_val", [
+    # outside, evicted tile in the fade band -> _SRand16 replace; new pos clear -> plant
+    (5, 10, 10, 0x14, False, 20, 20, 0, 0x1234),
+    (5, 10, 10, 0x14, False, 20, 20, 1, 0xABCD),
+    # outside, evicted tile OUTSIDE the fade band -> no replace at old pos
+    (5, 10, 10, 0x20, False, 20, 20, 0, 0x1234),
+    # outside, new-position tile already >= 0x18 -> no plant
+    (5, 10, 10, 0x14, False, 20, 20, 0, 0x5678),
+    # inside, evicted tile in its fade band -> (tile-8)>>2 replace (no RNG call)
+    (5, 10, 10, 0x12, True, 20, 20, 0, 0x1234),
+    (5, 10, 10, 0x12, True, 20, 20, 1, 0x1234),
+    # inside, new-position tile below threshold -> plant via _SRand1(2)
+    (5, 10, 10, 0x00, True, 20, 20, 0, 0x9999),
+    (5, 10, 10, 0x00, True, 20, 20, 1, 0x9999),
+    # inside, new-position tile at/above threshold -> no plant
+    (5, 10, 10, 0x00, True, 20, 20, 0, 0x2222),
+    # counter at the wrap boundary (99 -> wraps to 0)
+    (99, 5, 5, 0x14, False, 30, 30, 0, 0x4321),
+    # ring-buffer slot == the new position (self-overlap): the "old" read and
+    # the ring-buffer overwrite touch the SAME cell
+    (5, 20, 20, 0x14, False, 20, 20, 0, 0x1234),
+])
+def test_deadanthere_state_diff_matches_asm(counter, old_x, old_y, old_tile, inside,
+                                            new_x, new_y, mode, seed_val):
+    from simant.recovered.gameplay import dead_ant_here
+    results = _run_and_diff_segs(
+        6, 0x28C0, (new_x, new_y, mode),
+        lambda dg, p: dead_ant_here(dg, p, new_x, new_y, mode),
+        _DEADANT_REGIONS,
+        seed_fn=_deadant_seed(counter, old_x, old_y, old_tile, inside, seed_val))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DEADANT_REGIONS):
+        assert asm_after == rec_after, (
+            f"counter={counter} old=({old_x},{old_y},{old_tile:#x}) in={inside} "
+            f"new=({new_x},{new_y}) mode={mode} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only
