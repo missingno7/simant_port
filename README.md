@@ -28,14 +28,20 @@ it.
 SimAnt's simulation is a call tree: colony **orchestrators** drive per-ant
 **behaviors**, which lean on shared **helpers** and, at the bottom, small **leaf**
 predicates and RNG. Recovery proceeds bottom-up — the whole foundation is byte-exact:
-the leaf predicates and RNG, the map/life-grid query family, **and the pathfinding
-core** (`_GetBestDir` and the helpers it composes) are all recovered. What remains
-is the top two layers — the per-ant **behaviors** (`_DoForageAnt`, `_DoNestAntB`,
-`_DoDigInB`) and the **orchestrators** above them. Those *mutate* world state rather
-than return a value, so they need state-diff verification, not the return-value
-oracle used so far. The graph below is a real slice of the `seg5`/`seg6`/`seg7`
-call graph (every edge is an actual call); green nodes are proven byte-exact against
-the original ASM, an amber ring marks the most-called routines, dashed nodes are the
+the leaf predicates and RNG, the map/life-grid query family, **the pathfinding
+core** (`_GetBestDir` and the helpers it composes), **and now a full mutator tier**
+— ant-list CRUD (find/add/set/remove/compact, all three colonies), the
+scent/pheromone system (NEST linear decay, TRAIL exponential decay, jam, single-cell
+read/decrement), and the mode-population/red-initiator subsystem
+(`_ClrModePop`/`_TallyModePop`/`_MakeRedInitiator`, including a genuine
+mutator-calling-mutator chain). Those needed a **state-diff oracle** (snapshot → run
+recovered logic on a copy of the pre-state → diff against the ASM's mutation)
+instead of the return-value oracle the foundation was built with. What remains is
+the top two layers — the per-ant **behaviors** (`_DoForageAnt`, `_DoNestAntB`,
+`_DoDigInB`) and the **orchestrators** above them, which compose the now-recovered
+mutator tier. The graph below is a real slice of the `seg5`/`seg6`/`seg7` call
+graph (every edge is an actual call); green nodes are proven byte-exact against the
+original ASM, an amber ring marks the most-called routines, dashed nodes are the
 not-yet-recovered frontier.
 
 ```mermaid
@@ -49,6 +55,16 @@ flowchart TD
     dnb["_DoNestAntB"]
     dfor["_DoForageAnt"]
     ddig["_DoDigInB"]
+  end
+  subgraph L3m["mutator tier — lists, scent, mode-pop (done)"]
+    fial["_FindInAList"]
+    aal["_AddAntToAList"]
+    rfal["_RemoveFromAList"]
+    cla["_CompactList*"]
+    csd["_ColonySmellDecay*"]
+    jsc["_JamScent*"]
+    tmp["_TallyModePop"]
+    mri["_MakeRedInitiator"]
   end
   subgraph L3["helpers + pathfinding core"]
     gbd["_GetBestDir"]
@@ -71,16 +87,21 @@ flowchart TD
   daa --> dfor & gbd
   dnb --> ddig & iyel & srand
   dfor --> iva & iyel & srand
+  dfor -.-> fial & aal & csd
+  dnb -.-> jsc
   gbd --> gmap & gdis & glife & inobs & ipeb
   ddig --> idirt & iyel
   gmap --> iva
   ihole --> iva & ifood
+  tmp --> mri
+  mri --> fial
 
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
   classDef front fill:#5c564b,stroke:#a99e86,color:#f3ece0,stroke-dasharray:5 4;
   class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs done;
   class iva,idirt,iyel,srand load;
+  class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
 
@@ -88,25 +109,31 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
-| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry | 38 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — forage, dig, nest, fight behaviors | 3 / 123 | **the frontier** |
+| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry | 57 / 169 | foundation **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop **done**; forage/dig/nest behaviors frontier | 26 / 123 | mutator tier **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime + tile expanders (MakeTable / Xfer) | 23 / 248 | hot paths lifted |
 
 The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88
-callers, `_IsYellowAnt` 28, `_IsValidA` 26, `_GetDir` 17, `_IsItDirt` 15. Regenerate
-the underlying call-graph data with `python -m simant.probes.callgraph`.
+callers, `_SRand8` 71, `_win_IsWinOpen` 67, `_win_GetObjRect` 50, `_IsYellowAnt` 28,
+`_IsValidA` 26, `_GetDir` 17, `_FindInAList` 16, `_IsItDirt` 15, `_GetDis` 15,
+`_FindInBList` 15. Regenerate the underlying call-graph data with
+`python -m simant.probes.callgraph`.
 
 **What's done vs. what's missing.** The whole bottom is byte-exact: the leaf
 predicates + RNG, the map/life-grid query family (`_GetMap`, `_IsItHole`,
 `_IsClearTile`, `_IsNotObstacle`, `_IsItDigable`, `_IsValidLocation`, …), the
-geometry (`_GetDir`, `_GetDis`), and the pathfinding core `_GetBestDir`. Missing is
-the per-ant **behavior tier** in `seg6` (`_DoForageAnt`, `_DoNestAntB`, `_DoDigInB`,
-`_DoAntSim*`) and the fight/RNG helpers (`_GetWinner`) — these *mutate* world state,
-so lifting them needs a state-diff oracle (snapshot → run recovered logic on the
-native state → diff against the ASM's mutation) rather than the return-value oracle
-the foundation was built with. That harness is the next milestone toward the
-[VM-less native port](docs/vmless_port.md).
+geometry (`_GetDir`, `_GetDis`), the pathfinding core `_GetBestDir`, and — new this
+round — the mutator tier a behavior routine needs to actually act: ant-list CRUD
+(`_FindInAList`/`_AddAntToAList`/`_RemoveFromAList`/`_CompactListA`, plus the B/R
+colony twins), the scent/pheromone grids (`_ColonySmellDecayBN/RN/BT/RT`,
+`_JamScentBN/RN/BT/RT`, `_AlarmHere`, `_DecTSmell`, `_GetSmellT`, `_FillHolesBN/RN`),
+and the mode-population/red-initiator subsystem (`_ClrModePop`, `_TallyModePop`,
+`_MakeRedInitiator`, `_KillTailB/R`, `_DropFoodB/R`, `_DrownBList/RList`,
+`_KillSpider`, `_SetAntIndex`). Missing is the per-ant **behavior tier** in `seg6`
+(`_DoForageAnt`, `_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`) that composes these
+mutators into an actual decision, and the fight/RNG helpers (`_GetWinner`). That's
+the next milestone toward the [VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 
