@@ -979,6 +979,42 @@ def test_getoutb_state_diff_matches_asm(x, hole_marker, hole_x_val, slot, caste,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _RaidOutB / _RaidOutR (seg6:3610 / 5D10) — move an ant toward an exit,
+# or give up and re-stamp its caste in place. Composes get_exit_dir_b/r and
+# try_move_dir_b/r; reuses their own established seed helpers/regions since
+# every dependency is already fully seeded there.
+@pytest.mark.parametrize("tile_at_dest,label", [
+    (0x10, "first attempt succeeds -> moves"),
+    (0x20, "every neighbour blocked -> both attempts fail, caste re-stamped"),
+])
+def test_raidoutb_state_diff_matches_asm(tile_at_dest, label):
+    from simant.recovered.gameplay import raid_out_b
+    x, y, slot, caste, seed_val = 30, 30, 0, 0x03, 0x1234
+    results = _run_and_diff_segs(
+        6, 0x3610, (x, y),
+        lambda d, s, p: raid_out_b(d, s, p, x, y),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_trymoveb_seed(x, y, tile_at_dest, slot, caste, seed_val))
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("tile_at_dest,label", [
+    (0x10, "first attempt succeeds -> moves"),
+    (0x20, "every neighbour blocked -> both attempts fail, caste re-stamped"),
+])
+def test_raidoutr_state_diff_matches_asm(tile_at_dest, label):
+    from simant.recovered.gameplay import raid_out_r
+    x, y, slot, caste, seed_val = 30, 30, 0, 0x03, 0x1234
+    results = _run_and_diff_segs(
+        6, 0x5D10, (x, y),
+        lambda d, s, p: raid_out_r(d, s, p, x, y),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_trymove_seed(x, y, tile_at_dest, slot, caste, seed_val))
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _GetNewMode (seg7:0910) — caste mode-transition lookup ---------------
 _GETNEWMODE_REGIONS = [
     (hooks.DG_SEG_INDEX, 0xCBF0, 0xCBF4),   # SRand seed

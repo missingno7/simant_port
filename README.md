@@ -99,6 +99,7 @@ flowchart TD
   subgraph L3e["movement EXECUTION (done)"]
     tmdb["_TryMoveDirB/R"]
     gob["_GetOutB/R"]
+    rob["_RaidOutB/R"]
   end
   subgraph L3["helpers + pathfinding core"]
     gbd["_GetBestDir"]
@@ -136,6 +137,7 @@ flowchart TD
   gad --> bnc & srand
   grd --> bnc & srand
   gdd --> bnc & gnd & srand
+  rob --> ged & tmdb & srand
   grdd --> bnc & gnd & srand
   dnb --> ddig & iyel & srand
   dfor --> iva & iyel & srand
@@ -168,7 +170,7 @@ flowchart TD
   class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
   class dtb,dttb,mnhb,exh,seb,fxm,afld,ged,gnd2 done;
-  class tmdb,gob done;
+  class tmdb,gob,rob done;
   class dfa,ddoa,gnm,dah,gw,sfa,gin,rt done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
@@ -178,7 +180,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}`/`_PickupFoodA` done | 75 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_SimEggA`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}` done; forage/nest frontier | 55 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_SimEggA`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_RaidOutB/R` done; forage/nest frontier | 57 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family done | 14 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -253,7 +255,11 @@ move and then actually move* is byte-exact, end to end:
   colony-growth trigger keyed off two DGROUP ant-count stats) and
   `pickup_food_a` (a genuine `_DoForageAnt` dependency — two different
   tile transforms gated on the same "inside the nest" flag
-  `_DeadAntHere` reads). `_DeadAntHere` (a 100-slot corpse-decay ring buffer),
+  `_DeadAntHere` reads), and `raid_out_b`/`r` (move toward an exit via
+  `get_exit_dir_b`/`r`, or a random direction, or give up and re-stamp
+  the ant's caste in place — composes straight into the movement-
+  EXECUTION tier via `try_move_dir_b`/`r`). `_DeadAntHere` (a 100-slot
+  corpse-decay ring buffer),
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
   LFSR used for map generation).

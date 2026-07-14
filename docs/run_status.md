@@ -1,5 +1,26 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.123) — /goal grind: _RaidOutB/R — move toward an exit or give up in place
+- RECOVERED `raid_out_b`/`r` (`_RaidOutB`/`R`, seg6:3610/5D10, FAR return,
+  args x/y) — composes FOUR already-recovered routines
+  (`get_exit_dir_b`/`r`, `try_move_dir_b`/`r`) with no new dependencies.
+- Tries to move the acting ant (`pack[0x9B6A]`) one step toward an exit
+  via `get_exit_dir_b`/`r` (or a random direction if none found —
+  `exclude=8` is a deliberate "don't exclude any direction" sentinel,
+  since `8 ^ 4 = 12` never matches any real 0-7 compass index); if that
+  move is blocked, tries ONE more purely random direction; if THAT'S also
+  blocked, gives up on moving and instead just re-stamps the acting ant's
+  own caste onto its CURRENT cell (a visual/state correction with no
+  position change).
+- Reused `try_move_dir_b`/`r`'s own established seed helpers/regions
+  directly — every dependency (compass tables, exit-distance map, A/B/R-
+  list fields) was already fully seeded there, so no new test
+  infrastructure was needed at all.
+- 4 cases (both colonies x first-attempt-succeeds / both-attempts-fail)
+  — ALL GREEN ON THE FIRST RUN, including the composed fallback path.
+- Suite: simant 1352 (+4). Only `_QueenMoveB/R` remains from the fresh
+  survey's candidate list.
+
 ## 2026-07-14 (cont.122) — /goal grind: _PickupFoodA — genuine _DoForageAnt dependency
 - RECOVERED `pickup_food_a` (`_PickupFoodA`, seg5:0D18, FAR return, args
   x/y) — a genuine `_DoForageAnt` dependency (chips at that top-level

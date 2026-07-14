@@ -3244,6 +3244,54 @@ def try_eat_food_r(dgroup, pack, x: int, y: int) -> None:
                   0x7C8E, 0xAC88, x, y)
 
 
+def _raid_out(dgroup, simant_data_group, pack, get_exit_dir, try_move_dir,
+             life_plane_base: int, caste_off: int, x: int, y: int) -> None:
+    """Shared body of `raid_out_b`/`r`: move the acting ant one step toward
+    an exit (or a random direction if none found); if that's blocked, try
+    ONE more random direction; if THAT'S also blocked, give up on moving
+    and just re-stamp the acting ant's own caste onto its current cell
+    (a visual/state correction with no position change).
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    result = get_exit_dir(dgroup, simant_data_group, x, y, 8)
+    if result != 0:
+        direction = result - 1
+    else:
+        seed, direction = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+
+    if try_move_dir(dgroup, simant_data_group, pack, x, y, direction):
+        return
+
+    seed, direction2 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if try_move_dir(dgroup, simant_data_group, pack, x, y, direction2):
+        return
+
+    acting_slot = pack.rw(0x9B6A)
+    caste = simant_data_group.rb(caste_off + acting_slot)
+    dgroup.wb(life_plane_base + (x << 6) + y, caste)
+
+
+def raid_out_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """Recovered from `_RaidOutB` (SIMANTW.SYM seg6:3610, FAR return, args
+    x=[bp+6], y=[bp+8]). See `_raid_out`.
+    """
+    _raid_out(dgroup, simant_data_group, pack, get_exit_dir_b, try_move_dir_b,
+             LIFE_PLANE_BASE[2], 0x3D18, x, y)
+
+
+def raid_out_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """The red-colony twin of `raid_out_b`.
+
+    Recovered from `_RaidOutR` (SIMANTW.SYM seg6:5D10, FAR return, args
+    x=[bp+6], y=[bp+8]).
+    """
+    _raid_out(dgroup, simant_data_group, pack, get_exit_dir_r, try_move_dir_r,
+             LIFE_PLANE_BASE[3], 0x46E6, x, y)
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.
