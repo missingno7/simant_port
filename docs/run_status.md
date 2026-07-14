@@ -1,5 +1,17 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.110) — /goal grind: _GetRandDir — purely random direction
+- RECOVERED `get_rand_dir` (`_GetRandDir`, seg7:0F72, FAR return, args
+  x/y/caste_low3) — fourth of the seg7 `_Get*Dir` family, and the simplest
+  yet: no gradient-following at all. Just the shared `_Bounce`-inline
+  yard-edge handling, or (strictly interior) a fresh `_SRand8()`-random
+  mode-table pick — byte-identical to the random-fallback tail every other
+  family member shares.
+- 3 cases (a corner, two interior random-pick scenarios) — ALL GREEN ON
+  THE FIRST RUN.
+- Suite: simant 1249 (+3). Four of six seg7 `_Get*Dir` routines now
+  recovered; remaining: `_GetDefendDir`, `_GetRedDefendDir`.
+
 ## 2026-07-14 (cont.109) — /goal grind: _GetAlarmDir — ALARM-scent gradient direction
 - RECOVERED `get_alarm_dir` (`_GetAlarmDir`, seg7:0E54, FAR return, args
   x/y/caste_low3) — third of the seg7 `_Get*Dir` family, and the simplest

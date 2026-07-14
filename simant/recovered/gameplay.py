@@ -2873,6 +2873,32 @@ def get_alarm_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int) ->
     return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + best_dir))
 
 
+def get_rand_dir(dgroup, simant_data_group, x: int, y: int, caste_low3: int) -> int:
+    """Pick a purely random direction: no gradient-following at all — just
+    the yard-edge `_Bounce` handling shared with `_GetNestDir`/
+    `_GetAlarmDir`, or (strictly interior) a fresh `_SRand8()`-random
+    mode-table pick.
+
+    Recovered from `_GetRandDir` (SIMTWO.SYM seg7:0F72, args x=[bp+6],
+    y=[bp+8], caste_low3=[bp+10]; FAR return) — the simplest of the seg7
+    `_Get*Dir` family; byte-identical to the random-fallback tail every
+    other member of the family shares.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    edge = bounce(dgroup, x, y)
+    if edge != 0:
+        return (edge - 1) & 7
+
+    seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + roll))
+
+
 def do_dig_out_ant_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of a yard ant "digging out" — aging/mode-transition,
     or a move (with a natural-decay kill chance) toward a `_Bounce`-biased or

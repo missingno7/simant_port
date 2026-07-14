@@ -1416,6 +1416,43 @@ def test_getalarmdir_no_scent_falls_back_matches_asm():
     _run_getalarmdir(20, 20, 5, 0x1234, _getalarmdir_seed(None, 0))
 
 
+# ---- _GetRandDir (seg7:0F72) — purely random direction ---------------------
+# Simplest of the seg7 _Get*Dir family: yard-edge `_Bounce` handling, or
+# (interior) a fresh _SRand8()-random mode-table pick -- no gradient at all.
+def _getranddir_seed(m):
+    sdg = m.seg_bases[_SDG]
+    for i in range(64):
+        m.mem.wb(sdg, 0x24 + i, i % 8)
+
+
+@pytest.mark.parametrize("x,y,caste_low3,seed_val", [
+    (0x00, 0x3F, 5, 0x1234),   # BL corner
+    (20, 20, 5, 0x1234),       # interior -> random pick
+    (20, 20, 3, 0xABCD),       # interior, different caste row/seed
+])
+def test_getranddir_matches_asm(x, y, caste_low3, seed_val):
+    from simant.recovered.gameplay import get_rand_dir
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+        _getranddir_seed(m)
+
+    ax, m = _run_and_get_ax(7, 0xF72, (x, y, caste_low3), seed_fn=seed)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+
+    buf = bytearray(0x10000)
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg = m.seg_bases[_SDG]
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    rec_ax = get_rand_dir(dgroup_view, sdg_view, x, y, caste_low3)
+
+    assert ax == (rec_ax & 0xFFFF), f"x={x:#x} y={y:#x} seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, (
+        f"x={x:#x} y={y:#x} seed={seed_val:#x}: seed mismatch")
+
+
 # ---- _DoDigOutAntA (seg6:1480) — second top-level `_Do*Ant*` routine -------
 # NEAR call/return, composes `_Bounce`, `_GetNewMode`, and (on a successful
 # move with a nonzero carried-dirt counter) `_JamScentBN`/`_JamScentRN`.
