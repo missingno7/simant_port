@@ -73,6 +73,15 @@ flowchart TD
     gmrd["_GetMyRandDirs"]
     cmbd["_CheckMyBestDirs"]
   end
+  subgraph L3d["dig subsystem (done)"]
+    dtb["_DigTileB/R"]
+    dttb["_DigTileThemB/R"]
+    mnhb["_MakeNewHoleB/R"]
+    exh["_ExitHole"]
+    seb["_SmoothEdgesB/R"]
+    fxm["_FixExitMapB/R"]
+    afld["__aFldiv"]
+  end
   subgraph L3["helpers + pathfinding core"]
     gbd["_GetBestDir"]
     gmap["_GetMap"]
@@ -107,6 +116,10 @@ flowchart TD
   gmrd --> tcbmo & gdis
   cmbd --> gmbd
   dfor -.-> gmbd
+  dttb --> dtb & mnhb & idirt
+  mnhb --> dtb & exh
+  dtb --> seb & fxm & afld
+  ddig -.-> dttb
 
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
@@ -115,6 +128,7 @@ flowchart TD
   class iva,idirt,iyel,srand load;
   class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
+  class dtb,dttb,mnhb,exh,seb,fxm,afld done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
 
@@ -122,7 +136,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
-| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, dig-subsystem prep | 64 / 169 | foundation **done** |
+| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
 | `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding **done**; forage/dig/nest behaviors frontier | 33 / 123 | selection tier **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
@@ -154,15 +168,20 @@ search across ticks via far-pointer in/out state) and `_CheckMyBestDirs`
 100-slot corpse-decay ring buffer), the MSC C-runtime long-arithmetic
 helpers `__aFldiv`/`__aFulmul` and the independent `rand`/`srand`/`_RRand`
 generator (distinct from the `_SRand*` LFSR), and three tractable slices of
-the **dig subsystem**: `_FixExitMapB/R` (an exit-distance flood-fill map),
-`_SmoothEdgesB/R` (post-dig edge auto-tiling), and `_ExitHole` (spawn a new
-A-list entry at a clear cell adjacent to a hole). Missing is the per-ant
-**behavior tier** in `seg6` (`_DoForageAnt`, `_DoNestAntB`, `_DoDigInB`,
-`_DoAntSim*`) that composes all of this into an actual decision, the rest
-of the dig subsystem (`_DigTileB/R`, `_MakeNewHoleB/R`, `_DigTileThemB/R`
-— now unblocked by `__aFldiv`), the movement-EXECUTION chain
-(`_TryMoveDirB/R` -> `_GetOutB/R`), and combat (`_YellowFight`/
-`_GetWinner`). That's the next milestone toward the
+the **dig subsystem, now complete end to end**: `_FixExitMapB/R` (an
+exit-distance flood-fill map), `_SmoothEdgesB/R` (post-dig edge
+auto-tiling), `_ExitHole` (spawn a new A-list entry at a clear cell
+adjacent to a hole), `_DigTileB/R` (reroll a dirt tile + track a running-
+average dig position, occasionally tunnelling into the other colony),
+`_MakeNewHoleB/R` (search the shared yard map for a new exit-hole
+position, two different acceptance tests depending on an "inside" flag),
+and `_DigTileThemB/R` (open a brand-new tile given already-diggable
+neighbours, the routine that actually triggers `_MakeNewHoleB/R` on row
+0). Missing is the per-ant **behavior tier** in `seg6` (`_DoForageAnt`,
+`_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`) that composes all of this into
+an actual decision, the movement-EXECUTION chain (`_TryMoveDirB/R` <->
+`_GetOutB/R`, a genuine mutual-recursion pair — the next target), and
+combat (`_YellowFight`/`_GetWinner`). That's the next milestone toward the
 [VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
