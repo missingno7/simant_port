@@ -837,6 +837,95 @@ def test_makenewholeb_state_diff_matches_asm(col, seed_val, inside, row_tiles,
             f"blocked={blocked_rows} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _LeaveNestB (seg6:515E) — send a black ant out through a hole --------
+# Reuses _MAKENEWHOLEB_REGIONS (a superset of _EXITHOLE_REGIONS too) since it
+# composes both already-recovered routines.
+def _leavenestb_seed(col, x, seed_val, slot, orig_caste, field_c, field_e,
+                     hole_row_val, alist_count, exit_tiles):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x3D18 + slot, orig_caste)
+        m.mem.wb(sdg, 0x3B22 + slot, field_c)
+        m.mem.wb(sdg, 0x3F0E + slot, field_e)
+        m.mem.wb(sdg, 0x82D2 + col, hole_row_val)   # hole already tracked -> no MakeNewHoleB
+        m.mem.ww(pack, 0x80F0, alist_count)
+        for si in range(8):
+            nx = hole_row_val + GET_BEST_DIR_DX[si]
+            ny = col + GET_BEST_DIR_DY[si]
+            if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, exit_tiles.get(si, 0x50))
+    return seed
+
+
+@pytest.mark.parametrize(
+    "col,x,seed_val,slot,orig_caste,field_c,field_e,hole_row_val,alist_count,exit_tiles", [
+    # exit_hole succeeds (a clear neighbour exists) -> life cell cleared, returns 1
+    (10, 20, 0x1234, 0, 0x85, 7, 3, 15, 5, {3: 0x10}),
+    # exit_hole fails (nothing clear anywhere) -> caste/field_c restored, returns 0
+    (10, 20, 0x1234, 0, 0x85, 7, 3, 15, 5, {}),
+])
+def test_leavenestb_hole_tracked_state_diff_matches_asm(
+        col, x, seed_val, slot, orig_caste, field_c, field_e, hole_row_val,
+        alist_count, exit_tiles):
+    from simant.recovered.gameplay import leave_nest_b
+    results = _run_and_diff_segs(
+        6, 0x515E, (col, x),
+        lambda d, s, p: leave_nest_b(d, s, p, col, x),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_leavenestb_seed(col, x, seed_val, slot, orig_caste, field_c,
+                                 field_e, hole_row_val, alist_count, exit_tiles))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, (
+            f"col={col} x={x} exit_tiles={exit_tiles} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+def _leavenestb_notracked_seed(col, x, seed_val, slot, orig_caste, field_c,
+                               field_e, alist_count, row_tiles, exit_tiles):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, 0x3D18 + slot, orig_caste)
+        m.mem.wb(sdg, 0x3B22 + slot, field_c)
+        m.mem.wb(sdg, 0x3F0E + slot, field_e)
+        m.mem.wb(sdg, 0x82D2 + col, 0)     # no hole tracked -> triggers MakeNewHoleB
+        m.mem.wb(pack, 0x9B6E, 1)          # inside=True (make_new_hole_b's own gate)
+        m.mem.ww(pack, 0x80F0, alist_count)
+        for row in range(0, 36):
+            for c in (col - 1, col, col + 1):
+                if 0 <= c <= 0x3F:
+                    m.mem.wb(dg, 0x28E8 + (row << 6) + c, 0x00)
+                    m.mem.wb(dg, 0x68E8 + (row << 6) + c, 0x00)
+        for row in range(2, 34):
+            m.mem.wb(dg, 0x28E8 + (row << 6) + col,
+                    row_tiles.get(row, 0x10))
+        found_row = next(r for r in range(2, 34) if row_tiles.get(r) is not None)
+        for si in range(8):
+            nx = found_row + GET_BEST_DIR_DX[si]
+            ny = col + GET_BEST_DIR_DY[si]
+            if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, exit_tiles.get(si, 0x50))
+    return seed
+
+
+def test_leavenestb_no_hole_tracked_state_diff_matches_asm():
+    from simant.recovered.gameplay import leave_nest_b
+    col, x = 10, 20
+    results = _run_and_diff_segs(
+        6, 0x515E, (col, x),
+        lambda d, s, p: leave_nest_b(d, s, p, col, x),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_leavenestb_notracked_seed(
+            col, x, 0x1234, 0, 0x85, 7, 3, 5, {2: 0x00}, {3: 0x10}))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _MakeNewHoleR (seg5:1D02) — search on the SAME yard map, red closing --
 _MAKENEWHOLER_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed

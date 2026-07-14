@@ -2992,6 +2992,59 @@ def make_new_hole_b(dgroup, simant_data_group, pack, col: int) -> None:
     dig_tile_b(dgroup, simant_data_group, pack, col, 1)
 
 
+def leave_nest_b(dgroup, simant_data_group, pack, col: int, x: int) -> int:
+    """Try to send the current black ant (`pack[0x9B6A]`'s slot) out
+    through an above-ground hole at `col`, carving a fresh one via
+    `make_new_hole_b` first if none is tracked yet for that column.
+
+    Recovered from `_LeaveNestB` (SIMANTW.SYM seg6:515E, args col=[bp+6],
+    x=[bp+8]; FAR return).  Composes the already-recovered
+    `make_new_hole_b` and `exit_hole`.
+
+    Clears the slot's caste field (`simant_data_group[0x3D18+slot]`) to
+    `0` up front (a "claim this slot" marker, restored on failure).  If
+    `_FillHolesBN`'s per-column tracking array
+    (`simant_data_group[0x82D2+col]`) has no hole recorded yet, calls
+    `make_new_hole_b(col)` to carve one.  Then rerolls a fresh caste —
+    `_SRand8() + (original_caste & 0xF8)` (keeping the caste's high bits,
+    replacing only the low 3 direction bits) — and calls `exit_hole` at
+    `(x=simant_data_group[0x82D2+col], y=col)` with that caste and the
+    slot's OWN `field_c`/`field_e` as the appended A-list entry's fields.
+
+    On success (`exit_hole` returns nonzero): clears the black nest
+    life-grid cell at `(col, x)` (plane 2) and returns `1`.  On failure:
+    restores the slot's ORIGINAL caste and clears its `field_c` to `0`
+    (undoing the "claim"), and returns `0`.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    slot = pack.rw(0x9B6A)
+    orig_caste = simant_data_group.rb(0x3D18 + slot)
+    simant_data_group.wb(0x3D18 + slot, 0)
+
+    if simant_data_group.rb(0x82D2 + col) == 0:
+        make_new_hole_b(dgroup, simant_data_group, pack, col)
+
+    slot = pack.rw(0x9B6A)
+    field_e = simant_data_group.rb(0x3F0E + slot)
+    field_c = simant_data_group.rb(0x3B22 + slot)
+    seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    new_caste = (roll8 + (orig_caste & 0xF8)) & 0xFF
+    hole_row = simant_data_group.rb(0x82D2 + col)
+
+    result = exit_hole(dgroup, simant_data_group, pack, hole_row, col,
+                       new_caste, field_c, field_e)
+    if result != 0:
+        dgroup.wb(LIFE_PLANE_BASE[2] + (col << 6) + x, 0)
+        return 1
+
+    slot = pack.rw(0x9B6A)
+    simant_data_group.wb(0x3D18 + slot, orig_caste & 0xFF)
+    simant_data_group.wb(0x3B22 + slot, 0)
+    return 0
+
+
 def make_new_hole_r(dgroup, simant_data_group, pack, col: int) -> None:
     """The red-colony twin of `make_new_hole_b` — same search/carve
     machinery over the SAME shared yard map, but a genuinely different

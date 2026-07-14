@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.144) — /goal grind: _LeaveNestB — send a black ant out through a hole
+- RECOVERED `leave_nest_b` (`_LeaveNestB`, seg6:515E, args col=[bp+6],
+  x=[bp+8], FAR return) — tries to send the current black ant
+  (`pack[0x9B6A]`'s slot) out through an above-ground hole at `col`,
+  carving a fresh one via the already-recovered `make_new_hole_b` first
+  if `_FillHolesBN`'s per-column tracking array
+  (`simant_data_group[0x82D2+col]`) has nothing recorded yet. Rerolls a
+  fresh caste (`_SRand8() + (orig_caste & 0xF8)`, keeping the high bits,
+  replacing only the low 3 direction bits) and calls the already-
+  recovered `exit_hole`; on success clears the black nest life-grid cell
+  and returns `1`, on failure restores the slot's original caste/
+  field_c and returns `0`.
+- Regions reused `_MAKENEWHOLEB_REGIONS` directly — it's already a
+  strict superset of `_EXITHOLE_REGIONS` across all three segments, so
+  no new region constants were needed despite composing both routines.
+- 3 cases (hole already tracked + exit succeeds, hole already tracked +
+  exit fails/restores, and hole NOT tracked so `make_new_hole_b` fires
+  first) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1530 (+3), full suite green.
+
 ## 2026-07-14 (cont.143) — /goal grind: _GetMyInitialRandDir — commit a fresh sticky search
 - RECOVERED `get_my_initial_rand_dir` (`_GetMyInitialRandDir`,
   seg6:8CDE, args plane=[bp+14], cur_x=[bp+16], cur_y=[bp+18],
