@@ -1783,6 +1783,56 @@ def test_pickupfoodbr_state_diff_matches_asm(colony, seg, off, map_base,
         assert asm_after == rec_after, f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _PlaceEggB / _PlaceEggR (seg5:1004 / 1068) — place a new egg ---------
+# Composes dig_tile_b/r + add_ant_to_b/r_list; reuses dig_tile_b's own
+# established seed helper/regions, widened to cover the B/R-list arrays too.
+_PLACEEGG_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0, 0x4900),
+    (_PACK, 0x7200, 0xA000),
+]
+
+
+@pytest.mark.parametrize("colony,seg,off,count_off", [
+    ("B", 5, 0x1004, 0x99D4),
+    ("R", 5, 0x1068, 0x72CC),
+])
+@pytest.mark.parametrize("x,y,count,caste,label", [
+    (20, 20, 5, 0x81, "valid position, room available -> placed"),
+    (20, 20, 0x1F4, 0x81, "list already at cap -> no-op"),
+    (20, 0, 5, 0x81, "y==0 is out of range -> no-op"),
+])
+def test_placeegg_state_diff_matches_asm(colony, seg, off, count_off, x, y,
+                                         count, caste, label):
+    from simant.recovered.gameplay import place_egg_b, place_egg_r
+    fn = place_egg_b if colony == "B" else place_egg_r
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        idx = (x << 6) + y
+        m.mem.wb(dg, 0x48E8 + idx, 0x40)   # not dirt -> dig_tile_b/r's smoothing tail only
+        m.mem.wb(dg, 0x58E8 + idx, 0x40)
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(pack, 0x72C8, 3)
+        m.mem.ww(pack, 0x7A56, 2)
+        m.mem.ww(pack, 0x8104, 100)
+        m.mem.ww(pack, 0x8106, 0)
+        m.mem.ww(pack, 0x811A, 200)
+        m.mem.ww(pack, 0x811C, 0)
+        m.mem.ww(pack, 0x9DDC, 50)
+        m.mem.ww(pack, 0x9DDE, 0)
+        m.mem.ww(pack, 0x9DE2, 75)
+        m.mem.ww(pack, 0x9DE4, 0)
+        m.mem.ww(pack, count_off, count)
+
+    results = _run_and_diff_segs(
+        seg, off, (x, y, caste),
+        lambda d, s, p: fn(d, s, p, x, y, caste),
+        _PLACEEGG_REGIONS, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _PLACEEGG_REGIONS):
+        assert asm_after == rec_after, f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _GetExitDirB / _GetExitDirR (seg5:119C / 1240) — exit-distance-------
 # gradient direction, biased away from `exclude`'s opposite.
 @pytest.mark.parametrize("colony,seg,off,map_base,exit_base", [

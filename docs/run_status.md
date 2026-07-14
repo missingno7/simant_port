@@ -1,5 +1,23 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.128) — /goal grind: _PlaceEggB/R — place a new egg
+- RECOVERED `place_egg_b`/`r` (`_PlaceEggB`/`R`, seg5:1004/1068, FAR
+  return, args x/y/caste) — composes `dig_tile_b`/`r` and
+  `add_ant_to_b`/`r_list` with no new dependencies. No-op if the
+  colony's list is already at its 500-slot cap, or `(x, y)` is out of
+  bounds (`0 <= x <= 0x3F`, `1 <= y <= 0x3F` — `y` excludes `0`,
+  asymmetric with `x`, ported literally). Otherwise: digs the tile,
+  appends a new list record, and stamps the caste onto the life plane.
+- `add_list`'s own `(y, x)` argument order genuinely takes THIS
+  routine's `x` into its `y` slot and vice versa — the SAME coordinate-
+  role swap already caught in `_QueenMoveB`/`R`'s ant-list writes,
+  ported as a literal positional pass-through again rather than
+  "corrected" a second time.
+- 6 cases (valid placement, list-at-cap no-op, out-of-range no-op, x2
+  colonies) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1398 (+6). Remaining from this round's batch:
+  `_MakeNewTailB/R`, `_ScanForAnts`, `_RaidInB/R`.
+
 ## 2026-07-14 (cont.127) — /goal grind: _PickupFoodB/R — NEST-map food pickup
 - RECOVERED `pickup_food_b`/`r` (`_PickupFoodB`/`R`, seg5:0F40/0FA2, FAR
   return, args x/y) — the NEST-map siblings of `pickup_food_a` (which

@@ -1920,6 +1920,47 @@ def pickup_food_r(dgroup, pack, x: int, y: int) -> None:
     _pickup_food_br(dgroup, pack, MAP_PLANE_BASE[3], 0x72DE, x, y)
 
 
+def _place_egg(dgroup, simant_data_group, pack, count_off: int, dig_tile,
+               add_list, life_plane_base: int, x: int, y: int, caste: int) -> None:
+    """Shared body of `place_egg_b`/`r`: place a new egg at `(x, y)` — dig
+    the tile there, append a new list record, and stamp the caste onto
+    the life plane — unless the colony's list is already at its 500-slot
+    cap, or `(x, y)` is out of bounds (`0 <= x <= 0x3F`, `1 <= y <= 0x3F`
+    — note `y` excludes `0`, unlike `x`).
+
+    `add_list`'s own `(y, x)` argument order genuinely takes THIS
+    function's `x` into its `y` slot and vice versa — the same
+    coordinate-role swap already seen in `_QueenMoveB`/`R`'s ant-list
+    writes, ported as a literal positional pass-through rather than
+    "corrected".
+    """
+    if pack.rw(count_off) >= 0x1F4:
+        return
+    if not (0 <= x <= 0x3F and 1 <= y <= 0x3F):
+        return
+    dig_tile(dgroup, simant_data_group, pack, x, y)
+    add_list(pack, simant_data_group, dgroup, x, y, caste, 8, 0)
+    dgroup.wb(life_plane_base + (x << 6) + y, caste & 0xFF)
+
+
+def place_egg_b(dgroup, simant_data_group, pack, x: int, y: int, caste: int) -> None:
+    """Recovered from `_PlaceEggB` (SIMANTW.SYM seg5:1004, FAR return, args
+    x=[bp+6], y=[bp+8], caste=[bp+10]). See `_place_egg`.
+    """
+    _place_egg(dgroup, simant_data_group, pack, 0x99D4, dig_tile_b,
+              add_ant_to_b_list, LIFE_PLANE_BASE[2], x, y, caste)
+
+
+def place_egg_r(dgroup, simant_data_group, pack, x: int, y: int, caste: int) -> None:
+    """The red-colony twin of `place_egg_b`.
+
+    Recovered from `_PlaceEggR` (SIMANTW.SYM seg5:1068, FAR return, args
+    x=[bp+6], y=[bp+8], caste=[bp+10]).
+    """
+    _place_egg(dgroup, simant_data_group, pack, 0x72CC, dig_tile_r,
+              add_ant_to_r_list, LIFE_PLANE_BASE[3], x, y, caste)
+
+
 def _smooth_edges(dgroup, map_base: int, x: int, y: int) -> None:
     """Shared body of `smooth_edges_b`/`smooth_edges_r`."""
     from .simone import SRAND_SEED_OFF, srand_pow2
