@@ -2710,6 +2710,56 @@ def start_fight_a(dgroup, simant_data_group, pack, slot1: int, x1: int,
     alarm_here2(simant_data_group, x2, y2, 40)
 
 
+def go_in_nest(dgroup, simant_data_group, pack, x: int, y: int, slot: int) -> None:
+    """Move a yard ant (A-list slot `slot`, standing at `(x, y)`) into a
+    colony's nest — `x < 0x40` picks black, `x >= 0x40` picks red (the yard
+    is split down the middle at the map's x-midpoint).
+
+    Recovered from `_GoInNest` (SIMANTW.SYM seg6:257A, NEAR return, args
+    x=[bp+4], y=[bp+6], slot=[bp+8]).
+
+    Compacts the target colony's list first if it's at its 500-slot cap
+    (via the already-recovered `compact_list_b`/`r`); if it's STILL full
+    afterward, the ant stays exactly where it is — no further effect at
+    all, not even the final vanish. Otherwise, appends a new nest-list
+    record via the already-recovered `add_ant_to_b_list`/`r_list`, copying
+    the yard ant's `field_c`/`field_e` and a `+4`-bumped caste, at a fixed
+    nest-entrance column (`x=1` in the callee's own argument order) and
+    `y` set to THIS function's `y` argument — the nest entrance is a
+    single column, `y` is which row/lane the ant enters at. If that row's
+    exit-distance map cell is nonzero (`simant_data_group[0x82D2 + y]`
+    black / `[0x8312 + y]` red — the SAME arrays `_FillHolesBN`/`RN`
+    maintain), immediately digs that entrance tile too (`dig_tile_b`/`r`,
+    again at the fixed column `y=1` in the callee's own argument order).
+    Finally, regardless of which of the two add-then-maybe-dig branches
+    ran: clears the ant's own A-list caste field and its yard life-grid
+    cell at `(x, y)` — it vanishes from the yard, now living only in the
+    nest list.
+    """
+    if x < 0x40:
+        count_off, add_list, dig_tile, exit_map, compact = (
+            0x99D4, add_ant_to_b_list, dig_tile_b, 0x82D2, compact_list_b)
+    else:
+        count_off, add_list, dig_tile, exit_map, compact = (
+            0x72CC, add_ant_to_r_list, dig_tile_r, 0x8312, compact_list_r)
+
+    if pack.rw(count_off) >= 0x1F4:
+        compact(pack, simant_data_group)
+    if pack.rw(count_off) >= 0x1F4:
+        return
+
+    field_e = simant_data_group.rb(0x334C + slot)
+    field_c = simant_data_group.rb(0x2B78 + slot)
+    caste = (simant_data_group.rb(0x2F62 + slot) & 0xF8) + 4
+    add_list(pack, simant_data_group, dgroup, y, 1, caste, field_c, field_e)
+
+    if simant_data_group.rb(exit_map + y) != 0:
+        dig_tile(dgroup, simant_data_group, pack, y, 1)
+
+    simant_data_group.wb(0x2F62 + slot, 0)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.

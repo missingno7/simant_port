@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.115) — /goal grind: _GoInNest — move a yard ant into the nest
+- RECOVERED `go_in_nest` (`_GoInNest`, seg6:257A, NEAR return, args
+  x/y/slot, plus `pack`) — composes FIVE already-recovered routines
+  (`compact_list_b/r`, `add_ant_to_b_list/r_list`, `dig_tile_b/r`) with no
+  new dependencies at all. `x < 0x40` picks black, `x >= 0x40` picks red
+  (the yard is split down the middle at the map's x-midpoint).
+  Independently disassembled the full 240-byte body and caught my own
+  transposed x/y role guess mid-derivation (a life-plane index write's
+  shifted-vs-unshifted operand order briefly looked backwards against an
+  earlier assumption) — resolved by cross-checking against the SAME two
+  values' roles in the `add_ant_to_b_list` call site's OWN established
+  argument order, not by re-guessing.
+- Compacts the target colony's list first if it's at its 500-slot cap; if
+  it's STILL full afterward, the ant stays exactly where it is — no
+  further effect at all, not even the final vanish (this only shows up
+  by tracing exactly where a `jmp` lands, past several instructions that
+  looked at first glance like they'd always run). Otherwise appends a new
+  nest-list record (copying `field_c`/`field_e` and a `+4`-bumped caste)
+  at a fixed nest-entrance column with `y` as the row, optionally digs
+  that entrance tile if its exit-distance map cell is nonzero (the SAME
+  arrays `_FillHolesBN`/`RN` maintain), then — regardless of which branch
+  ran — clears the ant's own A-list caste and its yard life-grid cell.
+- 3 cases (black/red colony success, and the still-full-after-compaction
+  no-op) — ALL GREEN ON THE FIRST RUN (deliberately didn't exercise the
+  dig-tile sub-path here; `dig_tile_b`/`r` already have their own
+  dedicated, thorough tests, and duplicating their large region/seed
+  surface here would add little).
+- Suite: simant 1275 (+3).
+
 ## 2026-07-14 (cont.114) — /goal grind: _StartFightA — initiate yard combat
 - RECOVERED `start_fight_a` (`_StartFightA`, seg6:266A, NEAR return, args
   slot1/x1/y1/x2/y2, plus `pack`) — composes three already-recovered

@@ -1188,6 +1188,56 @@ def test_startfighta_state_diff_matches_asm(has_target, caste1, caste2,
             f"has_target={has_target} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _GoInNest (seg6:257A) — move a yard ant into a colony's nest ---------
+# NEAR call/return. Composes the already-recovered compact_list_b/r,
+# add_ant_to_b_list/r_list, and (not exercised here -- covered by dig_tile_b/
+# r's own dedicated tests) dig_tile_b/r.
+_GOINNEST_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x68E8, 0xA8E8),   # yard life plane 0 + nest life planes 2+3
+    (_SDG, 0x2300, 0x8400),                 # slot fields, both list arrays, both exit-maps
+    (_PACK, 0x7200, 0x9A00),                # both colonies' list counts
+]
+
+
+def _goinnest_seed(x, y, slot, count_off, caste, field_c, field_e,
+                   full=False):
+    def seed(m):
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.wb(sdg, 0x2F62 + slot, caste)
+        m.mem.wb(sdg, 0x2B78 + slot, field_c)
+        m.mem.wb(sdg, 0x334C + slot, field_e)
+        if full:
+            m.mem.ww(pack, count_off, 0x1F4)
+            for i in range(0x1F4):
+                m.mem.wb(sdg, 0x2F62 + i, 0xFF)   # every slot alive -> compaction frees nothing
+                m.mem.wb(sdg, 0x46E6 + i, 0xFF)   # (also cover the R-list caste array, same range)
+            m.mem.wb(sdg, 0x2F62 + slot, caste)   # restore the acting ant's own record
+        else:
+            m.mem.ww(pack, count_off, 5)
+        m.mem.wb(sdg, 0x82D2 + y, 0)   # exit-map cell clear -> never triggers dig_tile_b/r here
+        m.mem.wb(sdg, 0x8312 + y, 0)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,slot,count_off,caste,field_c,field_e,full", [
+    (0x10, 20, 0x10, 0x99D4, 0x81, 3, 7, False),   # black colony, room available
+    (0x50, 20, 0x10, 0x72CC, 0x02, 5, 9, False),   # red colony, room available
+    (0x10, 20, 0x10, 0x99D4, 0x81, 3, 7, True),    # black colony, still full after compaction -> no-op
+])
+def test_goinnest_state_diff_matches_asm(x, y, slot, count_off, caste,
+                                         field_c, field_e, full):
+    from simant.recovered.gameplay import go_in_nest
+    results = _run_and_diff_segs(
+        6, 0x257A, (x, y, slot),
+        lambda d, s, p: go_in_nest(d, s, p, x, y, slot),
+        _GOINNEST_REGIONS, near=True,
+        seed_fn=_goinnest_seed(x, y, slot, count_off, caste, field_c, field_e,
+                               full=full))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GOINNEST_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} full={full} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
 # `_Do*Ant*` behavior routine recovered) -------------------------------------
 # NEAR call/return. `_FightBalloons` (ANTEDIT seg3:0x499A, presentation-only

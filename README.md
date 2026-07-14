@@ -65,6 +65,7 @@ flowchart TD
     dah["_DeadAntHere"]
     gw["_GetWinner"]
     sfa["_StartFightA"]
+    gin["_GoInNest"]
   end
   subgraph L3m["mutator tier — lists, scent, mode-pop (done)"]
     fial["_FindInAList"]
@@ -126,6 +127,7 @@ flowchart TD
   dfa --> gnm & dah & srand
   ddoa --> gnm & bnc & jsc & srand
   sfa --> gw & fial
+  gin --> cla & aal & dtb
   gnd --> bnc
   gad --> bnc & srand
   grd --> bnc & srand
@@ -163,7 +165,7 @@ flowchart TD
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
   class dtb,dttb,mnhb,exh,seb,fxm,afld done;
   class tmdb,gob done;
-  class dfa,ddoa,gnm,dah,gw,sfa done;
+  class dfa,ddoa,gnm,dah,gw,sfa,gin done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
 
@@ -172,7 +174,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA` done; forage/nest frontier | 41 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest` done; forage/nest frontier | 42 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family done | 14 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
