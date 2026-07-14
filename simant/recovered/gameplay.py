@@ -696,6 +696,34 @@ def drop_food_r(dgroup, pack, simant_data_group, x: int, y: int) -> int:
     return _drop_food(dgroup, pack, simant_data_group, 3, 0x72DE, 0x46E6, x, y)
 
 
+def get_smell_t(simant_data_group, p: int, q: int, direction: int,
+                is_red) -> int:
+    """Read a colony's TRAIL scent grid at a cell offset from (p, q) by a
+    per-direction delta looked up from two small tables in SIMANT_DATA_GROUP.
+
+    Recovered from `_GetSmellT` (SIMANTW.SYM seg6:9612, args p=[bp+4],
+    q=[bp+6], direction=[bp+8], is_red=[bp+0xa]).  Grid cell = `(si<<5) + di`
+    where `si = p + sign_extend(simant_data_group[0 + direction])` (clamped
+    0..63, else return 0 immediately) and `di = q + sign_extend(
+    simant_data_group[8 + direction])` (clamped 0..31, else return 0).  Reads
+    red colony's grid at 0x7AD2, black's at 0x6AD2 — the same trail-scent grids
+    `jam_scent_bt`/`rt`, `colony_smell_decay_bt`/`rt`, and `dec_t_smell`
+    operate on.  The two small direction-delta tables are read LIVE from
+    `simant_data_group` (not hardcoded) — they are genuine game data, not a
+    fixed constant this recovery should assume.
+    """
+    def sbyte(off):
+        v = simant_data_group.rb(off)
+        return v - 0x100 if v & 0x80 else v
+
+    si = p + sbyte(0 + direction)
+    di = q + sbyte(8 + direction)
+    if si < 0 or si > 0x3F or di < 0 or di > 0x1F:
+        return 0
+    base = 0x7AD2 if is_red else 0x6AD2
+    return simant_data_group.rb(base + (si << 5) + di)
+
+
 def dec_t_smell(simant_data_group, x: int, y: int, is_red) -> None:
     """Decrement a single cell of a colony's TRAIL scent grid by 1, if nonzero.
 

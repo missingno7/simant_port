@@ -450,19 +450,21 @@ def test_alarmhere2_state_diff_matches_asm(x, y, value, existing):
 # return and capture AX, then feed the SAME machine's (still-seeded, untouched
 # since nothing was written) memory to the recovered function via ByteBackend
 # and compare.  reuses this file's PACK/SIMANT_DATA_GROUP segment indices.
-def _run_and_get_ax(m, seg, off, args):
+def _run_and_get_ax(m, seg, off, args, near=False):
     s = m.cpu.s
     s.ds = m.seg_bases[hooks.DG_SEG_INDEX]
     s.sp = 0xFF00
     s.cs, s.ip = m.seg_bases[seg], off
     sp = s.sp
-    for v in (*reversed(args), SENT_CS, SENT_IP):
+    tail = (SENT_IP,) if near else (SENT_CS, SENT_IP)
+    for v in (*reversed(args), *tail):
         sp = (sp - 2) & 0xFFFF
         m.mem.ww(s.ss, sp, v & 0xFFFF)
     s.sp = sp
+    target = (s.cs & 0xFFFF, SENT_IP) if near else (SENT_CS, SENT_IP)
     for _ in range(50_000):
         m.cpu.step()
-        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == target:
             break
     else:
         raise AssertionError(f"ASM {seg}:{off:#06x} did not return")
@@ -642,6 +644,30 @@ def test_dropfoodr_state_diff_matches_asm(x, y, tile, ant_idx, caste):
                                  _DROPFOODR_REGIONS)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DROPFOODR_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _GetSmellT (seg6:9612) — read the trail-scent grid via a direction ----
+# Pure read (no mutation): seed the whole trail grid with a distinguishable
+# pattern, run to return, compare AX against the recovered fn on the same
+# (still-seeded) machine.  The direction-delta tables are real game data, read
+# live — not overridden here (only the destination grid is seeded).
+@pytest.mark.parametrize("p,q,direction,is_red", [
+    (10, 10, 0, 0), (10, 10, 1, 0), (10, 10, 3, 1), (0, 0, 2, 0),
+    (63, 31, 5, 1), (5, 5, 8, 0), (0, 0, 0, 1),
+])
+def test_getsmellt_matches_asm(p, q, direction, is_red):
+    from simant.recovered.gameplay import get_smell_t
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    sdg_base = m.seg_bases[_SDG]
+    for i in range(0x800):
+        m.mem.wb(sdg_base, 0x6AD2 + i, (i * 3 + 7) & 0xFF)
+        m.mem.wb(sdg_base, 0x7AD2 + i, (i * 5 + 11) & 0xFF)
+
+    ax = _run_and_get_ax(m, 6, 0x9612, (p, q, direction, is_red), near=True)
+    sdg_view = ByteBackend(m.mem.block(sdg_base, 0, 0x10000), 0)
+    expect = get_smell_t(sdg_view, p, q, direction, is_red)
+    assert ax == (expect & 0xFFFF), f"asm={ax:#06x} rec={expect:#06x}"
 
 
 # ---- _DecTSmell (seg6:95B6) — single-cell trail-scent decrement -----------
