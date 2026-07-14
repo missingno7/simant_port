@@ -6316,3 +6316,110 @@ def test_feedants_addfood_gate_raises():
     sdgv.ww(0x8A62, 100)
     with pytest.raises(NotImplementedError):
         feed_ants(dgv, sdgv, packv)
+
+
+# ---- _SetCasteProd (seg7:026E) — pick the next hatch mode -----------------
+_SETCASTEPROD_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC96, 0xAC9E),
+    (_SDG, 0x8622, 0x8A58),
+]
+
+
+def _setcasteprod_seed(target, actual, table):
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        for i, v in enumerate(target):
+            m.mem.ww(dg, 0xAC96 + i * 2, v & 0xFFFF)
+        for i, v in enumerate(actual):
+            m.mem.ww(sdg, 0x8622 + i * 2, v & 0xFFFF)
+        for i, v in enumerate(table):
+            m.mem.ww(sdg, 0x89AE + i * 2, v & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize("target,actual,table,label", [
+    ([10, 20, 30, 40], [40, 30, 20, 10], [0x11, 0x22, 0x33, 0x44],
+     "genuine-min-diff"),
+    ([0, 0, 0, 0], [10, 20, 30, 40], [0x11, 0x22, 0x33, 0x44],
+     "zero-target-total-defaults-index0"),
+    ([10, 20, 30, 40], [0, 0, 0, 0], [0x11, 0x22, 0x33, 0x44],
+     "zero-actual-total-defaults-index0"),
+])
+def test_setcasteprod_state_diff_matches_asm(target, actual, table, label):
+    from simant.recovered.gameplay import set_caste_prod
+    results = _run_and_diff_segs(
+        7, 0x026E, (), lambda d, s: set_caste_prod(d, s),
+        _SETCASTEPROD_REGIONS,
+        seed_fn=_setcasteprod_seed(target, actual, table))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _SETCASTEPROD_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _SetModeProd (seg7:0326) — pick the next mode-production target -----
+_SETMODEPROD_REGIONS = [
+    (_SDG, 0x89B6, 0x8A5A),
+    (_PACK, 0x9C74, 0x9E76),
+]
+
+
+def _setmodeprod_seed(pop, rate, table):
+    def seed(m):
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        for i, v in enumerate(pop):
+            m.mem.ww(pack, 0x9E70 + i * 2, v & 0xFFFF)
+        for i, v in enumerate(rate):
+            m.mem.ww(pack, 0x9C74 + i * 2, v & 0xFFFF)
+        for i, v in enumerate(table):
+            m.mem.ww(sdg, 0x89B6 + i * 2, v & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize("pop,rate,table,label", [
+    ([10, 20, 30], [0x1000, 0x4000, 0x8000], [0x55, 0x66, 0x77],
+     "genuine-max-diff"),
+    ([0, 0, 0], [0, 0, 0], [0x55, 0x66, 0x77], "all-zero-defaults-index0"),
+    ([100, 100, 100], [0, 0, 0], [0x55, 0x66, 0x77],
+     "zero-rate-negative-diffs-defaults-index0"),
+])
+def test_setmodeprod_state_diff_matches_asm(pop, rate, table, label):
+    from simant.recovered.gameplay import set_mode_prod
+    results = _run_and_diff_segs(
+        7, 0x0326, (), lambda s, p: set_mode_prod(s, p),
+        _SETMODEPROD_REGIONS,
+        seed_fn=_setmodeprod_seed(pop, rate, table))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _SETMODEPROD_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _GstrB (seg7:01CC) — pick a black-colony strategy tier (0-5) --------
+def _gstrb_seed(ac86, ac82, ac84, f79dc, f72c8):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
+        m.mem.ww(dg, 0xAC82, ac82 & 0xFFFF)
+        m.mem.ww(dg, 0xAC84, ac84 & 0xFFFF)
+        m.mem.ww(pack, 0x79DC, f79dc & 0xFFFF)
+        m.mem.ww(pack, 0x72C8, f72c8 & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize("ac86,ac82,ac84,f79dc,f72c8,label", [
+    (5, 100, 10, 1, 0, "tier0-earlygame-wellfed"),
+    (15, 0, 0, 0, 0, "tier5-lowpop"),
+    (40, 0, 0, 0, 0, "tier4-midpop"),
+    (60, 100, 0, 0, 50, "tier3-low72c8"),
+    (60, 50, 0, 0, 60, "tier2-mid72c8"),
+    (60, 300, 10, 1, 700, "tier0-lategame-overproduced"),
+    (60, 50, 0, 0, 200, "tier1-default-fallback"),
+])
+def test_gstrb_matches_asm(ac86, ac82, ac84, f79dc, f72c8, label):
+    from simant.recovered.gameplay import gstr_b
+    ax, m = _run_and_get_ax(7, 0x01CC, (),
+                            seed_fn=_gstrb_seed(ac86, ac82, ac84, f79dc, f72c8))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
+    result = gstr_b(dg_view, pack_view)
+    assert ax == (result & 0xFFFF), (
+        f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}")

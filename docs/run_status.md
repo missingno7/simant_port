@@ -1,5 +1,65 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.173) — /goal grind: _SetCasteProd/_SetModeProd/_GstrB
+- RECOVERED `set_caste_prod`/`set_mode_prod` (`_SetCasteProd`/
+  `_SetModeProd`, SIMANTW.SYM seg7:026E/0326, NO args; FAR return,
+  210/156 bytes) — `_GetStrategy`'s own two unexplored callees flagged
+  at cont.172's deferral, now closed out. Composes `a_f_ldiv` (signed)
+  and `a_f_ulmul` (unsigned) respectively.
+  - `set_caste_prod`: 4-slot target-vs-actual caste-production
+    percentage comparison (`a_f_ldiv`-based), argMIN of the difference
+    (strict `<`, ties keep the first slot, defaults to slot 0),
+    writing the winner into `simant_data_group[0x8A56]` — the SAME
+    "hatch mode" field `sim_egg_b` already reads.
+  - `set_mode_prod`: NOT a mechanical mirror (independently confirmed)
+    — only 3 slots, no total-positive guard (moot, fixed `0xFFFF`
+    divisor), a genuinely UNSIGNED multiply/divide pair (the ASM still
+    sign-extends via `cwd` before the unsigned multiply — a real
+    quirk, replicated by passing the signed Python int through
+    `a_f_ulmul`'s own masking), and argMAX (not argMIN) of the
+    difference. `__aFuldiv` has no plain-Python composable form (only
+    a `hooks.py` VM island), so this inlines the identical unsigned
+    floor-divide semantics as a local helper. Writes
+    `simant_data_group[0x8A58]` — the SAME fixed WORD `get_new_mode`'s
+    own fallback path reads.
+- RECOVERED `gstr_b` (`_GstrB`, SIMANTW.SYM seg7:01CC, NO args; FAR
+  return, 162 bytes) — a PURE predicate (no calls, no side effects at
+  all) that picks a black-colony "strategy" tier 0-5. A STANDALONE
+  callable duplicate of the SAME threshold logic `_GetStrategy`'s own
+  inline code computes (that routine writes its copy straight into
+  `pack[0x9B8A]` instead of returning it — the two never literally
+  call each other, confirmed via disassembly, not assumed).
+  - Caught a genuine bug in my OWN test seeding (not in the recovery)
+    via a first failing assertion: assumed `pack[0x79DC]`/`[0x72C8]`
+    were direct DGROUP reads like `[0xAC82]`/`[0xAC84]`/`[0xAC86]`
+    (all SS-segment-prefixed, and SS == DGROUP for this app) — but a
+    close re-read of the raw ES-override bytes showed those TWO
+    fields are reached through the SAME hardcoded `0x5EF3` PACK
+    segment literal seen throughout this session. Fixed by adding
+    `pack` as a real parameter and correcting which segment each field
+    reads from.
+- Deferred `_GstrR` after disassembling it fully: genuinely NOT a
+  mechanical twin of `_GstrB` (independently confirmed) — it has an
+  extra "attack cooldown" gate at the top (`pack[0x8078]`/`[0x78DC]`),
+  swapped `[0xAC82]`/`[0xAC84]` operand roles vs `_GstrB`'s, different
+  gate fields (`pack[0x78E8]`/`[0x7A56]` instead of B's `[0x79DC]`/
+  `[0x72C8]`), and — where `_GstrB` just returns `0`, `_GstrR`'s
+  equivalent branch instead rolls MORE randomness (`_SRand32()`, then
+  conditionally `_SRand128()`) and — if it decides to "attack" — reseeds
+  `pack[0x78DC]` and fires TWO external notification calls into
+  GR_MODULE (seg2, graphics — likely presentation) AND SIMANT_MODULE
+  (seg1, the top-level module — NOT confidently presentation-only,
+  unlike GR_MODULE) before returning `0`. Given that ambiguity, this
+  is deferred rather than guessed at — a good next-session target once
+  those two external calls are understood (or a `NotImplementedError`
+  gate is judged the honest choice instead). `_GetStrategy` itself
+  (the master orchestrator, seg7:0) remains deferred too, pending a
+  full pass now that both its former blockers are resolved.
+- 13 cases (3 `set_caste_prod`, 3 `set_mode_prod`, 7 `gstr_b`) — ALL
+  GREEN (after the one seeding fix above, which was caught before
+  being mistaken for a recovery bug).
+- Suite: simant 1748 (+13), full suite green.
+
 ## 2026-07-15 (cont.172) — /goal grind: _FeedAnts — hunger-decay food tick
 - Deferred `_GetStrategy`/`_GstrB`/`_GstrR` after a first look:
   `_GetStrategy` (seg7:0, 460 bytes) is genuinely the master orchestrator

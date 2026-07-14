@@ -7617,3 +7617,194 @@ def feed_ants(dgroup, simant_data_group, pack) -> None:
 
     raise NotImplementedError(
         "feed_ants: _AddFood branch reached (not recovered)")
+
+
+def set_caste_prod(dgroup, simant_data_group) -> None:
+    """Pick the colony's next "hatch mode" by comparing target vs. actual
+    caste-production percentages, writing the winner into
+    `simant_data_group[0x8A56]` — the SAME field `sim_egg_b`'s hatch
+    branch reads to decide what an egg turns into.
+
+    Recovered from `_SetCasteProd` (SIMANTW.SYM seg7:026E, NO args; FAR
+    return, 210 bytes — one of `_GetStrategy`'s own two unexplored
+    callees, cont.172's deferral). Composes the already-recovered
+    `a_f_ldiv` (signed 32-bit division).
+
+    Sums 4 target counts (`dgroup[0xAC96..0xAC9C]`, direct — no
+    pointer-global indirection) and 4 actual counts
+    (`simant_data_group[0x8622..0x8628]`), then computes each slot's
+    percentage of its own total (`100 * value // total`, `0` when that
+    total isn't `> 0` — the SAME guard that avoids ever calling
+    `a_f_ldiv` with a non-positive divisor). Finds the slot index
+    with the MOST NEGATIVE `(target_pct - actual_pct)` (a strict `<`
+    comparison, so the first slot wins ties; defaults to slot `0` if no
+    difference is negative), looks that index up in a fixed
+    `simant_data_group[0x89AE..]` table, and stores the result.
+    """
+    from .crt_math import a_f_ldiv
+
+    total_target = 0
+    total_actual = 0
+    for i in range(4):
+        total_target = (total_target + dgroup.rw(0xAC96 + i * 2)) & 0xFFFF
+        total_actual = (total_actual + simant_data_group.rw(0x8622 + i * 2)) & 0xFFFF
+    total_target = _sx16(total_target)
+    total_actual = _sx16(total_actual)
+
+    target_pct = [0, 0, 0, 0]
+    actual_pct = [0, 0, 0, 0]
+    for i in range(4):
+        if total_target > 0:
+            value = _sx16(dgroup.rw(0xAC96 + i * 2))
+            target_pct[i] = _sx16(a_f_ldiv(100 * value, total_target) & 0xFFFF)
+        if total_actual > 0:
+            value = _sx16(simant_data_group.rw(0x8622 + i * 2))
+            actual_pct[i] = _sx16(a_f_ldiv(100 * value, total_actual) & 0xFFFF)
+
+    best_diff = 0
+    best_index = 0
+    for i in range(4):
+        diff = target_pct[i] - actual_pct[i]
+        if diff < best_diff:
+            best_diff = diff
+            best_index = i
+
+    mode = simant_data_group.rw(0x89AE + best_index * 2)
+    simant_data_group.ww(0x8A56, mode & 0xFFFF)
+
+
+def set_mode_prod(simant_data_group, pack) -> None:
+    """Pick the colony's next "mode" production target by comparing a
+    fixed-scale production percentage against each mode's raw tallied
+    population, writing the winner into `simant_data_group[0x8A58]` —
+    the SAME fixed WORD `get_new_mode`'s own fallback path reads.
+
+    Recovered from `_SetModeProd` (SIMANTW.SYM seg7:0326, NO args; FAR
+    return, 156 bytes — `_GetStrategy`'s OTHER unexplored callee).
+    Composes the already-recovered `a_f_ulmul` (unsigned 32-bit
+    multiply); the matching unsigned divide, `__aFuldiv`, has no plain-
+    Python composable form (it's a `hooks.py` VM-level island only, per
+    that module's own comment), so this inlines the identical
+    semantics as a local helper — a plain unsigned 32-bit floor divide,
+    raising `ZeroDivisionError` on a zero divisor like the real ASM's
+    `div` fault would (never actually reachable here since the
+    divisor is the fixed constant `0xFFFF`).
+
+    NOT a mechanical mirror of `set_caste_prod` (independently confirmed
+    via the raw disassembly): only 3 slots (not 4), no total-positive
+    guard before the divide (moot, since the divisor here is always the
+    fixed `0xFFFF`, never a computed total), a GENUINE UNSIGNED
+    multiply/divide pair instead of `a_f_ldiv`'s signed one (the ASM
+    still sign-extends the 32-bit total via `cwd` before that unsigned
+    multiply — a real quirk, replicated by passing the signed Python
+    int through `a_f_ulmul`, whose own masking reproduces the
+    two's-complement reinterpretation correctly), and finds the
+    MAXIMUM difference (not the minimum) with a STRICT-greater tie
+    rule (first slot wins ties, same direction as `set_caste_prod`'s
+    own strict rule, just an argmax instead of an argmin).
+
+    Sums `pack[0x9E70]`/`[0x9E72]`/`[0x9E74]` (the SAME per-mode
+    population tallies `tally_mode_pop` writes) into `total`. For each
+    of the 3 slots: `percent = (total * pack[0x9C74+slot*2]) // 0xFFFF`
+    (unsigned), then `diff = percent - pack[0x9E70+slot*2]` (signed,
+    16-bit-wrapped). The slot with the largest `diff` (ties keep the
+    first) indexes a fixed `simant_data_group[0x89B6..]` table; that
+    value is the new `[0x8A58]`.
+    """
+    from .crt_math import a_f_ulmul
+
+    def uldiv(dividend, divisor):
+        dividend &= 0xFFFFFFFF
+        divisor &= 0xFFFFFFFF
+        if divisor == 0:
+            raise ZeroDivisionError(
+                "set_mode_prod: uldiv divide by zero -- the ASM would #DE here")
+        return dividend // divisor
+
+    total = 0
+    for i in range(3):
+        total = (total + pack.rw(0x9E70 + i * 2)) & 0xFFFF
+
+    percent = [0, 0, 0]
+    for i in range(3):
+        product = a_f_ulmul(_sx16(total), pack.rw(0x9C74 + i * 2))
+        percent[i] = uldiv(product, 0xFFFF) & 0xFFFF
+
+    best_diff = 0
+    best_index = 0
+    for i in range(3):
+        diff = (percent[i] - pack.rw(0x9E70 + i * 2)) & 0xFFFF
+        if _sx16(diff) > _sx16(best_diff):
+            best_diff = diff
+            best_index = i
+
+    mode = simant_data_group.rw(0x89B6 + best_index * 2)
+    simant_data_group.ww(0x8A58, mode & 0xFFFF)
+
+
+def gstr_b(dgroup, pack) -> int:
+    """Pick a black-colony "strategy" tier (0-5) from a handful of
+    DGROUP population/activity fields plus two PACK-resident ones — a
+    PURE predicate, no side effects at all (confirmed via the raw
+    disassembly: no far/near calls, nothing written). This is a
+    STANDALONE callable duplicate of the shape `_GetStrategy`'s own
+    inline code also computes (that routine writes its copy straight
+    into `pack[0x9B8A]` instead of returning it — the two are
+    algorithmically identical but never literally call each other).
+
+    Recovered from `_GstrB` (SIMANTW.SYM seg7:01CC, NO args; FAR
+    return, 162 bytes). `dgroup[0xAC82]`/`[0xAC84]`/`[0xAC86]` are
+    genuine direct DGROUP reads (SS-segment-prefixed, and SS == DGROUP
+    for this small-model app); `pack[0x79DC]`/`[0x72C8]` are reached
+    via the SAME hardcoded `0x5EF3` PACK segment literal seen
+    throughout this session — independently confirmed by reading the
+    raw ES-override bytes, not assumed uniform with the DGROUP fields.
+
+    `dgroup[0xAC86] < 10` AND `dgroup[0xAC82] >> 1` (arithmetic shift)
+    `> dgroup[0xAC84]` AND `dgroup[0xAC84] > 0` AND `pack[0x79DC] > 0`:
+    `0`.
+
+    Otherwise, by `dgroup[0xAC86]`: `< 0x1E` -> `5`; `< 0x32` -> `4`.
+
+    Otherwise: `pack[0x72C8] < dgroup[0xAC82]` -> `3`;
+    `pack[0x72C8] < (dgroup[0xAC82] << 1)` (16-bit-wrapped) -> `2`.
+
+    Otherwise: if `dgroup[0xAC82] > 0x64` AND `dgroup[0xAC84] > 0` AND
+    `pack[0x79DC] > 0`, and `dgroup[0xAC82] // 3` (C-style truncating
+    division) is STRICTLY GREATER than `dgroup[0xAC84]`: `0`. Every
+    other path: `1`.
+    """
+    def sx(v):
+        v &= 0xFFFF
+        return v - 0x10000 if v & 0x8000 else v
+
+    def tdiv(v, d):
+        q = abs(v) // d
+        return -q if v < 0 else q
+
+    ac86 = sx(dgroup.rw(0xAC86))
+    if ac86 < 10:
+        ac84 = sx(dgroup.rw(0xAC84))
+        half = sx(dgroup.rw(0xAC82)) >> 1
+        if half > ac84 and ac84 > 0 and sx(pack.rw(0x79DC)) > 0:
+            return 0
+
+    if ac86 < 0x1E:
+        return 5
+    if ac86 < 0x32:
+        return 4
+
+    ac82 = sx(dgroup.rw(0xAC82))
+    if sx(pack.rw(0x72C8)) < ac82:
+        return 3
+    doubled = sx((ac82 << 1) & 0xFFFF)
+    if sx(pack.rw(0x72C8)) < doubled:
+        return 2
+
+    if ac82 > 0x64:
+        ac84_2 = sx(dgroup.rw(0xAC84))
+        if ac84_2 > 0 and sx(pack.rw(0x79DC)) > 0:
+            if tdiv(ac82, 3) > ac84_2:
+                return 0
+
+    return 1
