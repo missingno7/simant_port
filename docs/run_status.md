@@ -1,5 +1,56 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.163) — /goal grind: _FoodFall/_DropFoodA — yard food-fall physics
+- RECOVERED `food_fall`/`drop_food_a` (`_FoodFall`/`_DropFoodA`,
+  SIMANTW.SYM seg5:0EAA/0D86; the LAST of the originally-deferred
+  round-5 candidates, closing that batch out entirely). Resolved the
+  "unexplained zero-extension quirk on a signed delta table" flagged at
+  deferral time: `food_fall`'s per-step `(dx, dy)` walk delta is read
+  from `dgroup[pack[0x9C66] + 0x22BE/0x22C2]` as an UNSIGNED byte (zero-
+  extended) even though the table holds signed deltas (`0xFF` meaning
+  `-1`) — confirmed via the raw disassembly (no sign-extend instruction
+  anywhere in either routine) and ported literally, not corrected. Since
+  `pack[0x9C66]` never changes mid-call, `(dx, dy)` are effectively
+  constants per call.
+  - `food_fall(x, y)`: walks the yard map plane by `(dx, dy)` each
+    step, "hardens" the first tile `< 4` it lands on
+    (`(tile + 6) << 2`, bumping `pack[0x9E84]`), and keeps walking
+    until it goes out of the signed `[0, 0x7F]`x`[0, 0x3F]` bounds.
+    Returns `dx` itself — the real ASM's natural fall-through leaves
+    whatever the constant x-delta byte was in AX; no explicit return
+    value is ever set, a genuine leftover-register quirk, independently
+    confirmed and ported as-is (NOT the clean `0`/`1` `_DropFoodA`'s own
+    inlined copy of this same loop explicitly forces).
+  - `drop_food_a(x, y)` dispatches on `pack[0x9B6E]` ("inside") and the
+    current yard tile: hardens tiles `< 4`; recursively re-harden tiles
+    `8..0x17` via `(tile-8)>>2`; plain-increments `0x18..0x26`; runs
+    `food_fall`'s walk (for side effects only, ALWAYS returning `1`
+    regardless of the walk's own quirky return) for tiles `4..7` OR
+    `0x27..0x3F` — a genuine NON-CONTIGUOUS union, independently
+    confirmed via the raw disassembly, not a transcription slip; and
+    no-ops `>= 0x40`. Outside ("not inside"): force-sets tiles `< 0x48`
+    to exactly `0x48`, increments `0x48..0x4A`, no-ops `>= 0x4B`.
+- Caught and fixed a genuine TEST-HARNESS bug (not a recovery bug) via
+  a real hang: the first `food_fall` state-diff test's DGROUP region
+  window started at `0x28E8` (the yard map plane base), excluding the
+  `0x22BE`/`0x22C2` delta-table bytes the recovered Python reads —
+  the windowed `ByteBackend`'s negative-offset wraparound fed garbage
+  into the walk, and the resulting bogus `(dx, dy)` sent the Python
+  loop into (what looked like, and given enough bad luck could
+  genuinely be) an unbounded walk while the REAL ASM run — using the
+  correctly-seeded live machine memory, unaffected by the Python-side
+  windowing bug — finished in 136 steps every time. Diagnosed via two
+  side-by-side instrumented traces (one hand-built matching the harness
+  exactly, one via the harness's own `_run_and_diff_segs`) that proved
+  the ASM itself was never the problem; fixed by widening the region's
+  low bound to `0x22BE`.
+- 13 cases (4 `food_fall`, 9 `drop_food_a` spanning both `inside`
+  polarities and every tile-range branch including the non-contiguous
+  scatter union) — all green after the harness-window fix.
+- Suite: simant 1669 (+13), full suite green. This closes out every
+  originally-deferred round-5/6 candidate from this session
+  (`_GetMyDir`, `_GetMyDis`, `_FoodFall`/`_DropFoodA`) — none remain.
+
 ## 2026-07-14 (cont.162) — /goal grind: _GetMyDis — cross-plane distance
 - RECOVERED `get_my_dis` (`_GetMyDis`, SIMANTW.SYM seg6:8682, args
   plane=[bp+6], cur_x=[bp+8], cur_y=[bp+10], tgt_plane=[bp+12],

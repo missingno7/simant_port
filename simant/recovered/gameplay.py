@@ -6866,3 +6866,131 @@ def get_my_dis(simant_data_group, plane: int, cur_x: int, cur_y: int,
     dx, dy = tbl(0x8356, 0x8358)
     leg3 = dis(cur_x, cur_y, dx, dy)
     return (running + leg3) & 0xFFFF
+
+
+def food_fall(dgroup, pack, x: int, y: int) -> int:
+    """Falling-dirt/food physics on the yard map plane
+    (`MAP_PLANE_BASE[0]`): starting at `(x, y)`, repeatedly steps by a
+    FIXED per-call `(dx, dy)` delta read from a small table at
+    `dgroup[pack[0x9C66] + 0x22BE]` (dx) / `[+0x22C2]` (dy) — both bytes
+    read UNSIGNED (zero-extended), even though the table stores signed
+    deltas (e.g. `0xFF` meaning `-1`); this is a genuine ASM quirk
+    (independently confirmed via the raw disassembly — the compiler
+    never emits a sign-extend here — and ported literally, not a
+    transcription slip). Since `pack[0x9C66]` never changes mid-call,
+    `dx`/`dy` are effectively CONSTANTS for the whole walk.
+
+    Recovered from `_FoodFall` (SIMANTW.SYM seg5:0EAA, args x=[bp+6],
+    y=[bp+8]; FAR return). Each step: if the current cell's tile is
+    `< 4`, "hardens" it to `(tile + 6) << 2` and bumps `pack[0x9E84]`
+    (clearing the walk's own "still falling" flag — the harden only
+    ever fires once per call, on whichever step first lands on a
+    hardenable tile, but the walk keeps going after it). The walk then
+    advances by `(dx, dy)` and re-derives an x-in-`[0, 0x7F]` /
+    y-in-`[0, 0x3F]` (both SIGNED range checks) bounds gate combined
+    with the "still falling" flag; it stops once that combined flag
+    goes false.
+
+    Returns `dx` itself — the real ASM's natural fall-through leaves
+    whatever the last x-delta byte read happened to be in AX (no
+    explicit return value is ever set), a genuine leftover-register
+    quirk. Since `dx` is constant per call, this simplifies to just the
+    table byte itself, but is still a deliberately-preserved quirk, not
+    a "clean" `0`/`1` the way `drop_food_a`'s own explicit `return 1`
+    is for its OWN inlined copy of this same loop.
+    """
+    delta_base = pack.rw(0x9C66)
+    dx = dgroup.rb(delta_base + 0x22BE)
+    dy = dgroup.rb(delta_base + 0x22C2)
+    dx_shifted = dx << 6
+
+    cx, si, di = x, y, x << 6
+    falling = 1
+    while True:
+        cell = MAP_PLANE_BASE[0] + di + si
+        tile = dgroup.rb(cell)
+        if tile < 4:
+            dgroup.wb(cell, ((tile + 6) << 2) & 0xFF)
+            pack.ww(0x9E84, (pack.rw(0x9E84) + 1) & 0xFFFF)
+            falling = 0
+
+        di = (di + dx_shifted) & 0xFFFF
+        si = (si + dy) & 0xFFFF
+        cx = (cx + dx) & 0xFFFF
+
+        keep = falling if 0 <= _sx16(cx) <= 0x7F else 0
+        if not (0 <= _sx16(si) <= 0x3F):
+            keep = 0
+        falling = keep
+        if falling == 0:
+            break
+    return dx
+
+
+def drop_food_a(dgroup, pack, x: int, y: int) -> int:
+    """Drop a unit of food/dirt onto the yard map plane at `(x, y)` —
+    behavior depends on `pack[0x9B6E]` ("inside") and the current tile
+    value there.
+
+    Recovered from `_DropFoodA` (SIMANTW.SYM seg5:0D86, args x=[bp+6],
+    y=[bp+8]; FAR return, 0x124 bytes). Composes `food_fall` (its own
+    inlined copy of the exact same loop, independently re-verified
+    instruction-for-instruction — the only difference is the terminal
+    return value: this routine forces `1` unconditionally instead of
+    `food_fall`'s leftover-`dx` quirk).
+
+    `pack[0x9B6E] == 1` ("inside"):
+      - tile `< 4`: hardens to `(tile + 6) << 2`, bumps `pack[0x9E84]`,
+        returns `1`.
+      - tile `8..0x17`: reduces to `(tile - 8) >> 2` and re-applies the
+        SAME harden step to that reduced value (a genuine recursive-
+        style reduction in the original ASM — one re-entry, not a
+        loop).
+      - tile `0x18..0x26`: plain `tile += 1`, bumps `pack[0x9E84]`,
+        returns `1` — no harden transform.
+      - tile `4..7` OR `0x27..0x3F` (a genuine non-contiguous union,
+        independently confirmed via the raw disassembly, not a
+        transcription slip): runs `food_fall`'s walk for its side
+        effects, then unconditionally returns `1`.
+      - tile `>= 0x40`: no-op, returns `0`.
+
+    `pack[0x9B6E] != 1` ("outside"): simpler —
+      - tile `< 0x48`: force-sets the tile to exactly `0x48`, bumps
+        `pack[0x9E84]`, returns `1`.
+      - tile `0x48..0x4A`: plain `tile += 1`, bumps `pack[0x9E84]`,
+        returns `1` (the SAME increment tail the "inside" `0x18..0x26`
+        case uses).
+      - tile `>= 0x4B`: no-op, returns `0`.
+    """
+    cell = MAP_PLANE_BASE[0] + (x << 6) + y
+    tile = dgroup.rb(cell)
+
+    def harden(t):
+        dgroup.wb(cell, ((t + 6) << 2) & 0xFF)
+        pack.ww(0x9E84, (pack.rw(0x9E84) + 1) & 0xFFFF)
+        return 1
+
+    def bump():
+        dgroup.wb(cell, (dgroup.rb(cell) + 1) & 0xFF)
+        pack.ww(0x9E84, (pack.rw(0x9E84) + 1) & 0xFFFF)
+        return 1
+
+    if pack.rw(0x9B6E) == 1:
+        if tile < 4:
+            return harden(tile)
+        if 8 <= tile <= 0x17:
+            return harden((tile - 8) >> 2)
+        if 0x18 <= tile <= 0x26:
+            return bump()
+        if tile >= 0x40:
+            return 0
+        food_fall(dgroup, pack, x, y)
+        return 1
+
+    if tile < 0x48:
+        dgroup.wb(cell, 0x48)
+        pack.ww(0x9E84, (pack.rw(0x9E84) + 1) & 0xFFFF)
+        return 1
+    if tile <= 0x4A:
+        return bump()
+    return 0

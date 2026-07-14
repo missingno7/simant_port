@@ -5749,3 +5749,64 @@ def test_getmydis_matches_asm(plane, cur_x, cur_y, tgt_plane, tgt_x, tgt_y, labe
     expect = get_my_dis(sdg_view, plane, cur_x, cur_y, tgt_plane, tgt_x, tgt_y)
     assert ax == (expect & 0xFFFF), (
         f"{label}: asm={ax:#06x} rec={expect & 0xFFFF:#06x}")
+
+
+# ---- _FoodFall/_DropFoodA (seg5:0EAA/0D86) — yard falling-food physics ----
+# food_fall's own tile writes + pack[0x9E84] counter; drop_food_a composes it
+# for its own tile-4..7/0x27..0x3F branch.
+_FOODFALL_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x22BE, 0x48E8),
+    (_PACK, 0x9B00, 0x9F00),
+]
+
+
+def _foodfall_seed(x, y, tiles, delta_base, dx, dy, inside=None):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x9C66, delta_base & 0xFFFF)
+        m.mem.wb(dg, (delta_base + 0x22BE) & 0xFFFF, dx & 0xFF)
+        m.mem.wb(dg, (delta_base + 0x22C2) & 0xFFFF, dy & 0xFF)
+        if inside is not None:
+            m.mem.ww(pack, 0x9B6E, 1 if inside else 0)
+        for (ox, oy), tile in tiles.items():
+            m.mem.wb(dg, 0x28E8 + ((x + ox) << 6) + (y + oy), tile)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tiles,delta_base,dx,dy,label", [
+    (20, 20, {}, 0, 1, 0, "default-tile0-immediate-harden"),
+    (20, 20, {(0, 0): 10, (1, 0): 10, (2, 0): 10}, 0, 1, 0, "multi-step-then-harden"),
+    (5, 5, {(0, 0): 10}, 0, 0x7F, 0, "out-of-bounds-terminates"),
+    (20, 20, {(0, 0): 40}, 0, 1, 0, "no-op-tile-stays-nonhardenable-oob-eventually"),
+])
+def test_foodfall_state_diff_matches_asm(x, y, tiles, delta_base, dx, dy, label):
+    from simant.recovered.gameplay import food_fall
+    results = _run_and_diff_segs(
+        5, 0xEAA, (x, y), lambda d, p: food_fall(d, p, x, y),
+        _FOODFALL_REGIONS,
+        seed_fn=_foodfall_seed(x, y, tiles, delta_base, dx, dy))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _FOODFALL_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("x,y,tile,inside,label", [
+    (20, 20, 2, True, "inside-tile0-3-harden"),
+    (20, 20, 12, True, "inside-tile8-0x17-reduce-then-harden"),
+    (20, 20, 0x20, True, "inside-tile18-26-bump"),
+    (20, 20, 5, True, "inside-tile4-7-scatter"),
+    (20, 20, 0x30, True, "inside-tile27-3f-scatter"),
+    (20, 20, 0x50, True, "inside-tile-ge-40-noop"),
+    (20, 20, 0x10, False, "outside-tile-lt-48-force"),
+    (20, 20, 0x49, False, "outside-tile-48-4a-bump"),
+    (20, 20, 0x4B, False, "outside-tile-ge-4b-noop"),
+])
+def test_dropfooda_state_diff_matches_asm(x, y, tile, inside, label):
+    from simant.recovered.gameplay import drop_food_a
+    results = _run_and_diff_segs(
+        5, 0xD86, (x, y), lambda d, p: drop_food_a(d, p, x, y),
+        _FOODFALL_REGIONS,
+        seed_fn=_foodfall_seed(x, y, {(0, 0): tile}, 0, 1, 0, inside=inside))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _FOODFALL_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
