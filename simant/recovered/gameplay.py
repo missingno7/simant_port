@@ -2076,6 +2076,116 @@ def make_new_hole_r(dgroup, simant_data_group, pack, col: int) -> None:
     fix_exit_map_r(dgroup, simant_data_group, col, 1)
 
 
+def dig_tile_them_b(dgroup, simant_data_group, pack, x: int, y: int) -> int:
+    """Open a new black-colony nest tile at (x, y), PROVIDED its existing
+    dirt neighbours already look diggable — the routine that actually
+    triggers `make_new_hole_b` (row 0) or reuses `_DigTileB`'s reroll/track
+    bookkeeping (any other row).
+
+    Recovered from `_DigTileThemB` (SIMANTW.SYM seg5:22D4, args x=[bp+6],
+    y=[bp+8]; FAR return; returns 1 on success, 0 on any rejected case with
+    NO state changes at all).
+
+    - If `y < 0x3F`, the tile at `(x, y+1)` must be `is_it_dirt`; if
+      `y > 2`, the tile at `(x, y-1)` must be too — either check failing
+      rejects immediately (both together mean an edge row only needs the
+      ONE neighbour that exists).
+    - `x` must be in `1..0x3E` (0 and the far edge are rejected).
+    - `y == 0`: writes `0x18` at `(x, y)` and calls `make_new_hole_b(x)` —
+      row 0 doesn't reroll a tile here, it triggers a whole new hole
+      search.  Any other `y`: rerolls `(x, y)` to a random 0..7 via
+      `_SRand8`, exactly like `_DigTileB`'s own reroll step.
+    - Either way: accumulates `x`/`y` into the SAME running-average dig-
+      position fields `_DigTileB` uses (`pack[0x8104:0x8108]`/
+      `[0x811A:0x811E]`, counter `[0x72C8]`, averages `[0x7C48]`/
+      `[0x7C90]`, via genuine `__aFldiv` calls once the counter is
+      positive) — confirmed by the identical PACK offsets, not assumed by
+      naming — then smooths the 4 black-map neighbours and refreshes the
+      black exit-map at (x, y), and returns 1.
+    """
+    if y < 0x3F:
+        if not is_it_dirt(dgroup.rb(MAP_PLANE_BASE[2] + (x << 6) + y + 1)):
+            return 0
+    if y > 2:
+        if not is_it_dirt(dgroup.rb(MAP_PLANE_BASE[2] + (x << 6) + y - 1)):
+            return 0
+    if x == 0 or x > 0x3E:
+        return 0
+
+    idx = (x << 6) + y
+    if y == 0:
+        dgroup.wb(MAP_PLANE_BASE[2] + idx, 0x18)
+        make_new_hole_b(dgroup, simant_data_group, pack, x)
+    else:
+        from .simone import SRAND_SEED_OFF, srand_pow2
+
+        seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        dgroup.wb(MAP_PLANE_BASE[2] + idx, val & 0xFF)
+
+    xsum = _acc_add32(pack, 0x8104, 0x8106, x)
+    ysum = _acc_add32(pack, 0x811A, 0x811C, y)
+    count = (pack.rw(0x72C8) + 1) & 0xFFFF
+    pack.ww(0x72C8, count)
+    if _sx16(count) > 0:
+        from .crt_math import a_f_ldiv
+
+        pack.ww(0x7C48, a_f_ldiv(xsum, _sx16(count)) & 0xFFFF)
+        pack.ww(0x7C90, a_f_ldiv(ysum, _sx16(count)) & 0xFFFF)
+
+    smooth_edges_b(dgroup, x, y - 1)
+    smooth_edges_b(dgroup, x + 1, y)
+    smooth_edges_b(dgroup, x, y + 1)
+    smooth_edges_b(dgroup, x - 1, y)
+    fix_exit_map_b(dgroup, simant_data_group, x, y)
+    return 1
+
+
+def dig_tile_them_r(dgroup, simant_data_group, pack, x: int, y: int) -> int:
+    """The red-colony twin of `dig_tile_them_b` (map plane 3, `make_new_hole_r`
+    on row 0, `_DigTileR`'s own PACK accumulator fields otherwise).
+
+    Recovered from `_DigTileThemR` (SIMANTW.SYM seg5:241C, args x=[bp+6],
+    y=[bp+8]; FAR return).
+    """
+    if y < 0x3F:
+        if not is_it_dirt(dgroup.rb(MAP_PLANE_BASE[3] + (x << 6) + y + 1)):
+            return 0
+    if y > 2:
+        if not is_it_dirt(dgroup.rb(MAP_PLANE_BASE[3] + (x << 6) + y - 1)):
+            return 0
+    if x == 0 or x > 0x3E:
+        return 0
+
+    idx = (x << 6) + y
+    if y == 0:
+        dgroup.wb(MAP_PLANE_BASE[3] + idx, 0x18)
+        make_new_hole_r(dgroup, simant_data_group, pack, x)
+    else:
+        from .simone import SRAND_SEED_OFF, srand_pow2
+
+        seed, val = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        dgroup.wb(MAP_PLANE_BASE[3] + idx, val & 0xFF)
+
+    xsum = _acc_add32(pack, 0x9DDC, 0x9DDE, x)
+    ysum = _acc_add32(pack, 0x9DE2, 0x9DE4, y)
+    count = (pack.rw(0x7A56) + 1) & 0xFFFF
+    pack.ww(0x7A56, count)
+    if _sx16(count) > 0:
+        from .crt_math import a_f_ldiv
+
+        pack.ww(0x9FBA, a_f_ldiv(xsum, _sx16(count)) & 0xFFFF)
+        pack.ww(0x9FD2, a_f_ldiv(ysum, _sx16(count)) & 0xFFFF)
+
+    smooth_edges_r(dgroup, x, y - 1)
+    smooth_edges_r(dgroup, x + 1, y)
+    smooth_edges_r(dgroup, x, y + 1)
+    smooth_edges_r(dgroup, x - 1, y)
+    fix_exit_map_r(dgroup, simant_data_group, x, y)
+    return 1
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 

@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.100) — /goal grind: _DigTileThemB/R — the dig subsystem is DONE
+- RECOVERED `dig_tile_them_b`/`dig_tile_them_r` (seg5:22D4/241C, args x, y;
+  FAR return; genuinely return 1/0, unlike the other dig routines) — the
+  last dig-subsystem member from cont.90's original survey. Cleanest
+  disassembly of this entire thread (fits on one screen, no bugs caught).
+  - Opens a NEW nest tile at (x, y), but only if its EXISTING dirt
+    neighbours already look diggable: the tile at `(x, y+1)` must be
+    `is_it_dirt` (when `y < 0x3F`), and `(x, y-1)` too (when `y > 2`) —
+    either check failing rejects immediately with NO state changes at
+    all. `x` must be in `1..0x3E`.
+  - `y == 0`: writes `0x18` and calls `make_new_hole_b`/`make_new_hole_r`
+    directly — row 0 doesn't reroll a tile here, it triggers a whole new
+    hole search. Any other row: rerolls via `_SRand8`, exactly like
+    `_DigTileB`/`R`'s own reroll step.
+  - Either way: accumulates into the SAME running-average dig-position
+    PACK fields `_DigTileB`/`R` already use (confirmed by the identical
+    offsets, not assumed by naming), then smooths the 4 map neighbours and
+    refreshes the exit-map, returning 1.
+  - 16 scenarios (each neighbour-rejection independently, both x-boundary
+    rejections, the plain reroll path, both y-boundary edge cases where
+    one neighbour check is skipped, and the y=0 trigger path that fires a
+    fully inert `make_new_hole_b`/`r` call) for BOTH colonies — ALL GREEN
+    ON THE FIRST RUN.
+- **This completes the entire dig subsystem** cont.90's survey identified
+  as blocking `_TryMoveDirB/R` <-> `_GetOutB/R`: `_FixExitMapB/R`,
+  `_SmoothEdgesB/R`, `_ExitHole`, `__aFldiv`, `_DigTileB/R`,
+  `_MakeNewHoleB/R`, and now `_DigTileThemB/R` — 11 routines recovered
+  across cont.90-cont.100, all cross-verified, zero shortcuts.
+- Suite: simant 1167 (+16). Continuing per /goal — next: attempt
+  `_TryMoveDirB/R` itself (seg6:439E/6850), the mutual-recursion pair
+  with `_GetOutB/R` flagged since cont.84/85/90 as the actual unlock for
+  the movement-EXECUTION tier (as opposed to the movement-SELECTION tier
+  this session already closed). This is a new kind of challenge — genuine
+  co-recursion between two routines — so it may need a fresh survey pass
+  first to confirm the closure is really complete before diving in.
+
 ## 2026-07-14 (cont.99) — /goal grind: _MakeNewHoleR — the fixes from cont.98 paid off
 - RECOVERED `make_new_hole_r` (seg5:1D02, arg: col; FAR return). Confirmed
   by disassembly rather than assumed symmetry: the search, classification,

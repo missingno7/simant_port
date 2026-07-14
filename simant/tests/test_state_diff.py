@@ -651,6 +651,105 @@ def test_makenewholer_state_diff_matches_asm(col, seed_val, inside, row_tiles,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _DigTileThemB (seg5:22D4) — open a new tile given diggable neighbours -
+_DIGTILETHEMB_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed
+    (_SDG, 0, 0x9000),                       # delta tables, exit-map arrays, scratch fields
+    (_PACK, 0x7200, 0xA000),                 # inside flag + both colonies' dig accumulators
+]
+
+
+def _digtilethemb_seed(x, y, tile_yplus1, tile_yminus1, seed_val, inside):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        if 0 <= y + 1 <= 0x3F:
+            m.mem.wb(dg, 0x48E8 + (x << 6) + y + 1, tile_yplus1)
+        if 0 <= y - 1 <= 0x3F:
+            m.mem.wb(dg, 0x48E8 + (x << 6) + y - 1, tile_yminus1)
+        # keep any triggered make_new_hole_b's search inert: no marker tiles
+        # in its candidate rows (2..33) at this same column
+        for row in range(2, 34):
+            m.mem.wb(dg, 0x28E8 + (row << 6) + x, 0x10)
+        for c in (x - 1, x, x + 1):
+            if 0 <= c <= 0x3F:
+                m.mem.wb(dg, 0x68E8 + c, 0x00)   # yard life row 0, for smooth_edges' is_clear_tile
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tile_yplus1,tile_yminus1,seed_val,inside", [
+    (10, 20, 0x40, 0x20, 0x1234, True),        # y+1 not dirt -> reject, no changes
+    (10, 20, 0x20, 0x40, 0x1234, True),        # y-1 not dirt -> reject
+    (0, 20, 0x20, 0x20, 0x1234, True),         # x==0 -> reject
+    (0x3F, 20, 0x20, 0x20, 0x1234, True),      # x>0x3E -> reject
+    (10, 20, 0x20, 0x20, 0x1234, True),        # both neighbours dirt -> reroll + accumulate
+    (10, 63, 0x00, 0x20, 0x1234, True),        # y=63 (y+1 check skipped, out of range)
+    (10, 3, 0x20, 0x00, 0x1234, True),         # y=3 (y-1 check applies at the boundary)
+    (10, 0, 0x20, 0x00, 0x1234, True),         # y=0 -> writes 0x18 + triggers make_new_hole_b
+])
+def test_digtilethemb_state_diff_matches_asm(x, y, tile_yplus1, tile_yminus1,
+                                             seed_val, inside):
+    from simant.recovered.gameplay import dig_tile_them_b
+    results = _run_and_diff_segs(
+        5, 0x22D4, (x, y),
+        lambda d, s, p: dig_tile_them_b(d, s, p, x, y),
+        _DIGTILETHEMB_REGIONS,
+        seed_fn=_digtilethemb_seed(x, y, tile_yplus1, tile_yminus1, seed_val, inside))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DIGTILETHEMB_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} y+1={tile_yplus1:#x} y-1={tile_yminus1:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+# ---- _DigTileThemR (seg5:241C) — red-colony twin ---------------------------
+_DIGTILETHEMR_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0, 0x9000),
+    (_PACK, 0x7200, 0xA000),
+]
+
+
+def _digtilethemr_seed(x, y, tile_yplus1, tile_yminus1, seed_val, inside):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        if 0 <= y + 1 <= 0x3F:
+            m.mem.wb(dg, 0x58E8 + (x << 6) + y + 1, tile_yplus1)
+        if 0 <= y - 1 <= 0x3F:
+            m.mem.wb(dg, 0x58E8 + (x << 6) + y - 1, tile_yminus1)
+        # keep any triggered make_new_hole_r's search inert
+        for row in range(95, 127):
+            m.mem.wb(dg, 0x28E8 + (row << 6) + x, 0x10)
+        m.mem.wb(dg, 0x58E8 + (x << 6) + 1, 0x40)   # (col,1) not dirt -> closing reroll skipped
+    return seed
+
+
+@pytest.mark.parametrize("x,y,tile_yplus1,tile_yminus1,seed_val,inside", [
+    (10, 20, 0x40, 0x20, 0x1234, True),
+    (10, 20, 0x20, 0x40, 0x1234, True),
+    (0, 20, 0x20, 0x20, 0x1234, True),
+    (0x3F, 20, 0x20, 0x20, 0x1234, True),
+    (10, 20, 0x20, 0x20, 0x1234, True),
+    (10, 63, 0x00, 0x20, 0x1234, True),
+    (10, 3, 0x20, 0x00, 0x1234, True),
+    (10, 0, 0x20, 0x00, 0x1234, True),
+])
+def test_digtilethemr_state_diff_matches_asm(x, y, tile_yplus1, tile_yminus1,
+                                             seed_val, inside):
+    from simant.recovered.gameplay import dig_tile_them_r
+    results = _run_and_diff_segs(
+        5, 0x241C, (x, y),
+        lambda d, s, p: dig_tile_them_r(d, s, p, x, y),
+        _DIGTILETHEMR_REGIONS,
+        seed_fn=_digtilethemr_seed(x, y, tile_yplus1, tile_yminus1, seed_val, inside))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DIGTILETHEMR_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} y+1={tile_yplus1:#x} y-1={tile_yminus1:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only
