@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.114) — /goal grind: _StartFightA — initiate yard combat
+- RECOVERED `start_fight_a` (`_StartFightA`, seg6:266A, NEAR return, args
+  slot1/x1/y1/x2/y2, plus `pack`) — composes three already-recovered
+  routines (`find_in_a_list`, `get_winner`, `alarm_here2`) with no new
+  dependencies at all.
+- UNCONDITIONALLY, before even searching for a target: clears the
+  attacker's own caste field and its yard life-grid cell — it "vanishes"
+  whether or not a fight actually resolves (a detail that only shows up
+  by tracing instruction order, not by reading the high-level control
+  flow). Searches the A-list for an ant at `(x2, y2)`; if none found,
+  that's the entire effect. Otherwise resolves the matchup via
+  `get_winner(arg_a=defender's caste, arg_b=attacker's caste)` — verified
+  the exact push-order argument mapping (the caller's own local variable
+  order doesn't match the callee's positional argument order 1:1, easy to
+  get backwards) — and stamps the DEFENDER's slot (not the winner's) with
+  a "defeated" caste, `field_c=10`, and `field_e=winner`, then bumps the
+  ALARM grid there by 40. Notably, this "defeated" stamp lands on the
+  defender's slot regardless of which side actually won the roll —
+  confirmed intentional (not a misread) by testing both outcomes and
+  matching the real ASM byte-for-byte in each case.
+- 4 cases (no target found; the cheat-gate path; both real-calculation
+  win/lose outcomes) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1272 (+4).
+
 ## 2026-07-14 (cont.113) — /goal grind: _GetWinner — one-on-one combat matchup resolution
 - RECOVERED `get_winner` (`_GetWinner`, seg6:26F4, NEAR return, args
   arg_a/arg_b, plus `pack`) — found while investigating `_StartFightA`

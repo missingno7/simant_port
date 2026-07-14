@@ -2669,6 +2669,47 @@ def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
     dead_ant_here(dgroup, pack, a_x, a_y, colony_bit)
 
 
+def start_fight_a(dgroup, simant_data_group, pack, slot1: int, x1: int,
+                   y1: int, x2: int, y2: int) -> None:
+    """Initiate combat between a yard ant at `(x1, y1)` (A-list slot
+    `slot1`) and whatever ant occupies `(x2, y2)`, if any.
+
+    Recovered from `_StartFightA` (SIMANTW.SYM seg6:266A, NEAR return,
+    args slot1=[bp+4], x1=[bp+6], y1=[bp+8], x2=[bp+10], y2=[bp+12]).
+
+    UNCONDITIONALLY, before even looking for a target: clears the
+    attacker's own caste field and its yard life-grid cell at `(x1, y1)` —
+    it "vanishes" whether or not a fight actually resolves. Then searches
+    the A-list for an ant at `(x2, y2)` via the already-recovered
+    `find_in_a_list`; if none is found, that's the entire effect (no
+    fight). Otherwise, resolves the matchup via the already-recovered
+    `get_winner(arg_a=defender's caste, arg_b=attacker's caste)`, stamps
+    the DEFENDER's slot with a "defeated" caste
+    (`(winner & 0x80) + 0x70`, written to both its caste field and the
+    life-grid cell at `(x2, y2)`), sets its `field_c` to `10` and
+    `field_e` to the raw winner byte, and finally bumps the ALARM grid at
+    `(x2, y2)` by `40` via the already-recovered `alarm_here2`.
+    """
+    caste1 = simant_data_group.rb(0x2F62 + slot1)
+    simant_data_group.wb(0x2F62 + slot1, 0)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (x1 << 6) + y1, 0)
+
+    slot2 = find_in_a_list(pack, simant_data_group, x2, y2)
+    if slot2 == 0xFFFF:
+        return
+
+    caste2 = simant_data_group.rb(0x2F62 + slot2)
+    winner = get_winner(dgroup, simant_data_group, pack, caste2, caste1)
+
+    new_caste2 = (winner & 0x80) + 0x70
+    simant_data_group.wb(0x2F62 + slot2, new_caste2)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (x2 << 6) + y2, new_caste2)
+    simant_data_group.wb(0x2B78 + slot2, 10)
+    simant_data_group.wb(0x334C + slot2, winner & 0xFF)
+
+    alarm_here2(simant_data_group, x2, y2, 40)
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.

@@ -1125,6 +1125,69 @@ def test_getwinner_state_diff_matches_asm(cheat_flag, arg_a, arg_b, rand_state,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _StartFightA (seg6:266A) — initiate yard combat ----------------------
+# NEAR call/return. Composes the already-recovered _FindInAList, _GetWinner,
+# and _AlarmHere2.
+_STARTFIGHTA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x68E8, 0xAE40),   # yard life plane + GetWinner's tables/RAND_STATE
+    (_SDG, 0x2300, 0x8B00),                 # A-list fields + ALARM grid [0x52D2..) + cheat flag [0x8A5C]
+    (_PACK, 0x7900, 0xA100),   # A-list count [0x80F0] + GetWinner's win-count stats
+]
+
+
+def _startfighta_seed(slot1, x1, y1, x2, y2, caste1, has_target, slot2=0x30,
+                      caste2=0x08, cheat_flag=0, rand_state=0,
+                      strength_tbl=None, outcome_tbl=None):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        count = slot2 + 1
+        for i in range(count):
+            m.mem.wb(sdg, 0x2F62 + i, 0)
+        m.mem.wb(sdg, 0x2F62 + slot1, caste1)
+        m.mem.wb(sdg, 0x23A4 + slot1, x1)
+        m.mem.wb(sdg, 0x278E + slot1, y1)
+        m.mem.ww(pack, 0x80F0, count)
+        if has_target:
+            m.mem.wb(sdg, 0x23A4 + slot2, x2)
+            m.mem.wb(sdg, 0x278E + slot2, y2)
+            m.mem.wb(sdg, 0x2F62 + slot2, caste2)
+        m.mem.wb(sdg, 0x8A5C, cheat_flag)
+        m.mem.ww(dg, RAND_STATE_OFF, rand_state & 0xFFFF)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, (rand_state >> 16) & 0xFFFF)
+        for sub, v in (strength_tbl or {}).items():
+            m.mem.wb(dg, 0x8902 + sub, v)
+        for idx, v in (outcome_tbl or {}).items():
+            m.mem.wb(dg, 0x8918 + idx, v)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "has_target,caste1,caste2,cheat_flag,rand_state,strength_tbl,outcome_tbl", [
+    (False, 0x08, 0x08, 0, 0, None, None),                     # no target at (x2,y2) -> attacker vanishes only
+    (True, 0x08, 0x88, 1, 0, None, None),                       # cheat gate
+    (True, 0x08, 0x88, 0, 0, {1: 1}, {5: 5}),                     # roll(0)=8 >= outcome=5 -> attacker(caste1) wins
+    (True, 0x08, 0x88, 0, 1, {1: 1}, {5: 5}),                     # roll(1)=1 <  outcome=5 -> defender(caste2) wins
+])
+def test_startfighta_state_diff_matches_asm(has_target, caste1, caste2,
+                                            cheat_flag, rand_state,
+                                            strength_tbl, outcome_tbl):
+    from simant.recovered.gameplay import start_fight_a
+    slot1, x1, y1, x2, y2 = 0x10, 5, 5, 20, 20
+    results = _run_and_diff_segs(
+        6, 0x266A, (slot1, x1, y1, x2, y2),
+        lambda d, s, p: start_fight_a(d, s, p, slot1, x1, y1, x2, y2),
+        _STARTFIGHTA_REGIONS, near=True,
+        seed_fn=_startfighta_seed(slot1, x1, y1, x2, y2, caste1, has_target,
+                                  caste2=caste2, cheat_flag=cheat_flag,
+                                  rand_state=rand_state,
+                                  strength_tbl=strength_tbl,
+                                  outcome_tbl=outcome_tbl))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _STARTFIGHTA_REGIONS):
+        assert asm_after == rec_after, (
+            f"has_target={has_target} {label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
 # `_Do*Ant*` behavior routine recovered) -------------------------------------
 # NEAR call/return. `_FightBalloons` (ANTEDIT seg3:0x499A, presentation-only
