@@ -321,6 +321,23 @@ def is_it_a_hole(plane: int, x: int, y: int, tile: int, inside: bool) -> int:
     return 1 if tile == 0x18 else 0
 
 
+# The 3x3 neighbour offsets _IsClear3x3 walks (a DGROUP direction table): the 8
+# compass directions around the centre, in the order N, NE, E, SE, S, SW, W, NW.
+CLEAR_3X3_DX = (0, 1, 1, 1, 0, -1, -1, -1)
+CLEAR_3X3_DY = (-1, -1, 0, 1, 1, 1, 0, -1)
+
+
+def is_clear_3x3(cells_clear) -> int:
+    """Whether a whole 3x3 block is clear for movement.
+
+    Recovered from `_IsClear3x3` (SIMANTW.SYM seg5:5AD2): the centre cell and its
+    eight neighbours (offsets `CLEAR_3X3_DX`/`DY`) must all be clear per
+    `is_clear_tile`.  `cells_clear` is the iterable of the nine per-cell results
+    (centre first), so this is 1 iff every one is clear.
+    """
+    return 1 if all(cells_clear) else 0
+
+
 def get_dir(x1: int, y1: int, x2: int, y2: int) -> int:
     """Compass direction (0..8) from point 1 to point 2.
 

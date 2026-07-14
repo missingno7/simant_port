@@ -1433,6 +1433,78 @@ def _make_isvalidloc_island(machine):
     return island
 
 
+# -- _IsClear3x3 (seg5:5AD2) — is the whole 3x3 block clear? -------------------
+# Calls _IsClearTile on the centre then the 8 neighbours (offsets from the
+# DGROUP direction tables [0xC478]/[0xC47A]).  Residue is the LAST _IsClearTile
+# call's, threaded through the loop: dx=plane always; cx = that call's cx; bx is
+# sticky (only a VALID cell sets it, else the previous value survives); es is the
+# direction-table selector once any neighbour ran (else preserved).  si/di
+# push/pop'd.
+ISCLEAR3X3_SEG_INDEX = 5
+ISCLEAR3X3_OFF = 0x5AD2
+ISCLEAR3X3_SIG = bytes.fromhex("558bec57568b7e0a57ff7608ff7606900ee8")
+_CLEAR3X3_DX_SEL_G = 0xC47A
+_CLEAR3X3_DY_SEL_G = 0xC478
+
+
+def _make_isclear3x3_island(machine):
+    from .recovered.gameplay import (is_clear_tile, life_cell_offset,
+                                     map_cell_offset)
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        plane = _sx(plane_w)
+        x = _sx(m.rw(ss, (sp + 6) & 0xFFFF))
+        y = _sx(m.rw(ss, (sp + 8) & 0xFFFF))
+
+        def cell_clear(cxx, cyy):
+            """(_IsClearTile result, its cx residue, its bx residue or None)."""
+            off = map_cell_offset(plane, cxx, cyy)
+            if off is None:                           # invalid: bx is preserved
+                return 0, 0xFFFF, None
+            map_tile = m.rb(s.ds, off & 0xFFFF)
+            life = m.rb(s.ds, life_cell_offset(plane, cxx, cyy) & 0xFFFF)
+            return (is_clear_tile(plane, map_tile, life),
+                    0xFFFF if life == 0 else life,
+                    0 if life in (0xFE, 0xFF) else 0xFFFF)
+
+        s.dx = plane_w                                # _IsClearTile leaves dx=plane
+        clear, cxr, bxr = cell_clear(x, y)            # centre
+        s.cx = cxr
+        if bxr is not None:
+            s.bx = bxr
+        if not clear:                                 # centre fails: no dir read yet
+            s.ax = 0
+        else:
+            dx_sel = m.rw(s.ds, _CLEAR3X3_DX_SEL_G)
+            dy_sel = m.rw(s.ds, _CLEAR3X3_DY_SEL_G)
+            def _sxb(b):                              # cbw: byte -> signed word
+                return b - 0x100 if b & 0x80 else b
+            result = 1
+            for si in range(8):
+                s.es = dx_sel                         # the dir-table reads set es
+                nx = x + _sxb(m.rb(dx_sel, si & 0xFFFF))
+                ny = y + _sxb(m.rb(dy_sel, (8 + si) & 0xFFFF))
+                clear, cxr, bxr = cell_clear(nx, ny)
+                s.cx = cxr
+                if bxr is not None:
+                    s.bx = bxr
+                if not clear:
+                    result = 0
+                    break
+            s.ax = result
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsClearTile (seg5:5B2C) — is a cell clear (map passable + no blocking ant)? -
 # Reads the map (like _GetMap) AND the life grid (life_cell_offset).  Residue:
 #   invalid cell -> ax=0, cx=0xFFFF, dx=plane; bx/es preserved.
@@ -2455,6 +2527,8 @@ _ISLANDS = [
      lambda machine, off: _make_isnotbarrier_island(machine), "_IsNotBarrier"),
     (ISNOTOBSTACLE_SEG_INDEX, ISNOTOBSTACLE_OFF, ISNOTOBSTACLE_SIG,
      lambda machine, off: _make_isnotobstacle_island(machine), "_IsNotObstacle"),
+    (ISCLEAR3X3_SEG_INDEX, ISCLEAR3X3_OFF, ISCLEAR3X3_SIG,
+     lambda machine, off: _make_isclear3x3_island(machine), "_IsClear3x3"),
     (ISCLEARTILE_SEG_INDEX, ISCLEARTILE_OFF, ISCLEARTILE_SIG,
      lambda machine, off: _make_iscleartile_island(machine), "_IsClearTile"),
     (ISVALIDLOC_SEG_INDEX, ISVALIDLOC_OFF, ISVALIDLOC_SIG,
@@ -2510,7 +2584,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 68
+EXPECTED_ISLAND_COUNT = 69
 
 
 def install(machine) -> int:

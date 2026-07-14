@@ -1715,12 +1715,12 @@ def _pred_regs(s):
                 bp=s.bp, sp=s.sp, ds=s.ds, es=s.es)
 
 
-def _step_to_return(m, s, with_island, name):
+def _step_to_return(m, s, with_island, name, max_steps=200):
     if with_island:
         m.cpu.step()
     else:
-        for _ in range(200):
-            m.cpu.step()
+        for _ in range(max_steps):                    # bigger for routines that
+            m.cpu.step()                              # call sub-routines in a loop
             if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
                 break
         else:
@@ -2227,6 +2227,54 @@ def test_isitahole_island_matches_asm(plane, x, y, tile, inside):
     asm = _run_isitahole(False, plane, x, y, inside, tile)
     isl = _run_isitahole(True, plane, x, y, inside, tile)
     assert isl == asm, f"(p={plane},{x:#x},{y},t={tile:#x},in={inside}): {isl} != {asm}"
+
+
+# ---- _IsClear3x3 (seg5:5AD2) — 3x3 block clear (9x _IsClearTile) --------------
+def _run_isclear3x3(with_island, plane, x, y, blocked):
+    from simant.recovered.gameplay import (CLEAR_3X3_DX, CLEAR_3X3_DY,
+                                           life_cell_offset, map_cell_offset)
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    cells = [(x, y)] + [(x + dx, y + dy)
+                        for dx, dy in zip(CLEAR_3X3_DX, CLEAR_3X3_DY)]
+    for i, (cx, cy) in enumerate(cells):
+        mo = map_cell_offset(plane, cx, cy)
+        if mo is not None:                            # clear=map 0/life 0; block=high tile
+            m.mem.wb(DG, mo & 0xFFFF, 0xFF if blocked == i else 0x00)
+            m.mem.wb(DG, life_cell_offset(plane, cx, cy) & 0xFFFF, 0x00)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISCLEAR3X3_SEG_INDEX], hooks.ISCLEAR3X3_OFF
+    sp = s.sp
+    for v in (y, x, plane, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsClear3x3", max_steps=6000)
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("plane,x,y,blocked", [
+    (2, 0x10, 0x10, None),      # all 9 clear -> 1
+    (2, 0x10, 0x10, 0),         # centre blocked
+    (2, 0x10, 0x10, 1),         # first neighbour blocked
+    (2, 0x10, 0x10, 5),         # a middle neighbour blocked
+    (2, 0x10, 0x10, 8),         # last neighbour blocked
+    (0, 0x10, 0x10, None),      # nest plane, all clear
+    (0, 0x10, 0x10, 3),         # nest plane, a neighbour blocked
+    (2, 0x00, 0x00, None),      # corner: some neighbours off-grid -> not clear
+    (2, 0x3F, 0x3F, None),      # far corner
+])
+def test_isclear3x3_island_matches_asm(plane, x, y, blocked):
+    asm = _run_isclear3x3(False, plane, x, y, blocked)
+    isl = _run_isclear3x3(True, plane, x, y, blocked)
+    assert isl == asm, f"(p={plane},{x:#x},{y:#x},blk={blocked}): {isl} != {asm}"
 
 
 # ---- _IsClearTile (seg5:5B2C) — map passable + no blocking ant ---------------
