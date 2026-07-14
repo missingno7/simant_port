@@ -1,5 +1,30 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.118) — /goal grind: _StealFoodB/R — new candidate batch after a fresh survey pass
+- The prior survey's zero-blocker candidate list is now fully closed
+  (cont.117). Dispatched a fresh research pass (Explore agent) to find
+  the next batch — confirmed `_DoForageAnt` is STILL genuinely blocked
+  (re-traced all 19 callees; the only unrecovered ones are `_PickupFoodA`,
+  `_YellowFight`, and `SIMANT!_DoTroph`, the latter two on the same sound/
+  dialog/camera-follow UI chain flagged since early this session) and
+  surfaced a new ranked list: `_StealFoodB/R`, `_SimEggA`, a 5-routine
+  "Lost*" tier (`_LostHeadA/B/R`, `_LostTailB/R`), a food family
+  (`_EatFoodB/R`/`_TryEatFoodB/R`), `_PickupFoodA` itself (a genuine
+  `_DoForageAnt` dependency), and larger stretch targets
+  (`_RaidOutB/R`, `_QueenMoveB/R`).
+- RECOVERED `steal_food_b`/`r` (`_StealFoodB`/`R`, seg6:48B4/6C26, FAR
+  return, args x/y) — the smallest of the new batch (68 bytes each), only
+  callee `_SRand8`. An ant nibbling stored food at `(x, y)` on the
+  colony's nest map: if the cell is exactly the "full pile" tile
+  (`0x10`), rerolls it fresh via `_SRand8`; otherwise decrements the tile
+  by one — a genuine byte-wrapping `dec` with NO underflow guard (`0x00`
+  wraps to `0xFF`), ported faithfully. Also decrements the colony's
+  food-count stat, but only while it's still positive (floors at exactly
+  `0`, doesn't wrap).
+- 8 cases (4 scenarios x both colonies) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1310 (+8). `_SimEggA` (seg6:0A1C, 88 bytes, single
+  `_SRand1` dependency) is a good next small target.
+
 ## 2026-07-14 (cont.117) — /goal grind: _GetExitDir*/_GetEnterDir* — nest tunneling direction family
 - RECOVERED all four remaining zero-blocker `_Get*Dir`-style routines from
   the original survey, closing that list entirely: `get_exit_dir_b`/`r`

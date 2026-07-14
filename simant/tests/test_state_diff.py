@@ -1268,6 +1268,45 @@ def test_randturn_matches_asm(caste_low3, seed_val):
         f"caste_low3={caste_low3} seed={seed_val:#x}: seed mismatch")
 
 
+# ---- _StealFoodB / _StealFoodR (seg6:48B4 / 6C26) — nibble stored food ----
+_STEALFOOD_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x48E8, 0xCBF4),   # nest map planes 2+3 through the SRand seed
+    (_PACK, 0x7200, 0x9F00),                # both colonies' food-count stats
+]
+
+
+@pytest.mark.parametrize("colony,seg,off,map_base,count_off", [
+    ("B", 6, 0x48B4, 0x48E8, 0x9EA4),
+    ("R", 6, 0x6C26, 0x58E8, 0x72DE),
+])
+@pytest.mark.parametrize("tile,count,seed_val,label", [
+    (0x20, 5, 0x1234, "not the full-pile tile -> plain decrement"),
+    (0x00, 5, 0x1234, "tile byte 0 -> wraps to 0xFF (no underflow guard)"),
+    (0x10, 5, 0x1234, "full-pile tile -> rerolled via _SRand8"),
+    (0x20, 0, 0x1234, "count already 0 -> stat stays at the floor"),
+])
+def test_stealfood_state_diff_matches_asm(colony, seg, off, map_base,
+                                          count_off, tile, count, seed_val,
+                                          label):
+    from simant.recovered.gameplay import steal_food_b, steal_food_r
+    fn = steal_food_b if colony == "B" else steal_food_r
+    x, y = 10, 20
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(dg, map_base + (x << 6) + y, tile)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, count_off, count)
+
+    results = _run_and_diff_segs(
+        seg, off, (x, y),
+        lambda d, p: fn(d, p, x, y),
+        _STEALFOOD_REGIONS, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _STEALFOOD_REGIONS):
+        assert asm_after == rec_after, (
+            f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _GetExitDirB / _GetExitDirR (seg5:119C / 1240) — exit-distance-------
 # gradient direction, biased away from `exclude`'s opposite.
 @pytest.mark.parametrize("colony,seg,off,map_base,exit_base", [

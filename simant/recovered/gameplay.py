@@ -2909,6 +2909,47 @@ def rand_turn(dgroup, simant_data_group, caste_low3: int) -> int:
     return sx8(simant_data_group.rb(0x24 + roll + (caste_low3 << 3)))
 
 
+def _steal_food(dgroup, pack, map_base: int, count_off: int, x: int, y: int) -> None:
+    """Shared body of `steal_food_b`/`r`: an ant nibbling stored food at
+    `(x, y)` on the colony's nest map. If the cell is EXACTLY the "full
+    food pile" tile (`0x10`), rerolls it to a fresh `_SRand8()` value
+    instead of decrementing — otherwise decrements the tile by one (a
+    byte-wrapping decrement, matching the ASM's plain `dec` with no
+    underflow guard). Also decrements the colony's food-count stat
+    (`pack[count_off]`), but only while it's still positive (a signed
+    `> 0` guard, so it floors at exactly `0`).
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    idx = map_base + (x << 6) + y
+    tile = dgroup.rb(idx)
+    if tile == 0x10:
+        seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        dgroup.wb(idx, roll)
+    else:
+        dgroup.wb(idx, (tile - 1) & 0xFF)
+
+    if _sx16(pack.rw(count_off)) > 0:
+        pack.ww(count_off, (pack.rw(count_off) - 1) & 0xFFFF)
+
+
+def steal_food_b(dgroup, pack, x: int, y: int) -> None:
+    """Recovered from `_StealFoodB` (SIMANTW.SYM seg6:48B4, FAR return,
+    args x=[bp+6], y=[bp+8]). See `_steal_food`.
+    """
+    _steal_food(dgroup, pack, MAP_PLANE_BASE[2], 0x9EA4, x, y)
+
+
+def steal_food_r(dgroup, pack, x: int, y: int) -> None:
+    """The red-colony twin of `steal_food_b`.
+
+    Recovered from `_StealFoodR` (SIMANTW.SYM seg6:6C26, FAR return,
+    args x=[bp+6], y=[bp+8]).
+    """
+    _steal_food(dgroup, pack, MAP_PLANE_BASE[3], 0x72DE, x, y)
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.
