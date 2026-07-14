@@ -2970,6 +2970,57 @@ def get_defend_dir(dgroup, simant_data_group, pack, x: int, y: int,
     return use_dir(get_dir(x, y, target_x, target_y))
 
 
+def get_red_defend_dir(dgroup, simant_data_group, pack, x: int, y: int,
+                        caste_low3: int) -> int:
+    """The red-colony-specific sibling of `get_defend_dir`: same overall
+    shape (yard-edge `_Bounce`, mode 2/3 delegate to `get_nest_dir`, other
+    modes echo `caste_low3`), but the mode selector and mode-1 target come
+    from different, PACK-resident fields, and mode 1 has no
+    `pack[0x72EC]`-style attack-marker alternative — it's always the
+    distance-gated geometric branch.
+
+    Recovered from `_GetRedDefendDir` (SIMTWO.SYM seg7:1194, args x=[bp+6],
+    y=[bp+8], caste_low3=[bp+10]; FAR return). Mode comes from
+    `pack[0x7606]` (not `dgroup[0xCE80]`); mode 1's target is
+    `pack[0x80A6]`/`[0x80AC]` and its distance threshold is
+    `pack[0xA08E]`, checked against `get_dis` the same truncated-signed-word
+    way, with the same close-random/far-`get_dir` split (and the same "no
+    RNG on the far path" asymmetry).
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    def use_dir(dir_result: int) -> int:
+        if dir_result == 0:
+            return caste_low3
+        return sx8(simant_data_group.rb(0x24 + (caste_low3 << 3) + (dir_result - 1)))
+
+    edge = bounce(dgroup, x, y)
+    if edge != 0:
+        return (edge - 1) & 7
+
+    mode = pack.rw(0x7606)
+    if mode == 2:
+        return get_nest_dir(dgroup, simant_data_group, x, y, caste_low3, 0x00)
+    if mode == 3:
+        return get_nest_dir(dgroup, simant_data_group, x, y, caste_low3, 0x80)
+    if mode != 1:
+        return caste_low3
+
+    target_x = pack.rw(0x80A6)
+    target_y = pack.rw(0x80AC)
+    threshold_half = _sx16(pack.rw(0xA08E)) >> 1
+    dist = _sx16(get_dis(x, y, target_x, target_y) & 0xFFFF)
+    if threshold_half >= dist:
+        seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 8)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return use_dir(roll + 1)
+    return use_dir(get_dir(x, y, target_x, target_y))
+
+
 def do_dig_out_ant_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of a yard ant "digging out" — aging/mode-transition,
     or a move (with a natural-decay kill chance) toward a `_Bounce`-biased or

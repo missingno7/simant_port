@@ -1544,6 +1544,89 @@ def test_getdefenddir_mode1_far_uses_getdir_matches_asm():
                                          threshold=0))
 
 
+# ---- _GetRedDefendDir (seg7:1194) — red-colony sibling of _GetDefendDir ----
+# Same shape (edge, mode 2/3 -> get_nest_dir, mode 1 -> distance-gated
+# geometric branch, other -> echo caste_low3), but the mode selector and
+# mode-1 target/threshold are different PACK fields, and mode 1 has no
+# attack-marker alternative -- always the geometric branch.
+def _getreddefenddir_seed(mode, *, target_x=0, target_y=0, threshold=0,
+                          nest_own_scent=0, nest_neighbor_dir=None,
+                          nest_neighbor_scent=0, colony_flag=0x00):
+    def seed(m):
+        pack, sdg = m.seg_bases[_PACK], m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x7606, mode)
+        m.mem.ww(pack, 0x80A6, target_x & 0xFFFF)
+        m.mem.ww(pack, 0x80AC, target_y & 0xFFFF)
+        m.mem.ww(pack, 0xA08E, threshold & 0xFFFF)
+        for i in range(8):
+            m.mem.wb(sdg, i, _DX8[i])
+            m.mem.wb(sdg, 8 + i, _DY8[i])
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        _getnestdir_seed(nest_own_scent, nest_neighbor_dir,
+                         nest_neighbor_scent, colony_flag)(m)
+    return seed
+
+
+def _run_getreddefenddir(x, y, caste_low3, seed_val, seeder):
+    from simant.recovered.gameplay import get_red_defend_dir
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+        seeder(m)
+
+    ax, m = _run_and_get_ax(7, 0x1194, (x, y, caste_low3), seed_fn=seed)
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    asm_seed_after = m.mem.rw(dg, 0xCBF2)
+
+    buf = bytearray(m.mem.block(dg, 0, 0x10000))
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg = m.seg_bases[_SDG]
+    sdg_view = ByteBackend(m.mem.block(sdg, 0, 0x10000), 0)
+    pack = m.seg_bases[_PACK]
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    rec_ax = get_red_defend_dir(dgroup_view, sdg_view, pack_view, x, y, caste_low3)
+
+    assert ax == (rec_ax & 0xFFFF), f"x={x:#x} y={y:#x} seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, (
+        f"x={x:#x} y={y:#x} seed={seed_val:#x}: seed mismatch")
+
+
+def test_getreddefenddir_edge_matches_asm():
+    _run_getreddefenddir(0x7F, 0x3F, 5, 0x1234, _getreddefenddir_seed(1))   # BR corner
+
+
+def test_getreddefenddir_mode2_delegates_to_getnestdir_matches_asm():
+    _run_getreddefenddir(20, 20, 5, 0x1234,
+                         _getreddefenddir_seed(2, target_x=20, target_y=20,
+                                               colony_flag=0x00))
+
+
+def test_getreddefenddir_mode3_delegates_to_getnestdir_matches_asm():
+    _run_getreddefenddir(20, 20, 5, 0x1234,
+                         _getreddefenddir_seed(3, target_x=20, target_y=20,
+                                               colony_flag=0x80))
+
+
+@pytest.mark.parametrize("mode", [0, 4])
+def test_getreddefenddir_othermode_echoes_caste_matches_asm(mode):
+    _run_getreddefenddir(20, 20, 5, 0x1234, _getreddefenddir_seed(mode))
+
+
+def test_getreddefenddir_mode1_close_uses_random_matches_asm():
+    _run_getreddefenddir(20, 20, 5, 0x1234,
+                         _getreddefenddir_seed(1, target_x=20, target_y=20,
+                                               threshold=1000))
+
+
+def test_getreddefenddir_mode1_far_uses_getdir_matches_asm():
+    _run_getreddefenddir(20, 20, 5, 0x1234,
+                         _getreddefenddir_seed(1, target_x=25, target_y=20,
+                                               threshold=0))
+
+
 # ---- _DoDigOutAntA (seg6:1480) — second top-level `_Do*Ant*` routine -------
 # NEAR call/return, composes `_Bounce`, `_GetNewMode`, and (on a successful
 # move with a nonzero carried-dirt counter) `_JamScentBN`/`_JamScentRN`.

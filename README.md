@@ -107,6 +107,7 @@ flowchart TD
     gad["_GetAlarmDir"]
     grd["_GetRandDir"]
     gdd["_GetDefendDir"]
+    grdd["_GetRedDefendDir"]
   end
   subgraph L4["leaves — the foundation"]
     iva["_IsValidA"]
@@ -126,6 +127,7 @@ flowchart TD
   gad --> bnc & srand
   grd --> bnc & srand
   gdd --> bnc & gnd & srand
+  grdd --> bnc & gnd & srand
   dnb --> ddig & iyel & srand
   dfor --> iva & iyel & srand
   dfor -.-> fial & aal & csd
@@ -152,7 +154,7 @@ flowchart TD
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
   classDef front fill:#5c564b,stroke:#a99e86,color:#f3ece0,stroke-dasharray:5 4;
-  class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs,bnc,gfd,gnd,gad,grd,gdd done;
+  class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs,bnc,gfd,gnd,gad,grd,gdd,grdd done;
   class iva,idirt,iyel,srand load;
   class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
@@ -168,7 +170,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
 | `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA` top-level behaviors done; forage/nest frontier | 39 / 123 | movement **done** |
-| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`/`_Bounce`/`_Get*Dir` (forage/nest/alarm/rand/defend) done | 13 / 282 | mostly rendering |
+| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family done | 14 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
 The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88
@@ -215,18 +217,20 @@ move and then actually move* is byte-exact, end to end:
   `_Bounce`-biased or mode-table-random direction, composing `_Bounce`
   (also recovered — a yard-edge "bounce back into the map" compass) and the
   already-recovered `_JamScentBN`/`_JamScentRN`.
-- **Also recovered**: five of the six-routine seg7 `_Get*Dir` family —
+- **Also recovered, complete**: the six-routine seg7 `_Get*Dir` family —
   `_GetForageDir` (TRAIL scent gradient, its own non-`_Bounce` yard-edge
   scheme), `_GetNestDir` (NEST scent gradient, or homing toward the
   colony's queen/nest-entrance target via `_GetDir` when the ant's own
   cell has no scent), `_GetAlarmDir` (a single colony-neutral ALARM grid),
   `_GetRandDir` (no gradient at all — pure `_Bounce`-or-random), and
-  `_GetDefendDir` (gated on a global game-mode selector: modes 2/3
-  delegate wholesale to `_GetNestDir`, mode 1 steers toward a fixed attack
-  marker, any other mode is a no-op). Not yet consumed by a caller in this
-  repo (`_DoForageAnt` itself remains unrecovered), same as `_Bounce`
-  before `_DoDigOutAntA` landed. `_DeadAntHere` (a 100-slot corpse-decay
-  ring buffer),
+  `_GetDefendDir`/`_GetRedDefendDir` (each gated on a colony-specific
+  game-mode selector: modes 2/3 delegate wholesale to `_GetNestDir`, mode
+  1 steers toward a fixed attack marker or a distance-gated target, any
+  other mode is a no-op). None have a caller in this repo yet
+  (`_DoForageAnt`/`_DoNestAntB`/combat orchestration remain unrecovered),
+  same as `_Bounce` before `_DoDigOutAntA` landed — a self-contained
+  "direction picker" tier, ready for whichever top-level behavior routine
+  composes it next. `_DeadAntHere` (a 100-slot corpse-decay ring buffer),
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
   LFSR used for map generation).

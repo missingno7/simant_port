@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.112) — /goal grind: _GetRedDefendDir — seg7 `_Get*Dir` family COMPLETE
+- RECOVERED `get_red_defend_dir` (`_GetRedDefendDir`, seg7:1194, FAR
+  return, args x/y/caste_low3, plus `pack`) — the sixth and last of the
+  seg7 `_Get*Dir` family. The red-colony-specific sibling of
+  `get_defend_dir`: same overall shape (yard-edge `_Bounce`, mode 2/3
+  delegate to `get_nest_dir`, other modes echo `caste_low3`), but the mode
+  selector comes from `pack[0x7606]` (not `dgroup[0xCE80]`) and mode 1's
+  target/threshold are different PACK fields (`[0x80A6]`/`[0x80AC]`/
+  `[0xA08E]`) with NO `pack[0x72EC]`-style attack-marker alternative —
+  mode 1 here is always the distance-gated geometric branch. Independently
+  disassembled the full 344-byte body and verified all 4 new selectors
+  (all PACK) before writing any code.
+- 7 cases (edge, both mode-2/3 delegations, both other-mode no-ops, and
+  both mode-1 distance-threshold branches) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1264 (+7). **The entire six-routine seg7 `_Get*Dir`
+  family is now recovered**: `_GetForageDir`, `_GetNestDir`,
+  `_GetAlarmDir`, `_GetRandDir`, `_GetDefendDir`, `_GetRedDefendDir` — all
+  zero-blocker, all byte-exact on the first test run once written. None
+  have a caller in this repo yet (`_DoForageAnt`/`_DoNestAntB`/combat
+  orchestration remain unrecovered) — this closes out an entire
+  self-contained "direction picker" tier the way the pathfinding-
+  selection and dig-subsystem tiers closed out earlier in the project,
+  ready for whichever top-level behavior routine gets picked up next.
+
 ## 2026-07-14 (cont.111) — /goal grind: _GetDefendDir — game-mode-switched defend direction
 - RECOVERED `get_defend_dir` (`_GetDefendDir`, seg7:1026, FAR return, args
   x/y/caste_low3, plus `pack`) — fifth of the seg7 `_Get*Dir` family, and
