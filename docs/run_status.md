@@ -1,5 +1,39 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.132) — /goal grind: _SimQueenA — yard queen tick, round 3 survey
+- Dispatched a fourth research survey (round 2 closed out in cont.131).
+  Independently re-verified `_DoTroph` directly (not just trusting the
+  cached verdict): confirmed it calls `_MoveMyLife` (unrecovered, itself
+  reaching into presentation-entangled `_SetLife`) and `_EatMyFood`
+  (unrecovered) plus a genuine `ANTEDIT!_DoEditUpdateDraw` redraw — NOT a
+  clean separable no-op like `_FightBalloons` was for `_DoFightA`, so
+  `_DoForageAnt`/`_DoNestAntB`/`_DoRecruitAnt` remain blocked. The survey
+  found a genuine "previously-blocked-now-unblocked" discovery: the hole
+  family's `_CreateNewHole` (seg5:171A, 506B) — flagged as blocked in an
+  earlier session, but every one of its 9 callees is now recovered
+  (`_DigTileB`, `_IsItDirt`, `_SRand8`, `__aFldiv`, `_SmoothEdgesR`,
+  `_FixExitMapR`). Deferred it for now (large, multi-stage — spans a
+  `_dig_tile_reroll_and_track`-style running average feeding
+  `_QueenMoveR`'s own target fields) in favor of smaller candidates from
+  the same batch: `_MakeBlkQueen`/`_MakeRedQueen`, `_SimQueenA`,
+  `_BuildAntListA`, `_AddBlackAnts`/`_AddRedAnts`, `_IsItFoodAt`,
+  `_DropFoodA`/`_FoodFall`, `_FindAntIndex` (which unblocks `_SFoundAnt`),
+  `_UnRecruitRed`/`_RecruitRed` (which unblock `_GetNewRedTask`).
+- RECOVERED `sim_queen_a` (`_SimQueenA`, seg6:0A74, NEAR return, arg:
+  slot) — stamps the yard queen's caste onto the life grid, and once her
+  caste's low 7 bits exceed `0x67`, checks a marker cell one step in her
+  facing direction (the SAME encoded-marker relationship
+  `_LostHeadA`/`B`/`R` use: tile `== caste - 8`) to decide whether she
+  should vanish into the nest — only when the marker does NOT match AND
+  no ant is already at that cell.
+- Caught the SAME match/no-match branch-polarity trap already fixed once
+  this session in `_LostHead*`/`_LostTail*` — traced the jnz/fallthrough
+  order twice before writing any code this time, avoiding a repeat bug.
+- 4 cases (early-return gate, marker-intact no-vanish, ant-blocks-vanish,
+  and the actual vanish) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1415 (+4). Next: the small queen-spawn/ant-list/food
+  routines from this round's batch, or `_CreateNewHole` if time allows.
+
 ## 2026-07-14 (cont.131) — /goal grind: _RaidInB/R — entering the nest with food, round 2 batch COMPLETE
 - RECOVERED `raid_in_b`/`r` (`_RaidInB`/`R`, seg6:3524/5B2A, FAR return,
   args x/y/exclude_direction) — the entry-side twin of `raid_out_b`/`r`,

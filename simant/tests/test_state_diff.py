@@ -1371,6 +1371,52 @@ def test_simegga_state_diff_matches_asm(slot, a_x, a_y, caste, seed_val, label):
             f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _SimQueenA (seg6:0A74) — yard queen tick, may vanish into the nest ---
+_SIMQUEENA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x68E8, 0x78E8),   # yard life plane
+    (_SDG, 0, 0x3800),                      # compass tables + A-list fields
+    (_PACK, 0x80E0, 0x8100),                # covers [0x80F0] (A-list count)
+]
+_QDX8 = [0, 1, 1, 1, 0, 0xFF, 0xFF, 0xFF]
+_QDY8 = [0xFF, 0xFF, 0, 1, 1, 1, 0, 0xFF]
+
+
+@pytest.mark.parametrize("slot,x,y,caste,ant_count,neighbor_tile,label", [
+    (5, 20, 20, 0x81, 0, 0, "low 7 bits <= 0x67 -> stamp only, no check"),
+    (5, 20, 20, 0x70, 0, 0x68, "marker intact (tile == caste-8) -> no vanish"),
+    (5, 20, 20, 0x70, 1, 0x00, "no marker match, but an ant is there -> no vanish"),
+    (5, 20, 20, 0x70, 0, 0x00, "no marker match, no ant -> vanishes"),
+])
+def test_simqueena_state_diff_matches_asm(slot, x, y, caste, ant_count,
+                                          neighbor_tile, label):
+    from simant.recovered.gameplay import sim_queen_a
+    dir_idx = caste & 7
+    nx, ny = x + _QDX8[dir_idx], y + _QDY8[dir_idx]
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4 + slot, x)
+        m.mem.wb(sdg, 0x278E + slot, y)
+        m.mem.wb(sdg, 0x2F62 + slot, caste)
+        for i in range(8):
+            m.mem.wb(sdg, i, _QDX8[i])
+            m.mem.wb(sdg, 8 + i, _QDY8[i])
+        m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, neighbor_tile)
+        m.mem.ww(pack, 0x80F0, ant_count)
+        if ant_count:
+            m.mem.wb(sdg, 0x23A4, nx)
+            m.mem.wb(sdg, 0x278E, ny)
+            m.mem.wb(sdg, 0x2F62, 1)
+
+    results = _run_and_diff_segs(
+        6, 0x0A74, (slot,),
+        lambda d, s, p: sim_queen_a(d, s, p, slot),
+        _SIMQUEENA_REGIONS, near=True, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _SIMQUEENA_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _LostHeadA (seg6:0B1E) — yard trail-head marker occupancy check ------
 # Pure predicate: no mutation at all, so the recovered call safely reuses
 # `_run_and_get_ax`'s own (unmutated) machine directly.

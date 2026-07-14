@@ -3020,6 +3020,55 @@ def sim_egg_a(dgroup, simant_data_group, slot: int) -> None:
     dgroup.wb(life_off, 0)
 
 
+def sim_queen_a(dgroup, simant_data_group, pack, slot: int) -> None:
+    """Stamp the yard queen's caste onto the life grid, and — once her
+    caste's low 7 bits exceed `0x67` — check whether she should vanish
+    into the nest via a marker cell one step in her facing direction.
+
+    Recovered from `_SimQueenA` (SIMANTW.SYM seg6:0A74, NEAR return, arg:
+    slot). Always stamps the caste onto `LIFE_PLANE_BASE[0]` at her own
+    position (same "redundant but faithful" re-stamp as `sim_egg_a`). If
+    `caste & 0x7F <= 0x67`, that's the entire effect.
+
+    Otherwise: steps one cell in `caste & 7`'s compass direction and
+    reads the yard life plane there. If that cell's value equals
+    `caste - 8` (the SAME encoded-marker relationship `_LostHeadA` and
+    `_LostHeadB`/`R` use), the marker is intact and nothing else happens.
+    If it does NOT match, searches the A-list for an ant already at that
+    cell (`find_in_a_list`): if one is found, still nothing happens; only
+    when the tile doesn't match AND no ant is there does the queen
+    vanish — clearing her own caste field and life-grid cell.
+    """
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    y = simant_data_group.rb(0x278E + slot)
+    caste = simant_data_group.rb(0x2F62 + slot)
+    x = simant_data_group.rb(0x23A4 + slot)
+
+    own_off = LIFE_PLANE_BASE[0] + (x << 6) + y
+    dgroup.wb(own_off, caste & 0xFF)
+
+    if (caste & 0x7F) <= 0x67:
+        return
+
+    dir_idx = caste & 7
+    ny = y + sx8(simant_data_group.rb(8 + dir_idx))
+    nx = x + sx8(simant_data_group.rb(dir_idx))
+
+    tile = dgroup.rb(LIFE_PLANE_BASE[0] + (nx << 6) + ny)
+    if (tile - caste) & 0xFFFF == 0xFFF8:
+        return
+
+    found = find_in_a_list(pack, simant_data_group, nx, ny)
+    if _sx16(found) >= 0:
+        return
+
+    dgroup.wb(own_off, 0)
+    simant_data_group.wb(0x2F62 + slot, 0)
+
+
 def lost_head_a(dgroup, simant_data_group, pack, x: int, y: int,
                  direction: int) -> int:
     """Check whether the yard trail-head marker one step ahead in
