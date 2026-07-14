@@ -7152,3 +7152,24 @@ def drop_food_a(dgroup, pack, x: int, y: int) -> int:
     if tile <= 0x4A:
         return bump()
     return 0
+
+
+def not_mowed(pack, index: int, bit: int) -> int:
+    """Test-and-clear a per-cell "still has grass" bit: returns `1` the
+    FIRST time called for a given `(index, bit)` and clears the bit so
+    later calls with the same arguments return `0` (already mowed).
+
+    Recovered from `_NotMowed` (SIMANTW.SYM seg7:203E, args index=[bp+6],
+    bit=[bp+8]; FAR return, 52 bytes). A packed bit array in PACK
+    (accessed via a hardcoded `0x5EF3` segment literal, independently
+    confirmed to equal the real PACK selector): `index` selects a WORD
+    slot at byte offset `0xA0B6 + index*2`; `bit` (0..15) selects a bit
+    within that word.
+    """
+    mask = (1 << bit) & 0xFFFF
+    off = (index << 1) & 0xFFFF
+    word = pack.rw(0xA0B6 + off)
+    if word & mask:
+        pack.ww(0xA0B6 + off, (word - mask) & 0xFFFF)
+        return 1
+    return 0

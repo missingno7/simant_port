@@ -1,5 +1,27 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.167) — /goal grind: _NotMowed — grass-cut test-and-clear
+- RECOVERED `not_mowed` (`_NotMowed`, SIMANTW.SYM seg7:203E, args
+  index=[bp+6], bit=[bp+8]; FAR return, 52 bytes) — a packed-bit
+  test-and-clear over a PACK word array (accessed via the same
+  hardcoded `0x5EF3` segment literal seen in `_FindInLionList`/
+  `_SetAntLion`): `index` selects a WORD slot at `0xA0B6 + index*2`,
+  `bit` (0..15) selects a bit within it. Returns `1` and clears the bit
+  the FIRST time called for a given `(index, bit)`, `0` (no-op)
+  thereafter.
+- A first read of the disassembly's `D1 /4`/`D3 /4` shift-group opcodes
+  mis-guessed SHR (right-shift, `index >> 1`); a direct single-
+  instruction execution probe (`shl di,cl` with known register inputs)
+  confirmed reg-field `4` is SHL, not SHR, correcting the index/mask
+  computation to `index << 1` BEFORE writing any test — caught before
+  it ever reached the real-ASM oracle.
+- 5 state-diff cases (set/clear, low/mid/high bit) plus a return-value
+  cross-check against a freshly-seeded (non-mutated) machine per case
+  (the established "don't reuse the ASM's post-execution machine for a
+  mutating routine's own recovered call" discipline) — ALL GREEN ON THE
+  FIRST REAL-ASM RUN.
+- Suite: simant 1697 (+5), full suite green.
+
 ## 2026-07-15 (cont.166) — /goal grind: _SetAntLion — antlion pit re-stamp
 - RECOVERED `set_ant_lion` (`_SetAntLion`, SIMANTW.SYM seg7:4AD8, arg
   slot=[bp+6]; FAR return, 58 bytes) — composes the already-recovered

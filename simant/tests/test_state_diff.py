@@ -5969,3 +5969,34 @@ def test_setantlion_state_diff_matches_asm(slot, x, y, type_byte, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _SETANTLION_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _NotMowed (seg7:203E) — test-and-clear a per-cell grass bit ---------
+def _notmowed_seed(index, word_val):
+    def seed(m):
+        m.mem.ww(m.seg_bases[_PACK], 0xA0B6 + (index << 1), word_val)
+    return seed
+
+
+@pytest.mark.parametrize("index,bit,word_val,label", [
+    (0, 0, 0x0001, "bit0-set-clears"),
+    (0, 0, 0x0000, "bit0-clear-noop"),
+    (5, 7, 0x00A0, "midbit-set-clears"),
+    (5, 7, 0x005F, "midbit-clear-noop"),
+    (3, 15, 0x8000, "highbit-set-clears"),
+])
+def test_notmowed_state_diff_matches_asm(index, bit, word_val, label):
+    from simant.recovered.gameplay import not_mowed
+    regions = [(_PACK, 0xA000, 0xA100)]
+    results = _run_and_diff_segs(
+        7, 0x203E, (index, bit), lambda p: not_mowed(p, index, bit),
+        regions, seed_fn=_notmowed_seed(index, word_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+    ax, _m = _run_and_get_ax(7, 0x203E, (index, bit),
+                             seed_fn=_notmowed_seed(index, word_val))
+    fresh_pack = bytearray(0x10000)
+    ByteBackend(fresh_pack, 0).ww(0xA0B6 + (index << 1), word_val)
+    expect = not_mowed(ByteBackend(fresh_pack, 0), index, bit)
+    assert ax == (expect & 0xFFFF), f"{label} return-value: asm={ax:#06x} rec={expect:#06x}"
