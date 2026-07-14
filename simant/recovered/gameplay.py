@@ -50,6 +50,49 @@ def is_yellow_ant(caste: int) -> int:
     return 1 if caste in (0xFE, 0xFF) else 0
 
 
+def is_it_yellow(dgroup, pack, colony: int, x: int, y: int) -> int:
+    """Whether the player's yellow ant occupies `(x, y)` on `colony`'s
+    plane — gated on the current game mode matching `colony` at all.
+
+    Recovered from `_IsItYellow` (SIMANTW.SYM seg5:96B6, args
+    colony=[bp+6], x=[bp+8], y=[bp+10]; FAR return).  `colony == 0` is
+    treated as `1` for the mode check ONLY (`dgroup[0xCE80]` must equal
+    that, or the plane check below still uses the ORIGINAL `colony`,
+    including `0`).  If `dgroup[0xCE80]` doesn't match, returns 0
+    immediately — no tile read at all.
+
+    Otherwise, `pack[0x9FE8] == 1` switches to a distance check instead
+    of a tile read: only for `colony <= 1`, tests whether `(x, y)`
+    (scaled to the SAME fixed-point cell-centre form as the attack
+    marker, `(coord << 4) + 8`) is within squared distance `0x200` (512)
+    of the RAW (un-scaled) marker at `dgroup[0xAC7C]`/`[0xAC7E]` (note:
+    NOT the `>> 4` integer form `s_found_ant`/`get_defend_dir` use — this
+    compares two fixed-point values directly); `colony > 1` returns 0.
+
+    Otherwise (the common case), reads the life-plane tile at `(x, y)` on
+    `LIFE_PLANE_BASE[colony]` and defers to `is_yellow_ant`.  `colony`
+    outside `0..3` here reads uninitialized stack memory in the original
+    binary (dead in practice — every established caller in this codebase
+    uses `colony` in `0..3`) and is intentionally NOT modeled: `colony`
+    out of `LIFE_PLANE_BASE`'s keys raises `KeyError` rather than
+    guessing.
+    """
+    effective_colony = colony if colony != 0 else 1
+    if dgroup.rw(0xCE80) != effective_colony:
+        return 0
+
+    if pack.rw(0x9FE8) == 1:
+        if colony > 1:
+            return 0
+        x1 = ((x << 4) + 8) & 0xFFFF
+        y1 = ((y << 4) + 8) & 0xFFFF
+        dist = get_dis(x1, y1, dgroup.rw(0xAC7C), dgroup.rw(0xAC7E))
+        return 1 if dist < 0x200 else 0
+
+    tile = dgroup.rb(LIFE_PLANE_BASE[colony] + (x << 6) + y)
+    return is_yellow_ant(tile)
+
+
 def in_nest_bounds(x: int, y: int) -> int:
     """Whether (x, y) is a valid nest cell.
 

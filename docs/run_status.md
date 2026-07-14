@@ -1,5 +1,27 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.145) — /goal grind: _IsItYellow — is the player's yellow ant at (x,y)?
+- RECOVERED `is_it_yellow` (`_IsItYellow`, seg5:96B6, args colony=[bp+6],
+  x=[bp+8], y=[bp+10], FAR return) — a 3-way dispatch: gated first on
+  `dgroup[0xCE80]` matching `colony` (with `colony==0` defaulting to `1`
+  for THIS check only, not for the later plane lookup); then
+  `pack[0x9FE8]==1` switches to a distance check against the RAW
+  (un-`>>4`'d) attack-marker fixed-point position instead of a tile
+  read; otherwise reads the life-plane tile at `LIFE_PLANE_BASE[colony]`
+  and defers to the already-recovered `is_yellow_ant`.
+- A genuinely unreachable branch (`colony` outside `0..3` under the
+  tile-read path) reads UNINITIALIZED stack memory in the original
+  binary — every established caller elsewhere in this codebase already
+  uses `colony` in `0..3`, so this was intentionally left unmodeled: a
+  `colony` outside `LIFE_PLANE_BASE`'s keys raises `KeyError` rather
+  than guessing at stack garbage, consistent with "fail loud, never
+  fake" for a path with no real game-logic meaning.
+- 9 cases (mode mismatch, colony-0 defaulting, distance-mode near/far,
+  distance-mode colony>1 rejection, both yellow-ant tile sentinels
+  across two different planes, a non-yellow tile) — ALL GREEN ON THE
+  FIRST RUN.
+- Suite: simant 1539 (+9), full suite green.
+
 ## 2026-07-14 (cont.144) — /goal grind: _LeaveNestB — send a black ant out through a hole
 - RECOVERED `leave_nest_b` (`_LeaveNestB`, seg6:515E, args col=[bp+6],
   x=[bp+8], FAR return) — tries to send the current black ant

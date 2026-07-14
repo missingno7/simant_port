@@ -2622,6 +2622,45 @@ def test_sgrand_family_matches_asm(routine, off, fn_name, n, seed_val):
     assert view.rw(0xCBF2) == asm_seed_after, f"{routine}: n={n} seed={seed_val:#x}: seed mismatch"
 
 
+# ---- _IsItYellow (seg5:96B6) — is the player's yellow ant at (x,y)? -------
+def _isityellow_seed(mode, mode9fe8, marker_x, marker_y, tile):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCE80, mode)
+        m.mem.ww(pack, 0x9FE8, mode9fe8)
+        m.mem.ww(dg, 0xAC7C, marker_x & 0xFFFF)
+        m.mem.ww(dg, 0xAC7E, marker_y & 0xFFFF)
+        for plane, base in ((0, 0x68E8), (2, 0x88E8), (3, 0x98E8)):
+            for x in range(0, 5):
+                for y in range(0, 5):
+                    m.mem.wb(dg, base + (x << 6) + y, tile)
+    return seed
+
+
+@pytest.mark.parametrize("colony,x,y,mode,mode9fe8,marker_x,marker_y,tile,label", [
+    (1, 2, 2, 2, 0, 0, 0, 0xFE, "mode-mismatch"),            # dgroup[CE80]=2 != colony=1 -> 0
+    (0, 2, 2, 1, 0, 0, 0, 0xFE, "colony0-defaults-to-1-tile"),  # colony 0 -> mode check vs 1
+    (1, 2, 2, 1, 1, (2 << 4) + 8, (2 << 4) + 8, 0, "distance-close"),   # exact match -> dist 0
+    (1, 2, 2, 1, 1, 2000, 2000, 0, "distance-far"),                     # far away -> 0
+    (2, 2, 2, 2, 1, 0, 0, 0, "colony-gt1-distance-mode"),   # colony>1 under distance mode -> 0
+    (0, 2, 2, 1, 0, 0, 0, 0xFE, "tile-yellow-fe"),
+    (0, 2, 2, 1, 0, 0, 0, 0xFF, "tile-yellow-ff"),
+    (2, 2, 2, 2, 0, 0, 0, 0xFF, "colony2-plane-tile"),
+    (3, 2, 2, 3, 0, 0, 0, 0x50, "colony3-not-yellow"),
+])
+def test_isityellow_matches_asm(colony, x, y, mode, mode9fe8, marker_x, marker_y,
+                                tile, label):
+    from simant.recovered.gameplay import is_it_yellow
+    ax, m = _run_and_get_ax(
+        5, 0x96B6, (colony, x, y),
+        seed_fn=_isityellow_seed(mode, mode9fe8, marker_x, marker_y, tile))
+    dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    expect = is_it_yellow(dgroup_view, pack_view, colony, x, y)
+    assert ax == (expect & 0xFFFF), f"{label}: asm={ax:#06x} rec={expect:#06x}"
+
+
 # ---- _GetForageDir (seg7:0AB0) — TRAIL-scent gradient direction -----------
 # Like `_Bounce`: pure aside from the SRand seed, so the recovered call needs
 # a fresh view seeded with the PRE-state seed, not `_run_and_get_ax`'s own
