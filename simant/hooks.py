@@ -1347,6 +1347,49 @@ def _make_isnotobstacle_island(machine):
     return island
 
 
+# -- _IsClearTile (seg5:5B2C) — is a cell clear (map passable + no blocking ant)? -
+# Reads the map (like _GetMap) AND the life grid (life_cell_offset).  Residue:
+#   invalid cell -> ax=0, cx=0xFFFF, dx=plane; bx/es preserved.
+#   valid cell   -> dx=plane; cx = 0xFFFF if life==0 else life; bx = 0 for a
+#                   yellow ant (0xFE/0xFF) else 0xFFFF; ax = clear? 1/0.
+ISCLEARTILE_SEG_INDEX = 5
+ISCLEARTILE_OFF = 0x5B2C
+ISCLEARTILE_SIG = bytes.fromhex("c806000057568b5606c746fa0000c746fcffff83fa01")
+
+
+def _make_iscleartile_island(machine):
+    from .recovered.gameplay import (is_clear_tile, life_cell_offset,
+                                      map_cell_offset)
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        plane = _sx(plane_w)
+        x = _sx(m.rw(ss, (sp + 6) & 0xFFFF))
+        y = _sx(m.rw(ss, (sp + 8) & 0xFFFF))
+        off = map_cell_offset(plane, x, y)
+        if off is None:                               # out of range -> not clear
+            s.ax = 0
+            s.cx = 0xFFFF
+            s.dx = plane_w
+        else:
+            map_tile = m.rb(s.ds, off & 0xFFFF)
+            life = m.rb(s.ds, life_cell_offset(plane, x, y) & 0xFFFF)
+            s.ax = is_clear_tile(plane, map_tile, life)
+            s.bx = 0 if life in (0xFE, 0xFF) else 0xFFFF
+            s.cx = 0xFFFF if life == 0 else life
+            s.dx = plane_w
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsItHole (seg6:2CC0) — is this yard cell a nest hole/entrance? -----------
 # Bounds-checks (x, y) via _IsValidA, then reads the plane-0 yard map and the
 # world inside/outside flag ([0xC320]:[0x9B6E]).  Hole = 0x80..0x8F inside,
@@ -2264,6 +2307,8 @@ _ISLANDS = [
      lambda machine, off: _make_isnotbarrier_island(machine), "_IsNotBarrier"),
     (ISNOTOBSTACLE_SEG_INDEX, ISNOTOBSTACLE_OFF, ISNOTOBSTACLE_SIG,
      lambda machine, off: _make_isnotobstacle_island(machine), "_IsNotObstacle"),
+    (ISCLEARTILE_SEG_INDEX, ISCLEARTILE_OFF, ISCLEARTILE_SIG,
+     lambda machine, off: _make_iscleartile_island(machine), "_IsClearTile"),
     (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
      lambda machine, off: _make_isithole_island(machine), "_IsItHole"),
     (GETMAP_SEG_INDEX, GETMAP_OFF, GETMAP_SIG,
@@ -2311,7 +2356,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 64
+EXPECTED_ISLAND_COUNT = 65
 
 
 def install(machine) -> int:

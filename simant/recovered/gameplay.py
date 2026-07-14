@@ -265,6 +265,21 @@ def is_not_obstacle(plane: int, tile: int, inside: bool) -> int:
     return 1 if (tile <= 0x18 or 0x30 <= tile <= 0x31) else 0
 
 
+def is_clear_tile(plane: int, map_tile: int, life_value: int) -> int:
+    """Whether a cell is clear for an ant to step onto.
+
+    Recovered from `_IsClearTile` (SIMANTW.SYM seg5:5B2C): reads both the map
+    tile and the life-grid cell.  The cell is blocked if a non-yellow ant sits on
+    it — life not in {0 (empty), 0xFE, 0xFF (the yellow-ant sentinels)}.
+    Otherwise it is clear iff the map tile is below 0x10 on the nest planes
+    (plane <= 1) / below 8 on the yard planes.  Returns 1 (clear) / 0.
+    """
+    if life_value not in (0, 0xFE, 0xFF):
+        return 0
+    threshold = 0x10 if plane <= 1 else 8
+    return 1 if map_tile < threshold else 0
+
+
 def get_dir(x1: int, y1: int, x2: int, y2: int) -> int:
     """Compass direction (0..8) from point 1 to point 2.
 
