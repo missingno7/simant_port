@@ -7851,3 +7851,25 @@ def kill_ant_lion(dgroup, simant_data_group, pack, slot: int) -> None:
         pack.wb(0x7D4E + si, pack.rb(0x7D4F + si))
         pack.wb(0x7A68 + si, pack.rb(0x7A69 + si))
         pack.wb(0x7D34 + si, pack.rb(0x7D35 + si))
+
+
+def follow_cat_dir(pack) -> int:
+    """Pick the cat's pursuit compass direction from its own countdown
+    state — a PURE predicate, no side effects (confirmed via the raw
+    disassembly: no calls, nothing written).
+
+    Recovered from `_FollowCatDir` (SIMANTW.SYM seg7:32A6, NO args; FAR
+    return, 68 bytes). All three fields are PACK-resident.
+
+    `pack[0x77B0] < 5`: `1`. `pack[0x77B0] > 8`: `3`. Otherwise
+    (`0x77B0` in `5..8`): `pack[0x789C] > 0` (both signed compares):
+    `0`; else `pack[0x7A5C] & 3`.
+    """
+    value = _sx16(pack.rw(0x77B0))
+    if value < 5:
+        return 1
+    if value > 8:
+        return 3
+    if _sx16(pack.rw(0x789C)) > 0:
+        return 0
+    return pack.rb(0x7A5C) & 3

@@ -6462,3 +6462,30 @@ def test_killantlion_state_diff_matches_asm(count, slots, slot, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _KILLANTLION_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _FollowCatDir (seg7:32A6) — cat pursuit direction --------------------
+def _followcatdir_seed(f77b0, f789c, f7a5c):
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x77B0, f77b0 & 0xFFFF)
+        m.mem.ww(pack, 0x789C, f789c & 0xFFFF)
+        m.mem.wb(pack, 0x7A5C, f7a5c & 0xFF)
+    return seed
+
+
+@pytest.mark.parametrize("f77b0,f789c,f7a5c,label", [
+    (0, 0, 0, "below5-return1"),
+    (4, 0, 0, "below5-boundary-return1"),
+    (9, 0, 0, "above8-return3"),
+    (5, 1, 0, "midrange-active-return0"),
+    (8, 1, 0, "midrange-boundary-active-return0"),
+    (6, 0, 0x07, "midrange-inactive-masks-low2bits"),
+])
+def test_followcatdir_matches_asm(f77b0, f789c, f7a5c, label):
+    from simant.recovered.gameplay import follow_cat_dir
+    ax, m = _run_and_get_ax(7, 0x32A6, (),
+                            seed_fn=_followcatdir_seed(f77b0, f789c, f7a5c))
+    pack_view = ByteBackend(m.mem.block(m.seg_bases[_PACK], 0, 0x10000), 0)
+    result = follow_cat_dir(pack_view)
+    assert ax == (result & 0xFFFF), f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}"

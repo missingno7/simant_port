@@ -1,5 +1,17 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.175) — /goal grind: _FollowCatDir — cat pursuit direction
+- RECOVERED `follow_cat_dir` (`_FollowCatDir`, SIMANTW.SYM seg7:32A6,
+  NO args; FAR return, 68 bytes) — a PURE predicate (no calls, nothing
+  written) picking the cat's pursuit compass direction from its own
+  countdown state, all three fields PACK-resident.
+  `pack[0x77B0] < 5`: `1`. `> 8`: `3`. Otherwise (`5..8`):
+  `pack[0x789C] > 0` (signed): `0`; else `pack[0x7A5C] & 3`.
+- 6 cases (both boundary edges of the `5..8` range, both sides of the
+  `789C` gate, and the low-2-bit mask) — ALL GREEN ON THE FIRST
+  REAL-ASM RUN.
+- Suite: simant 1758 (+6), full suite green.
+
 ## 2026-07-15 (cont.174) — /goal grind: _KillAntLion — remove + compact
 - Ran a fresh Explore survey now that the previous batch is exhausted;
   picked `_KillAntLion` first since it directly extends the antlion-list
