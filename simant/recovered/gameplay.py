@@ -2902,6 +2902,66 @@ def recruit_red(pack, simant_data_group, count: int) -> None:
         remaining -= 1
 
 
+def get_new_red_task(dgroup, simant_data_group, pack) -> None:
+    """Reassign the red colony's recruitment task: either a chance-gated
+    "raid" recruitment sized off a fixed PACK target, or a fallback
+    "general" recruitment sized off a running population estimate.
+
+    Recovered from `_GetNewRedTask` (SIMANTW.SYM seg6:9940, NO args; FAR
+    return).  Always starts by clearing every red ant's "recruited"
+    marker via the already-recovered `un_recruit_red`.
+
+    If `dgroup[0xCE80] == 1` (a specific game mode): rolls
+    `_SRand1(32) + 64` and requires it `< dgroup[0xCD88]`; if so, rolls
+    `_SRand1(10)` and requires it `< pack[0x9E7A]` too — both gates
+    passing sets `pack[0x9D74] = 2` (a "raid" task marker) and calls the
+    already-recovered `recruit_red(pack[0x9E7A])`, returning immediately.
+
+    Otherwise (mode isn't 1, or either gate failed): recomputes two
+    PACK-resident running estimates from SIMANT_DATA_GROUP fields
+    (`pack[0x9C22] = simant_data_group[0x836C]`, clamped back toward
+    `20..40` by `+-5` if it drifted outside; `pack[0x9BEE] =
+    simant_data_group[0x836A]`, capped by `-5` once it exceeds `30`),
+    then recruits a count derived from `dgroup[0xACA2] + dgroup[0xACA4]`
+    (`>> 2` if that sum is `< 20`, else `>> 3`) via `recruit_red`, and
+    sets `pack[0x9D74] = 1` (a "general" task marker).
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    un_recruit_red(pack, simant_data_group)
+
+    if dgroup.rw(0xCE80) == 1:
+        seed = dgroup.rw(SRAND_SEED_OFF)
+        seed, roll32 = srand1(seed, 32)
+        if roll32 + 64 < dgroup.rw(0xCD88):
+            seed, roll10 = srand1(seed, 10)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            if roll10 < pack.rw(0x9E7A):
+                pack.ww(0x9D74, 2)
+                recruit_red(pack, simant_data_group, pack.rw(0x9E7A))
+                return
+        else:
+            dgroup.ww(SRAND_SEED_OFF, seed)
+
+    pack.ww(0x9C22, simant_data_group.rw(0x836C))
+    val_9bee = simant_data_group.rw(0x836A)
+    if val_9bee > 30:
+        val_9bee -= 5
+    pack.ww(0x9BEE, val_9bee & 0xFFFF)
+
+    val_9c22 = pack.rw(0x9C22)
+    if val_9c22 < 20:
+        val_9c22 += 5
+    elif val_9c22 > 40:
+        val_9c22 -= 5
+    pack.ww(0x9C22, val_9c22 & 0xFFFF)
+
+    si = dgroup.rw(0xACA2) + dgroup.rw(0xACA4)
+    count = (si >> 2) if si < 20 else (si >> 3)
+    recruit_red(pack, simant_data_group, count)
+    pack.ww(0x9D74, 1)
+
+
 HOLE_EDGE_TILES = (0x19, 0x1A, 0x1C, 0x1F, 0x1E, 0x1D, 0x1B, 0x18)  # dgroup[0x230C..)
 
 

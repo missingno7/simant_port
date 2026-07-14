@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.147) — /goal grind: _GetNewRedTask — reassign the red recruit task
+- RECOVERED `get_new_red_task` (`_GetNewRedTask`, seg6:9940, NO args,
+  FAR return) — the routine that unblocked `_UnRecruitRed`/`_RecruitRed`
+  earlier this session. Always starts by clearing every red ant's
+  "recruited" marker via `un_recruit_red`. In game mode 1, rolls two
+  chance gates (`_SRand1(32)+64 < dgroup[0xCD88]`, then `_SRand1(10) <
+  pack[0x9E7A]`); both passing sets a "raid" task marker and calls
+  `recruit_red(pack[0x9E7A])` directly. Otherwise (mode isn't 1, or
+  either gate failed) falls back to a "general" task: recomputes two
+  PACK-resident running estimates from SIMANT_DATA_GROUP fields
+  (clamped back toward `20..40`/capped past `30`), then recruits a count
+  derived from a DGROUP population-estimate sum (`>>2` or `>>3`
+  depending on its size) via `recruit_red`.
+- 6 cases (raid path with both gates passing, fallback via wrong mode,
+  fallback via each gate failing individually, and two fallback-branch
+  clamp variants) — ALL GREEN ON THE FIRST RUN; pre-computed the exact
+  SRand seed via the recovered `srand1` function to hit both gates
+  deterministically, same discipline as `_DoDrownB`/`R`.
+- Suite: simant 1553 (+6), full suite green.
+
 ## 2026-07-14 (cont.146) — /goal grind: _DoDrownB/_DoDrownR — age/drown a nest-water ant
 - RECOVERED `do_drown_b`/`do_drown_r` (`_DoDrownB`/`_DoDrownR`,
   seg6:37A4/5EA8, args x=[bp+6], y=[bp+8], caste=[bp+10], FAR return)

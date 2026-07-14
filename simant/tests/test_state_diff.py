@@ -739,6 +739,63 @@ def test_recruitred_state_diff_matches_asm(count, slots):
             f"count={count} slots={slots} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _GetNewRedTask (seg6:9940) — reassign the red colony's recruit task --
+# Composes un_recruit_red + recruit_red, NO args.
+_GETNEWREDTASK_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC00, 0xCF00),   # ACA2/ACA4/CD88/CE80 + SRand seed
+    (_SDG, 0x2300, 0x8400),                  # A-list fields + 836A/836C
+    (_PACK, 0x8000, 0xA000),                 # 80F0/9BEE/9C22/9D74/9E7A
+]
+
+
+def _getnewredtask_seed(mode, cd88, seed_val, e7a, aca2, aca4, sdg_836a,
+                        sdg_836c, pack_9c22, pack_9bee, slots):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCE80, mode)
+        m.mem.ww(dg, 0xCD88, cd88)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(dg, 0xACA2, aca2)
+        m.mem.ww(dg, 0xACA4, aca4)
+        m.mem.ww(pack, 0x9E7A, e7a)
+        m.mem.ww(pack, 0x9C22, pack_9c22)
+        m.mem.ww(pack, 0x9BEE, pack_9bee)
+        m.mem.ww(sdg, 0x836A, sdg_836a)
+        m.mem.ww(sdg, 0x836C, sdg_836c)
+        m.mem.ww(pack, 0x80F0, len(slots))
+        for slot, (caste, field_c) in enumerate(slots):
+            m.mem.wb(sdg, 0x2F62 + slot, caste)
+            m.mem.wb(sdg, 0x2B78 + slot, field_c)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "mode,cd88,seed_val,e7a,aca2,aca4,sdg_836a,sdg_836c,pack_9c22,pack_9bee,"
+    "slots,label", [
+    (1, 1000, 0, 3, 5, 5, 20, 20, 25, 25, [(0x90, 0)], "raid-both-gates-pass"),
+    (5, 1000, 0, 3, 5, 5, 20, 15, 15, 35, [(0x90, 0)], "fallback-mode-not-1"),
+    (1, 10, 0, 3, 5, 5, 20, 15, 15, 35, [(0x90, 0)], "fallback-gate1-fails"),
+    (1, 1000, 0, 0, 5, 5, 20, 15, 15, 35, [(0x90, 0)], "fallback-gate2-fails"),
+    (5, 1000, 0, 3, 15, 10, 20, 50, 15, 35, [(0x90, 0)], "fallback-9c22-over-40-clamp"),
+    (5, 1000, 0, 3, 5, 5, 20, 30, 15, 35, [(0x90, 0)], "fallback-9c22-inrange-count-lo"),
+])
+def test_getnewredtask_state_diff_matches_asm(
+        mode, cd88, seed_val, e7a, aca2, aca4, sdg_836a, sdg_836c, pack_9c22,
+        pack_9bee, slots, label):
+    from simant.recovered.gameplay import get_new_red_task
+    results = _run_and_diff_segs(
+        6, 0x9940, (),
+        lambda d, s, p: get_new_red_task(d, s, p),
+        _GETNEWREDTASK_REGIONS,
+        seed_fn=_getnewredtask_seed(mode, cd88, seed_val, e7a, aca2, aca4,
+                                    sdg_836a, sdg_836c, pack_9c22, pack_9bee,
+                                    slots))
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _GETNEWREDTASK_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _IsItFoodAt (seg5:5F7E) — bounds-checked (plane,x,y) food predicate --
 @pytest.mark.parametrize("plane,x,y,tile,inside", [
     (0, 10, 20, 0x18, True),     # nest food range via is_it_food
