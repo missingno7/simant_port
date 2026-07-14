@@ -82,6 +82,10 @@ flowchart TD
     fxm["_FixExitMapB/R"]
     afld["__aFldiv"]
   end
+  subgraph L3e["movement EXECUTION (done)"]
+    tmdb["_TryMoveDirB/R"]
+    gob["_GetOutB/R"]
+  end
   subgraph L3["helpers + pathfinding core"]
     gbd["_GetBestDir"]
     gmap["_GetMap"]
@@ -120,6 +124,9 @@ flowchart TD
   mnhb --> dtb & exh
   dtb --> seb & fxm & afld
   ddig -.-> dttb
+  tmdb <--> gob
+  gob --> mnhb & exh & dttb
+  ddig -.-> tmdb
 
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
@@ -129,6 +136,7 @@ flowchart TD
   class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
   class dtb,dttb,mnhb,exh,seb,fxm,afld done;
+  class tmdb,gob done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
 
@@ -137,7 +145,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding **done**; forage/dig/nest behaviors frontier | 33 / 123 | selection tier **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; forage/nest/combat behaviors frontier | 37 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -148,40 +156,42 @@ by everything from the dig subsystem to unrelated UI/score code), `_SRand8` 71,
 `_GetDir` 17, `_FindInAList` 16, `_IsItDirt` 15, `_GetDis` 15, `_FindInBList` 15.
 Regenerate the underlying call-graph data with `python -m simant.probes.callgraph`.
 
-**What's done vs. what's missing.** The whole bottom is byte-exact: the leaf
-predicates + RNG, the map/life-grid query family (`_GetMap`, `_IsItHole`,
-`_IsClearTile`, `_IsNotObstacle`, `_IsItDigable`, `_IsValidLocation`, …), the
-geometry (`_GetDir`, `_GetDis`), the pathfinding core `_GetBestDir`, and — new this
-round — the mutator tier a behavior routine needs to actually act: ant-list CRUD
-(`_FindInAList`/`_AddAntToAList`/`_RemoveFromAList`/`_CompactListA`, plus the B/R
-colony twins), the scent/pheromone grids (`_ColonySmellDecayBN/RN/BT/RT`,
-`_JamScentBN/RN/BT/RT`, `_AlarmHere`, `_DecTSmell`, `_GetSmellT`, `_FillHolesBN/RN`),
-and the mode-population/red-initiator subsystem (`_ClrModePop`, `_TallyModePop`,
-`_MakeRedInitiator`, `_KillTailB/R`, `_DropFoodB/R`, `_DrownBList/RList`,
-`_KillSpider`, `_SetAntIndex`). Also new: the full **pathfinding-selection
-tier** above `_GetBestDir` — `_TileCanBeMovedOn` (the movement/self-exclusion
-predicate `_GetMyBestDirs`/`_GetRedBestDirs` share), `_GetMyBestDirs` /
-`_GetRedBestDirs` (yellow-ant and red-colony neighbour selection), and the two
-routines that compose them — `_GetMyRandDirs` (stateful sticky-direction
-search across ticks via far-pointer in/out state) and `_CheckMyBestDirs`
-(walks up to 64 steps toward a target). Also new: `_DeadAntHere` (a
-100-slot corpse-decay ring buffer), the MSC C-runtime long-arithmetic
-helpers `__aFldiv`/`__aFulmul` and the independent `rand`/`srand`/`_RRand`
-generator (distinct from the `_SRand*` LFSR), and three tractable slices of
-the **dig subsystem, now complete end to end**: `_FixExitMapB/R` (an
-exit-distance flood-fill map), `_SmoothEdgesB/R` (post-dig edge
-auto-tiling), `_ExitHole` (spawn a new A-list entry at a clear cell
-adjacent to a hole), `_DigTileB/R` (reroll a dirt tile + track a running-
-average dig position, occasionally tunnelling into the other colony),
-`_MakeNewHoleB/R` (search the shared yard map for a new exit-hole
-position, two different acceptance tests depending on an "inside" flag),
-and `_DigTileThemB/R` (open a brand-new tile given already-diggable
-neighbours, the routine that actually triggers `_MakeNewHoleB/R` on row
-0). Missing is the per-ant **behavior tier** in `seg6` (`_DoForageAnt`,
-`_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`) that composes all of this into
-an actual decision, the movement-EXECUTION chain (`_TryMoveDirB/R` <->
-`_GetOutB/R`, a genuine mutual-recursion pair — the next target), and
-combat (`_YellowFight`/`_GetWinner`). That's the next milestone toward the
+**What's done vs. what's missing.** Everything an ant needs to *decide how to
+move and then actually move* is byte-exact, end to end:
+
+- **Foundation**: leaf predicates + RNG, the map/life-grid query family, the
+  geometry (`_GetDir`/`_GetDis`), the pathfinding core `_GetBestDir`.
+- **Mutator tier**: ant-list CRUD (find/add/remove/compact, all three
+  colonies), the scent/pheromone grids (decay/jam/read for both the NEST and
+  TRAIL grids), and the mode-population/red-initiator subsystem.
+- **Pathfinding-selection tier**: `_TileCanBeMovedOn` (the shared movement/
+  self-exclusion predicate), `_GetMyBestDirs`/`_GetRedBestDirs` (per-colony
+  neighbour selection), and the two routines that compose them —
+  `_GetMyRandDirs` (stateful sticky-direction search across ticks via a
+  far-pointer in/out state) and `_CheckMyBestDirs` (walks up to 64 steps
+  toward a target).
+- **Dig subsystem, complete**: `_FixExitMapB/R` (exit-distance flood-fill),
+  `_SmoothEdgesB/R` (post-dig edge auto-tiling), `_ExitHole`, `_DigTileB/R`,
+  `_MakeNewHoleB/R`, `_DigTileThemB/R` — everything a movement routine needs
+  to dig through the nest as it goes.
+- **Movement EXECUTION, complete**: `_TryMoveDirB/R` <-> `_GetOutB/R` — a
+  genuine mutual-recursion pair (execute a step, or reach the surface and
+  either complete an exit hole or nudge the dig frontier and retry). The
+  black side has one deliberate, documented gap: a trophallaxis (food-
+  sharing) branch that calls the unrecovered `_DoTroph` — the port computes
+  that gate's condition exactly and raises loudly if it would ever fire,
+  rather than fake the outcome.
+- **Also recovered**: `_DeadAntHere` (a 100-slot corpse-decay ring buffer),
+  the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
+  independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
+  LFSR used for map generation).
+
+**Missing**: the per-ant **behavior tier** in `seg6` (`_DoForageAnt`,
+`_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`) that composes all of the above into
+an actual decision, `_DoTroph`'s own dependency chain (a real sound-engine
+routine plus a dialog/busy-wait UI routine — presentation/audio work, not
+core sim logic), and combat (`_YellowFight`/`_GetWinner`, which also needs
+`SIMTWO!_GetNewMode` from `seg7`). That's the next milestone toward the
 [VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
