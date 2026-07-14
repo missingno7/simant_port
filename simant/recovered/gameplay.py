@@ -2760,6 +2760,27 @@ def go_in_nest(dgroup, simant_data_group, pack, x: int, y: int, slot: int) -> No
     dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
 
 
+def rand_turn(dgroup, simant_data_group, caste_low3: int) -> int:
+    """Pick a purely random direction from the caste-mode table — no
+    yard-edge handling, no gradient, just a fresh `_SRand8()` roll.
+
+    Recovered from `_RandTurn` (SIMANTW.SYM seg6:2A22, NEAR return, arg:
+    caste_low3=[bp+4]). Byte-identical to the tail every seg7 `_Get*Dir`
+    routine's random fallback shares (`simant_data_group[0x24 + roll +
+    (caste_low3 << 3)]`), minus the `_Bounce` edge check those all have —
+    this one is unconditional.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    return sx8(simant_data_group.rb(0x24 + roll + (caste_low3 << 3)))
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.

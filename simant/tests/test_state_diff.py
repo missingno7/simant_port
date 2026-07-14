@@ -1238,6 +1238,36 @@ def test_goinnest_state_diff_matches_asm(x, y, slot, count_off, caste,
             f"x={x} y={y} full={full} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
+# Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
+# `_Bounce`/`_GetForageDir`.
+@pytest.mark.parametrize("caste_low3,seed_val", [
+    (0, 0x1234), (5, 0x1234), (7, 0xABCD),
+])
+def test_randturn_matches_asm(caste_low3, seed_val):
+    from simant.recovered.gameplay import rand_turn
+
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+
+    ax, m = _run_and_get_ax(6, 0x2A22, (caste_low3,), seed_fn=seed, near=True)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+
+    buf = bytearray(0x10000)
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    dgroup_view = ByteBackend(buf, 0)
+    sdg_view = ByteBackend(m.mem.block(m.seg_bases[_SDG], 0, 0x10000), 0)
+    rec_ax = rand_turn(dgroup_view, sdg_view, caste_low3)
+
+    assert ax == (rec_ax & 0xFFFF), f"caste_low3={caste_low3} seed={seed_val:#x}"
+    assert dgroup_view.rw(0xCBF2) == asm_seed_after, (
+        f"caste_low3={caste_low3} seed={seed_val:#x}: seed mismatch")
+
+
 # ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
 # `_Do*Ant*` behavior routine recovered) -------------------------------------
 # NEAR call/return. `_FightBalloons` (ANTEDIT seg3:0x499A, presentation-only

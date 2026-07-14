@@ -1,5 +1,16 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.116) — /goal grind: _RandTurn — unconditional random caste-mode direction
+- RECOVERED `rand_turn` (`_RandTurn`, seg6:2A22, NEAR return, arg:
+  caste_low3) — a tiny (30-byte) routine, byte-identical to the random-
+  fallback tail every seg7 `_Get*Dir` routine shares
+  (`simant_data_group[0x24 + roll + (caste_low3 << 3)]` after a fresh
+  `_SRand8()`), minus the `_Bounce` edge check those all have — this one
+  is unconditional, no position argument at all.
+- 3 cases — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1278 (+3). Remaining zero-blocker candidates:
+  `_GetExitDirB/R`, `_GetEnterDirB/R` (seg5).
+
 ## 2026-07-14 (cont.115) — /goal grind: _GoInNest — move a yard ant into the nest
 - RECOVERED `go_in_nest` (`_GoInNest`, seg6:257A, NEAR return, args
   x/y/slot, plus `pack`) — composes FIVE already-recovered routines
