@@ -3651,6 +3651,88 @@ def get_new_mode_r(dgroup, simant_data_group, pack, sub: int) -> int:
     return get_new_mode(dgroup, simant_data_group, pack, sub, 0x80)
 
 
+def _do_drown(dgroup, simant_data_group, pack, map_base: int, life_base: int,
+              field_c_off: int, caste_off: int, get_new_mode_fn, x: int,
+              y: int, caste: int) -> int:
+    """Shared body of `do_drown_b`/`do_drown_r`: age an ant standing on a
+    nest water tile, occasionally drowning it outright.
+
+    Below the drowning threshold (map tile `< 0x14`): just re-derives
+    the slot's `field_c` from its caste's `(caste & 0x78) >> 3` mode
+    sub-field via `get_new_mode_fn`, and returns that value.
+
+    At or above the threshold: rerolls the caste's low 3 direction bits
+    (`(_SRand1(3) + caste - 1) & 7`, keeping the high bits), stamps it
+    onto both the slot's caste field and the SAME life-grid cell, then
+    rolls `_SRand1(100)`: a nonzero roll (99-in-100) is a no-op that
+    returns the roll itself; a `0` roll (1-in-100) drowns the ant —
+    clears the life-grid cell and the slot's caste field to `0`, bumps
+    one of two 32-bit PACK counters depending on the REROLLED caste's
+    colony bit (`[0x9FC6:0x9FC8]` set / `[0x9B26:0x9B28]` clear — the
+    SAME pair for both colonies, confirmed by independent disassembly of
+    both `_DoDrownB` and `_DoDrownR`), and returns the rerolled caste.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    offset = (x << 6) + y
+    if dgroup.rb(map_base + offset) < 0x14:
+        mode = (caste & 0x78) >> 3
+        result = get_new_mode_fn(dgroup, simant_data_group, pack, mode)
+        slot = pack.rw(0x9B6A)
+        simant_data_group.wb(field_c_off + slot, result & 0xFF)
+        return result
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll3 = srand1(seed, 3)
+    new_caste = ((roll3 + caste - 1) & 7) | (caste & 0xF8)
+    slot = pack.rw(0x9B6A)
+    simant_data_group.wb(caste_off + slot, new_caste & 0xFF)
+    dgroup.wb(life_base + offset, new_caste & 0xFF)
+
+    seed, roll100 = srand1(seed, 100)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll100 != 0:
+        return roll100
+
+    dgroup.wb(life_base + offset, 0)
+    slot = pack.rw(0x9B6A)
+    simant_data_group.wb(caste_off + slot, 0)
+
+    if new_caste & 0x80:
+        _acc_add32(pack, 0x9FC6, 0x9FC8, 1)
+    else:
+        _acc_add32(pack, 0x9B26, 0x9B28, 1)
+
+    return new_caste & 0xFF
+
+
+def do_drown_b(dgroup, simant_data_group, pack, x: int, y: int, caste: int) -> int:
+    """Age/occasionally-drown a black ant standing on a nest water tile.
+
+    Recovered from `_DoDrownB` (SIMANTW.SYM seg6:37A4, args x=[bp+6],
+    y=[bp+8], caste=[bp+10]; FAR return).  See `_do_drown` for the
+    shared shape; uses black nest map/life planes, B-list field bases,
+    and `get_new_mode_b`.
+    """
+    return _do_drown(dgroup, simant_data_group, pack, MAP_PLANE_BASE[2],
+                     LIFE_PLANE_BASE[2], 0x3B22, 0x3D18, get_new_mode_b,
+                     x, y, caste)
+
+
+def do_drown_r(dgroup, simant_data_group, pack, x: int, y: int, caste: int) -> int:
+    """Age/occasionally-drown a red ant standing on a nest water tile.
+
+    Recovered from `_DoDrownR` (SIMANTW.SYM seg6:5EA8, args x=[bp+6],
+    y=[bp+8], caste=[bp+10]; FAR return).  Confirmed a genuine twin of
+    `do_drown_b` by independent disassembly — identical shape and even
+    the SAME PACK drown counters, only the map/life planes, R-list field
+    bases, and `get_new_mode_r` differ.
+    """
+    return _do_drown(dgroup, simant_data_group, pack, MAP_PLANE_BASE[3],
+                     LIFE_PLANE_BASE[3], 0x44F0, 0x46E6, get_new_mode_r,
+                     x, y, caste)
+
+
 def get_winner(dgroup, simant_data_group, pack, arg_a: int, arg_b: int) -> int:
     """Resolve a one-on-one combat matchup between two caste/mode bytes,
     returning whichever of `arg_a`/`arg_b` wins, and bumping the winner's

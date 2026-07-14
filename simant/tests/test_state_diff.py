@@ -1637,6 +1637,63 @@ def test_getnewmoder_state_diff_matches_asm(sub, seed_val, mode_base_hi, tbl2,
             f"sub={sub} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _DoDrownB/_DoDrownR (seg6:37A4/5EA8) — age/occasionally-drown an ant --
+# on a nest water tile.  Composes get_new_mode_b/r, so the region merges the
+# _GETNEWMODE_REGIONS tables with the B/R-list field bases and drown counters.
+_DODROWN_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0x3700, 0x8B00),
+    (_PACK, 0x7600, 0xA000),
+]
+
+
+def _dodrown_seed(seed_val, map_tile, x, y, map_base, slot, gate_flag, tbl2,
+                  tbl6, tbl_direct, tbl_word):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(dg, map_base + (x << 6) + y, map_tile)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.ww(pack, 0x7690, 1)
+        m.mem.ww(pack, 0x9B8A, 1)
+        m.mem.ww(pack, 0x9FCE, gate_flag)
+        for i in range(8):
+            m.mem.wb(sdg, 0x89E6 + (1 << 3) + i, tbl2)
+            m.mem.wb(sdg, 0x8A16 + (1 << 3) + i, tbl6)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, tbl_direct)
+        m.mem.ww(sdg, 0x8A58, tbl_word)
+    return seed
+
+
+@pytest.mark.parametrize("which,off,map_base,field_c_off,caste_off", [
+    ("b", 0x37A4, 0x48E8, 0x3B22, 0x3D18),
+    ("r", 0x5EA8, 0x58E8, 0x44F0, 0x46E6),
+])
+@pytest.mark.parametrize("map_tile,x,y,seed_val,slot,caste", [
+    (0x10, 20, 30, 0x1234, 0, 0x85),         # below threshold -> field_c only
+    (0x14, 20, 30, 0x0001, 1, 0x05),         # at threshold, no drown -> roll100 return
+    (0x50, 20, 30, 0x0000, 2, 0x05),         # drown, colony bit clear -> [0x9B26] bumps
+    (0x50, 20, 30, 0x0000, 3, 0x85),         # drown, colony bit set -> [0x9FC6] bumps
+])
+def test_dodrown_state_diff_matches_asm(which, off, map_base, field_c_off,
+                                        caste_off, map_tile, x, y, seed_val,
+                                        slot, caste):
+    import simant.recovered.gameplay as G
+    fn = G.do_drown_b if which == "b" else G.do_drown_r
+    results = _run_and_diff_segs(
+        6, off, (x, y, caste),
+        lambda d, s, p: fn(d, s, p, x, y, caste),
+        _DODROWN_REGIONS,
+        seed_fn=_dodrown_seed(seed_val, map_tile, x, y, map_base, slot, 1,
+                              0x25, 0x30, 0x40, 0x1122))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DODROWN_REGIONS):
+        assert asm_after == rec_after, (
+            f"{which} tile={map_tile:#x} caste={caste:#x} seed={seed_val:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _GetWinner (seg6:26F4) — one-on-one combat matchup resolution --------
 # NEAR call/return. Uses _RRand (the C-runtime generator, RAND_STATE_OFF in
 # DGROUP), NOT the _SRand* LFSR.

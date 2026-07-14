@@ -1,5 +1,26 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.146) — /goal grind: _DoDrownB/_DoDrownR — age/drown a nest-water ant
+- RECOVERED `do_drown_b`/`do_drown_r` (`_DoDrownB`/`_DoDrownR`,
+  seg6:37A4/5EA8, args x=[bp+6], y=[bp+8], caste=[bp+10], FAR return)
+  via a shared `_do_drown` helper — below a drowning threshold (map tile
+  `< 0x14`), just re-derives the slot's `field_c` via the already-
+  recovered `get_new_mode_b`/`r`; at/above it, rerolls the caste's low 3
+  direction bits, stamps the new caste onto both the slot and the
+  life-grid cell, then rolls `_SRand1(100)`: 99-in-100 is a no-op
+  (returns the roll), 1-in-100 drowns the ant (clears the cell + caste,
+  bumps one of two 32-bit PACK counters by the REROLLED caste's colony
+  bit — confirmed the SAME counter pair for both colonies by independent
+  disassembly of both routines).
+- Region merged `_GETNEWMODE_REGIONS`'s own SDG/PACK tables with the
+  B/R-list field bases and drown counters into one window per segment.
+- 8 cases (below-threshold/no-drown/drown-each-colony-bit x both
+  colonies) — ALL GREEN ON THE FIRST RUN; pre-computed exact SRand seed
+  values via the already-recovered `srand1` Python function to hit both
+  the drown and no-drown branches deterministically rather than
+  guessing seeds and hoping.
+- Suite: simant 1547 (+8), full suite green.
+
 ## 2026-07-14 (cont.145) — /goal grind: _IsItYellow — is the player's yellow ant at (x,y)?
 - RECOVERED `is_it_yellow` (`_IsItYellow`, seg5:96B6, args colony=[bp+6],
   x=[bp+8], y=[bp+10], FAR return) — a 3-way dispatch: gated first on
