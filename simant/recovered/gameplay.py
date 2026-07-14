@@ -7808,3 +7808,46 @@ def gstr_b(dgroup, pack) -> int:
                 return 0
 
     return 1
+
+
+def kill_ant_lion(dgroup, simant_data_group, pack, slot: int) -> None:
+    """Remove an antlion: clears its pit tile back to open ground, then
+    compacts the antlion list by shifting every LATER slot down by one
+    across five parallel PACK arrays.
+
+    Recovered from `_KillAntLion` (SIMANTW.SYM seg7:4B58, arg
+    slot=[bp+6]; FAR return, 160 bytes). Composes the already-recovered
+    `set_map`. Reads the SAME `pack[0x809C+slot]`/`[0x80BC+slot]`
+    (x, y) arrays `find_in_lion_list`/`set_ant_lion` use, and
+    `simant_data_group[0x8A88]` for the live count (the SAME field
+    `find_in_lion_list` searches).
+
+    `set_map(plane=1, x, y, 0x3F)` unconditionally first. Then: a
+    non-positive count is a no-op (nothing to remove). Otherwise
+    decrements the count; if the removed slot was the LAST live one
+    (`new_count <= slot`), that's the whole effect. Otherwise shifts
+    every slot from `slot` up to (not including) the new count down by
+    one, across FIVE parallel PACK arrays: `[0x809C]` (x), `[0x80BC]`
+    (y), `[0x7D4E]` (the antlion "type"/growth byte `set_ant_lion`
+    reads), and two further per-slot fields at `[0x7A68]`/`[0x7D34]`
+    whose exact meaning wasn't independently determined — ported
+    literally by offset, not guessed at.
+    """
+    x = pack.rb(0x809C + slot)
+    y = pack.rb(0x80BC + slot)
+    set_map(dgroup, 1, x, y, 0x3F)
+
+    count = simant_data_group.rw(0x8A88)
+    if count <= 0:
+        return
+    count -= 1
+    simant_data_group.ww(0x8A88, count & 0xFFFF)
+    if count <= slot:
+        return
+
+    for si in range(slot, count):
+        pack.wb(0x809C + si, pack.rb(0x809D + si))
+        pack.wb(0x80BC + si, pack.rb(0x80BD + si))
+        pack.wb(0x7D4E + si, pack.rb(0x7D4F + si))
+        pack.wb(0x7A68 + si, pack.rb(0x7A69 + si))
+        pack.wb(0x7D34 + si, pack.rb(0x7D35 + si))

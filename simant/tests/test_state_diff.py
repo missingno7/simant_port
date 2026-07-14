@@ -6423,3 +6423,42 @@ def test_gstrb_matches_asm(ac86, ac82, ac84, f79dc, f72c8, label):
     result = gstr_b(dg_view, pack_view)
     assert ax == (result & 0xFFFF), (
         f"{label}: asm={ax:#06x} rec={result & 0xFFFF:#06x}")
+
+
+# ---- _KillAntLion (seg7:4B58) — remove + compact the antlion list --------
+_KILLANTLION_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0x48E8),
+    (_SDG, 0x8A80, 0x8A90),
+    (_PACK, 0x7A00, 0x8100),
+]
+
+
+def _killantlion_seed(count, slots):
+    def seed(m):
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.ww(sdg, 0x8A88, count)
+        for i, (x, y, typ, f7a68, f7d34) in enumerate(slots):
+            m.mem.wb(pack, 0x809C + i, x)
+            m.mem.wb(pack, 0x80BC + i, y)
+            m.mem.wb(pack, 0x7D4E + i, typ)
+            m.mem.wb(pack, 0x7A68 + i, f7a68)
+            m.mem.wb(pack, 0x7D34 + i, f7d34)
+    return seed
+
+
+@pytest.mark.parametrize("count,slots,slot,label", [
+    (0, [], 0, "empty-list-noop"),
+    (1, [(5, 6, 0x11, 0x21, 0x31)], 0, "remove-last-slot-no-shift"),
+    (3, [(1, 1, 0x11, 0x21, 0x31), (2, 2, 0x12, 0x22, 0x32),
+        (3, 3, 0x13, 0x23, 0x33)], 0, "remove-first-shifts-two-down"),
+    (3, [(1, 1, 0x11, 0x21, 0x31), (2, 2, 0x12, 0x22, 0x32),
+        (3, 3, 0x13, 0x23, 0x33)], 1, "remove-middle-shifts-one-down"),
+])
+def test_killantlion_state_diff_matches_asm(count, slots, slot, label):
+    from simant.recovered.gameplay import kill_ant_lion
+    results = _run_and_diff_segs(
+        7, 0x4B58, (slot,), lambda d, s, p: kill_ant_lion(d, s, p, slot),
+        _KILLANTLION_REGIONS, seed_fn=_killantlion_seed(count, slots))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _KILLANTLION_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

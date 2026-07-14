@@ -1,5 +1,30 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.174) — /goal grind: _KillAntLion — remove + compact
+- Ran a fresh Explore survey now that the previous batch is exhausted;
+  picked `_KillAntLion` first since it directly extends the antlion-list
+  cluster (`_FindInLionList`/`_SetAntLion`, cont.164/166) already in
+  this session. The rest of the survey's list (`_BlockMove`,
+  `_FollowCatDir`, `_fracSIN`/`_fracCOS`, `_GrabMap`,
+  `_GetNearbyPatches`, `_StartMigrate`/`_EndMigrate`,
+  `_PlacePillTile`/`_PillGetLife`, plus an untested pillar-array family)
+  remains for continued work.
+- RECOVERED `kill_ant_lion` (`_KillAntLion`, SIMANTW.SYM seg7:4B58, arg
+  slot=[bp+6]; FAR return, 160 bytes). Composes the already-recovered
+  `set_map`. Clears the antlion's pit tile back to open ground
+  (`set_map(plane=1, x, y, 0x3F)`), then removes it from the list:
+  a non-positive count is a no-op; decrements the count, and if the
+  removed slot was the LAST live one that's the whole effect;
+  otherwise compacts by shifting every later slot down by one across
+  FIVE parallel PACK arrays — the SAME `[0x809C]`(x)/`[0x80BC]`(y)
+  `find_in_lion_list`/`set_ant_lion` use, `[0x7D4E]` (the antlion
+  "type" byte `set_ant_lion` reads), and two further per-slot fields
+  at `[0x7A68]`/`[0x7D34]` whose exact meaning wasn't independently
+  determined — ported literally by offset, not guessed at.
+- 4 cases (empty list, remove-last-no-shift, remove-first-shifts-two,
+  remove-middle-shifts-one) — ALL GREEN ON THE FIRST REAL-ASM RUN.
+- Suite: simant 1752 (+4), full suite green.
+
 ## 2026-07-15 (cont.173) — /goal grind: _SetCasteProd/_SetModeProd/_GstrB
 - RECOVERED `set_caste_prod`/`set_mode_prod` (`_SetCasteProd`/
   `_SetModeProd`, SIMANTW.SYM seg7:026E/0326, NO args; FAR return,
