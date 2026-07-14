@@ -1550,6 +1550,41 @@ def test_tryeatfood_state_diff_matches_asm(colony, seg, off, map_base,
             f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _PickupFoodA (seg5:0D18) — yard food pickup, gated on the "inside" ---
+# flag pack[0x9B6E] (the same one _DeadAntHere reads) -- a genuine
+# _DoForageAnt dependency.
+_PICKUPFOODA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard tile map + SRand seed
+    (_PACK, 0x9B00, 0x9F00),                # inside flag [0x9B6E] + food-count stat [0x9E84]
+]
+
+
+@pytest.mark.parametrize("flag,tile,count,seed_val,label", [
+    (0, 0x48, 5, 0x1234, "outside, tile==0x48 -> reroll via _SRand16"),
+    (0, 0x50, 5, 0x1234, "outside, other tile -> plain decrement"),
+    (1, 0x20, 5, 0x1234, "inside, multiple of 4 -> replaced with (tile-0x18)>>2"),
+    (1, 0x21, 5, 0x1234, "inside, not a multiple of 4 -> plain decrement"),
+    (1, 0x20, 0, 0x1234, "count already 0 -> stat stays at the floor"),
+])
+def test_pickupfooda_state_diff_matches_asm(flag, tile, count, seed_val, label):
+    from simant.recovered.gameplay import pickup_food_a
+    x, y = 10, 20
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, tile)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B6E, flag)
+        m.mem.ww(pack, 0x9E84, count)
+
+    results = _run_and_diff_segs(
+        5, 0x0D18, (x, y),
+        lambda d, p: pickup_food_a(d, p, x, y),
+        _PICKUPFOODA_REGIONS, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _PICKUPFOODA_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _GetExitDirB / _GetExitDirR (seg5:119C / 1240) — exit-distance-------
 # gradient direction, biased away from `exclude`'s opposite.
 @pytest.mark.parametrize("colony,seg,off,map_base,exit_base", [

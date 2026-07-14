@@ -1763,6 +1763,52 @@ def get_enter_dir_r(dgroup, simant_data_group, x: int, y: int, exclude: int) -> 
     return _get_enter_dir(dgroup, simant_data_group, 0x13A4, x, y, exclude)
 
 
+def pickup_food_a(dgroup, pack, x: int, y: int) -> None:
+    """An ant picking up food from the YARD tile map at `(x, y)` — a
+    genuine `_DoForageAnt` dependency.
+
+    Recovered from `_PickupFoodA` (SIMANTW.SYM seg5:0D18, FAR return, args
+    x=[bp+6], y=[bp+8]).
+
+    Behavior is gated on `pack[0x9B6E]` (the SAME "inside the nest" flag
+    `_DeadAntHere` reads) — two ENTIRELY different tile transforms depending
+    on it, not just a colony split like every other food routine this
+    session:
+
+    - Flag CLEAR (outside): tile `0x48` (72, a specific yard food-pile
+      marker) rerolls fresh via `_SRand16`; any other tile just decrements
+      by one (byte-wrapping, no underflow guard, same as `_steal_food`).
+    - Flag SET (inside): a tile that's an exact multiple of 4 is REPLACED
+      with `(tile - 0x18) >> 2` (a shrinking transform, not a decrement —
+      no RNG involved); any other tile falls back to the SAME plain
+      decrement as the flag-clear case.
+
+    Either way, finally decrements `pack[0x9E84]` (a food-count-ish stat,
+    distinct from every other food routine's counter) while it's still
+    positive — the same "floor at exactly 0" guard `_steal_food`/
+    `_eat_food` use.
+    """
+    idx = MAP_PLANE_BASE[0] + (x << 6) + y
+    tile = dgroup.rb(idx)
+
+    if pack.rw(0x9B6E) != 0:
+        if tile % 4 == 0:
+            dgroup.wb(idx, ((tile - 0x18) >> 2) & 0xFF)
+        else:
+            dgroup.wb(idx, (tile - 1) & 0xFF)
+    else:
+        if tile == 0x48:
+            from .simone import SRAND_SEED_OFF, srand_pow2
+            seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 15)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            dgroup.wb(idx, roll)
+        else:
+            dgroup.wb(idx, (tile - 1) & 0xFF)
+
+    if _sx16(pack.rw(0x9E84)) > 0:
+        pack.ww(0x9E84, (pack.rw(0x9E84) - 1) & 0xFFFF)
+
+
 def _smooth_edges(dgroup, map_base: int, x: int, y: int) -> None:
     """Shared body of `smooth_edges_b`/`smooth_edges_r`."""
     from .simone import SRAND_SEED_OFF, srand_pow2

@@ -1,5 +1,24 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.122) — /goal grind: _PickupFoodA — genuine _DoForageAnt dependency
+- RECOVERED `pickup_food_a` (`_PickupFoodA`, seg5:0D18, FAR return, args
+  x/y) — a genuine `_DoForageAnt` dependency (chips at that top-level
+  routine's blocker list directly, even though `_YellowFight`/`_DoTroph`
+  still block the rest of it). Only dependency `_SRand16`.
+- Gated on `pack[0x9B6E]` (the SAME "inside the nest" flag `_DeadAntHere`
+  reads) — genuinely TWO DIFFERENT tile transforms, not just a colony
+  split like every other food routine recovered this session: flag CLEAR
+  (outside) rerolls tile `0x48` fresh via `_SRand16`, else plain
+  decrements; flag SET (inside) REPLACES a tile that's an exact multiple
+  of 4 with `(tile - 0x18) >> 2` (a shrinking transform, no RNG), else
+  falls back to the same plain decrement. Finally decrements a
+  food-count-ish PACK stat (distinct field from every other food
+  routine), floored at exactly `0`.
+- 5 cases (both flag states x both tile-shape branches, plus the
+  count-floor guard) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1348 (+5). Food family fully closed. Remaining from the
+  fresh survey: the larger stretch targets `_RaidOutB/R`/`_QueenMoveB/R`.
+
 ## 2026-07-14 (cont.121) — /goal grind: _EatFood*/_TryEatFood* — food-nibble + colony-growth trigger
 - RECOVERED all four food-eating routines: `eat_food_b`/`r` (`_EatFoodB`/`R`,
   seg6:4844/6BB6, FAR return) and `try_eat_food_b`/`r` (`_TryEatFoodB`/`R`,
