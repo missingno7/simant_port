@@ -249,6 +249,22 @@ def is_not_barrier(tile: int, inside: bool) -> int:
     return 1 if tile <= threshold else 0
 
 
+def is_not_obstacle(plane: int, tile: int, inside: bool) -> int:
+    """Whether a map cell is clear for an ant to move onto (not an obstacle).
+
+    Recovered from `_IsNotObstacle` (SIMANTW.SYM seg5:94C6): after the `_GetMap`
+    bounds check the tile is read from the plane arrays and classified.  On the
+    nest planes (plane <= 1) it is clear when tile <= 0x5F inside / <= 0x53 in the
+    outside yard (world inside/outside flag).  On the yard planes (plane > 1) it
+    is clear when tile <= 0x18 OR it is a pebble (0x30..0x31).  An out-of-range
+    cell is an obstacle.  Returns 1 (not an obstacle) / 0.
+    """
+    if plane <= 1:
+        threshold = 0x5F if inside else 0x53
+        return 1 if tile <= threshold else 0
+    return 1 if (tile <= 0x18 or 0x30 <= tile <= 0x31) else 0
+
+
 def get_dir(x1: int, y1: int, x2: int, y2: int) -> int:
     """Compass direction (0..8) from point 1 to point 2.
 

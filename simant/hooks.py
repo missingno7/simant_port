@@ -1290,6 +1290,63 @@ def _make_isnotbarrier_island(machine):
     return island
 
 
+# -- _IsNotObstacle (seg5:94C6) — is a map cell clear for ant movement? --------
+# Reads the plane map (like _GetMap) + the world inside flag (hardcoded selector,
+# the value DGROUP:[0xC320] holds).  Register residue mirrors the ASM exactly:
+#   invalid cell -> ax=0, bx=0, cx=0xFFFF, dx=0xFFFF; es/si/di preserved.
+#   valid cell   -> es=world selector; cx=tile; bx=ax (0/1); dx = the plane on
+#                   the nest planes and the plane>1 tile<=0x18 path, 1 on the
+#                   pebble path, 0 on the plane>1 obstacle path.
+ISNOTOBSTACLE_SEG_INDEX = 5
+ISNOTOBSTACLE_OFF = 0x94C6
+ISNOTOBSTACLE_SIG = bytes.fromhex("c80200005756c746feffff837e06017f1d8b76080bf6")
+
+
+def _make_isnotobstacle_island(machine):
+    from .recovered.gameplay import is_not_obstacle, map_cell_offset
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        plane = _sx(plane_w)
+        x = _sx(m.rw(ss, (sp + 6) & 0xFFFF))
+        y = _sx(m.rw(ss, (sp + 8) & 0xFFFF))
+        off = map_cell_offset(plane, x, y)
+        if off is None:                               # out of range -> obstacle
+            s.ax = 0
+            s.bx = 0
+            s.cx = 0xFFFF
+            s.dx = 0xFFFF
+        else:
+            tile = m.rb(s.ds, off & 0xFFFF)
+            if plane <= 1:                            # only the nest planes read
+                world_seg = m.rw(s.ds, ISITFOOD_WORLD_SEG_G)   # the flag + set es
+                inside = m.rw(world_seg, ISITFOOD_INSIDE_FLAG_OFF) != 0
+                s.es = world_seg                      # es = 0x5EF3 (nest path only)
+                r = is_not_obstacle(plane, tile, inside)
+                s.dx = plane_w
+            else:                                     # yard planes: tile-only
+                r = is_not_obstacle(plane, tile, False)
+                if tile <= 0x18:
+                    s.dx = plane_w
+                elif 0x30 <= tile <= 0x31:            # pebble
+                    s.dx = 1
+                else:
+                    s.dx = 0
+            s.ax = r
+            s.bx = r                                  # bx = ax
+            s.cx = tile
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsItHole (seg6:2CC0) — is this yard cell a nest hole/entrance? -----------
 # Bounds-checks (x, y) via _IsValidA, then reads the plane-0 yard map and the
 # world inside/outside flag ([0xC320]:[0x9B6E]).  Hole = 0x80..0x8F inside,
@@ -2205,6 +2262,8 @@ _ISLANDS = [
      lambda machine, off: _make_sgetdis_island(machine), "_SGetDis"),
     (ISNOTBARRIER_SEG_INDEX, ISNOTBARRIER_OFF, ISNOTBARRIER_SIG,
      lambda machine, off: _make_isnotbarrier_island(machine), "_IsNotBarrier"),
+    (ISNOTOBSTACLE_SEG_INDEX, ISNOTOBSTACLE_OFF, ISNOTOBSTACLE_SIG,
+     lambda machine, off: _make_isnotobstacle_island(machine), "_IsNotObstacle"),
     (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
      lambda machine, off: _make_isithole_island(machine), "_IsItHole"),
     (GETMAP_SEG_INDEX, GETMAP_OFF, GETMAP_SIG,
@@ -2252,7 +2311,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 63
+EXPECTED_ISLAND_COUNT = 64
 
 
 def install(machine) -> int:

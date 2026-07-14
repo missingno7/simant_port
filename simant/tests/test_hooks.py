@@ -2077,6 +2077,52 @@ def test_getlife_island_matches_asm(plane, x, y, seed):
     assert asm["ax"] == expect
 
 
+# ---- _IsNotObstacle (seg5:94C6) — map + world-flag movement predicate --------
+# Reads the plane map at DGROUP and the inside flag at the hardcoded world
+# selector 0x5EF3 (the value DGROUP:[0xC320] holds), so seed both.
+def _run_isnotobstacle(with_island, plane, x, y, inside, tile):
+    from simant.recovered.gameplay import map_cell_offset
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    world = m.mem.rw(DG, hooks.ISITFOOD_WORLD_SEG_G)          # == 0x5EF3
+    m.mem.ww(world, hooks.ISITFOOD_INSIDE_FLAG_OFF, 1 if inside else 0)
+    off = map_cell_offset(plane, x, y)
+    if off is not None:
+        m.mem.wb(DG, off & 0xFFFF, tile)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISNOTOBSTACLE_SEG_INDEX], hooks.ISNOTOBSTACLE_OFF
+    sp = s.sp
+    for v in (y, x, plane, SENT_CS, SENT_IP):        # plane@[bp+6], x@[bp+8], y@[bp+0xa]
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsNotObstacle")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("inside", [False, True])
+@pytest.mark.parametrize("plane,x,y,tile", [
+    (0, 0x10, 0x10, 0x53), (0, 0x10, 0x10, 0x5F), (1, 0x10, 0x10, 0x54),
+    (1, 0x10, 0x10, 0x60), (0, 0x00, 0x00, 0x00),        # nest planes
+    (2, 0x10, 0x10, 0x18), (2, 0x10, 0x10, 0x19),         # yard: <=0x18 clear / obstacle
+    (2, 0x10, 0x10, 0x30), (3, 0x10, 0x10, 0x31),         # yard pebble
+    (2, 0x10, 0x10, 0x40),                                 # yard obstacle
+    (0, 0x80, 0x10, 0x00), (2, 0x40, 0x10, 0x00),         # coord-invalid
+    (4, 0x10, 0x10, 0x00),                                 # plane-invalid
+])
+def test_isnotobstacle_island_matches_asm(plane, x, y, tile, inside):
+    asm = _run_isnotobstacle(False, plane, x, y, inside, tile)
+    isl = _run_isnotobstacle(True, plane, x, y, inside, tile)
+    assert isl == asm, f"(p={plane},{x:#x},{y:#x},t={tile:#x},in={inside}): {isl} != {asm}"
+
+
 # ---- _GetMap (seg5:60E2) — the map-cell accessor over the DGROUP planes ------
 # Seeds the three plane arrays in DGROUP so a valid read returns a known byte;
 # args are (plane, x, y) with plane@[bp+6].

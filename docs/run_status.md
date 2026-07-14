@@ -1,5 +1,21 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.63) — recovered _IsNotObstacle (first compound map-query)
+- RECOVERED `_IsNotObstacle` (seg5:94C6), the first COMPOUND map-query predicate
+  and a `_GetBestDir` (pathfinding) dependency.  It composes the recovered map
+  addressing (map_cell_offset + a DGROUP tile read) with the world inside flag
+  (hardcoded selector 0x5EF3, the value DGROUP:[0xC320] holds).  Clear when:
+  nest planes (plane<=1) tile <= 0x5F inside / <= 0x53 outside; yard planes
+  (plane>1) tile <= 0x18 OR pebble (0x30..0x31); out-of-range = obstacle.
+- The intricate part was the residue across ~6 exit paths; the A/B oracle guided
+  it in one iteration — it flagged that es (=0x5EF3) is set ONLY on the nest
+  branch (plane>1 never reads the flag), which I'd wrongly set unconditionally.
+  Final residue: bx=ax; cx=tile/0xFFFF; dx = plane / 1 (pebble) / 0 (obstacle) /
+  0xFFFF (invalid); es = world selector only on the nest path.  27 A/B cases.
+- Islands 63 -> 64.  Suite: simant 573.  Pattern proven for the remaining
+  compound map/life routines (_IsClearTile, _TileCanBeMovedOn, _IsItAHole): the
+  oracle makes the residue tractable, one guided fix at a time.
+
 ## 2026-07-14 (cont.62) — SaveAs dialog fully brought up (list box + DlgDirList)
 - Continued the SaveAs frontier by REPLAYING cold4 past the WM_SETREDRAW fix to
   OBSERVE (deterministically, no resume artifact) what the dialog needs next.
