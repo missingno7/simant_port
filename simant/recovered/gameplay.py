@@ -696,6 +696,38 @@ def drop_food_r(dgroup, pack, simant_data_group, x: int, y: int) -> int:
     return _drop_food(dgroup, pack, simant_data_group, 3, 0x72DE, 0x46E6, x, y)
 
 
+def clear_list_b(pack) -> None:
+    """Empty the black colony's ant list (just resets the count to 0 — the
+    per-slot arrays are left as-is, matching `compact_list_b`'s "the count is
+    the source of truth" convention).
+
+    Recovered from `_ClearListB` (SIMANTW.SYM seg5:30E8, no args).
+    """
+    pack.ww(0x99D4, 0)
+
+
+def clear_list_r(pack) -> None:
+    """The red-colony twin of `clear_list_b` (count 0x72CC).
+
+    Recovered from `_ClearListR` (SIMANTW.SYM seg5:30F4, no args).
+    """
+    pack.ww(0x72CC, 0)
+
+
+def kill_spider(pack) -> None:
+    """Reset the spider's state: mode 5 (presumably "dead"/"inactive" — the
+    same numbering `_DoNestAntB`'s mode dispatch family likely shares, not yet
+    cross-checked), health/timer reset to 500 (0x1F4), and a third field
+    (0x7290) cleared to 0.
+
+    Recovered from `_KillSpider` (SIMANTW.SYM seg5:53D4, no args).  All three
+    fields live in PACK (0x729E mode, 0x72E0 health/timer, 0x7290 unconfirmed).
+    """
+    pack.ww(0x729E, 5)
+    pack.ww(0x72E0, 0x1F4)
+    pack.ww(0x7290, 0)
+
+
 def _compact_list(pack, simant_data_group, count_off: int, caste_off: int,
                   f0: int, f1: int, fc: int, fe: int) -> None:
     """Shared body of compact_list_[abr]: sweep the list, removing every

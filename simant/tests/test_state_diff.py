@@ -679,6 +679,35 @@ def test_removefromalist_state_diff_matches_asm(slot, count):
             f"slot={slot} count={count} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _ClearListB/R (seg5:30E8/30F4), _KillSpider (5:53D4) — trivial resets -
+@pytest.mark.parametrize("routine,off,count_off,fn_name", [
+    ("_ClearListB", 0x30E8, 0x99D4, "clear_list_b"),
+    ("_ClearListR", 0x30F4, 0x72CC, "clear_list_r"),
+])
+@pytest.mark.parametrize("initial", [0, 1, 500])
+def test_clearlist_state_diff_matches_asm(routine, off, count_off, fn_name, initial):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    m = runtime.create_machine()
+    m.mem.ww(m.seg_bases[_PACK], count_off, initial)
+    lo, hi = count_off & ~0xFF, (count_off & ~0xFF) + 0x100
+    results = _run_and_diff_segs(5, off, (), lambda p: fn(p), [(_PACK, lo, hi)])
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, f"{routine}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_killspider_state_diff_matches_asm():
+    from simant.recovered.gameplay import kill_spider
+    m = runtime.create_machine()
+    for off in (0x729E, 0x72E0, 0x7290):
+        m.mem.ww(m.seg_bases[_PACK], off, 0xBEEF & 0xFFFF)
+
+    results = _run_and_diff_segs(5, 0x53D4, (), lambda p: kill_spider(p),
+                                 [(_PACK, 0x7200, 0x7300)])
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, _first_diff(asm_after, rec_after, 0x7200)
+
+
 # ---- _CompactListA/B/R (seg5:2A16/2A7A/2ADE) — bulk dead-entry sweep ------
 @pytest.mark.parametrize("routine,off,count_off,caste_off,f0,f1,fc,fe,fn_name", [
     ("_CompactListA", 0x2A16, 0x80F0, 0x2F62, 0x23A4, 0x278E, 0x2B78, 0x334C,
