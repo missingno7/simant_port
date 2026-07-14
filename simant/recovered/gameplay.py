@@ -4485,6 +4485,164 @@ def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
     dead_ant_here(dgroup, pack, a_x, a_y, colony_bit)
 
 
+def do_nest_fight_b(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """Resolve one tick of nest combat for the CURRENT black ant
+    (`pack[0x9B6A]`'s slot) at `(x, y)` — the nest-list cousin of
+    `do_fight_a`'s yard-list combat tick, same overall shape.
+
+    Recovered from `_DoNestFightB` (SIMANTW.SYM seg6:3A54, args
+    x=[bp+6], y=[bp+8]; FAR return). Composes the already-recovered
+    `get_new_mode` and `add_ant_to_b_list`.
+
+    Always: rerolls the caste's low 3 bits via `_SRand1(7)` (a genuine
+    ADD into the `&0xF8`-masked caste, same idiom as `do_fight_a`) and
+    stamps the result onto the black nest life grid at `(x, y)`.
+
+    Then rolls `_SRand16()`; on a `0` (1-in-16): overwrites the life-
+    grid cell AND the slot's caste with its `field_e`
+    (`simant_data_group[0x3F0E+slot]`). If THAT value's mode sub-field
+    (`&0x78`) is exactly `0x60` (a "died" stage), spawns a corpse-tail
+    record via `add_ant_to_b_list` at a position derived from the
+    slot's own `(x, y)` fields offset by the compass delta for
+    `(caste&7)^4` (the opposite of the caste's facing direction) — per
+    the established coordinate-role-swap convention, the OFFSET-8 (dy)
+    delta lands on `x` and the OFFSET-0 (dx) delta lands on `y` — with
+    caste `+8` and `field_c=9`.
+
+    Either way (with or without a corpse spawn): re-reads the slot's
+    CURRENT caste. If its colony bit (`0x80`) is unexpectedly SET (not
+    black), sets `field_c=7` as a fallback and returns. Otherwise
+    computes `field_c` via `get_new_mode(sub=(caste&0x78)>>3,
+    full_byte=caste)` — the GENERAL mode-transition function, not
+    `get_new_mode_b`, since the real caste's own `0x80` bit is passed
+    through unmasked.
+
+    On the 15-in-16 no-kill roll, the real ASM conditionally calls a
+    presentation-only speech-balloon UI routine (gated on
+    `simant_data_group[0x85FC]==1`) — deliberately NOT ported, same
+    split as `_FightBalloons` in `do_fight_a`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    slot = pack.rw(0x9B6A)
+    caste = simant_data_group.rb(0x3D18 + slot)
+    new_caste = ((caste & 0xF8) + roll) & 0xFF
+    simant_data_group.wb(0x3D18 + slot, new_caste)
+
+    life_off = LIFE_PLANE_BASE[2] + (x << 6) + y
+    dgroup.wb(life_off, new_caste)
+
+    seed, roll16 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 15)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll16 != 0:
+        return
+
+    slot = pack.rw(0x9B6A)
+    field_e = simant_data_group.rb(0x3F0E + slot)
+    dgroup.wb(life_off, field_e)
+    simant_data_group.wb(0x3D18 + slot, field_e)
+
+    if (field_e & 0x78) == 0x60:
+        slot = pack.rw(0x9B6A)
+        caste_now = simant_data_group.rb(0x3D18 + slot)
+        x_field = simant_data_group.rb(0x392C + slot)
+        y_field = simant_data_group.rb(0x3736 + slot)
+        dir_idx = (caste_now & 7) ^ 4
+        dx_val = sx8(simant_data_group.rb(dir_idx))
+        dy_val = sx8(simant_data_group.rb(8 + dir_idx))
+        add_ant_to_b_list(pack, simant_data_group, dgroup,
+                          y=y_field + dx_val, x=x_field + dy_val,
+                          caste=(caste_now + 8) & 0xFF, field_c=9, field_e=0)
+
+    slot = pack.rw(0x9B6A)
+    caste_now = simant_data_group.rb(0x3D18 + slot)
+    if caste_now & 0x80:
+        simant_data_group.wb(0x3B22 + slot, 7)
+        return
+
+    mode = (caste_now & 0x78) >> 3
+    field_c = get_new_mode(dgroup, simant_data_group, pack, mode, caste_now)
+    simant_data_group.wb(0x3B22 + slot, field_c & 0xFF)
+
+
+def do_nest_fight_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """The red-colony twin of `do_nest_fight_b` — same caste-reroll and
+    corpse-spawn shape, but a GENUINELY DIFFERENT mode-resolution tail
+    (confirmed by independent disassembly, not assumed symmetric): no
+    `get_new_mode` call at all — a direct fixed lookup table instead.
+
+    Recovered from `_DoNestFightR` (SIMANTW.SYM seg6:6072, args
+    x=[bp+6], y=[bp+8]; FAR return).
+
+    Same caste-reroll/life-grid stamp and `_SRand16()` 1-in-16 kill-tick
+    shape as `_DoNestFightB`, and the same corpse-spawn condition
+    (`field_e`'s mode `== 0x60`) composing `add_ant_to_r_list`.
+
+    The final dispatch is INVERTED and structurally different: if the
+    re-read caste's colony bit is CLEAR (not red — the abnormal case
+    here, opposite of `_DoNestFightB`'s "set is abnormal"), sets
+    `field_c=7` as the fallback and returns. Otherwise (normal, colony
+    bit set): `field_c = dgroup[0x22E6 + mode]` — a plain 16-entry
+    static DGROUP table indexed by the SAME `(caste&0x78)>>3` mode, NOT
+    a call to `get_new_mode`/`get_new_mode_r` at all.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    slot = pack.rw(0x9B6A)
+    caste = simant_data_group.rb(0x46E6 + slot)
+    new_caste = ((caste & 0xF8) + roll) & 0xFF
+    simant_data_group.wb(0x46E6 + slot, new_caste)
+
+    life_off = LIFE_PLANE_BASE[3] + (x << 6) + y
+    dgroup.wb(life_off, new_caste)
+
+    seed, roll16 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 15)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll16 != 0:
+        return
+
+    slot = pack.rw(0x9B6A)
+    field_e = simant_data_group.rb(0x48DC + slot)
+    dgroup.wb(life_off, field_e)
+    simant_data_group.wb(0x46E6 + slot, field_e)
+
+    if (field_e & 0x78) == 0x60:
+        slot = pack.rw(0x9B6A)
+        caste_now = simant_data_group.rb(0x46E6 + slot)
+        x_field = simant_data_group.rb(0x42FA + slot)
+        y_field = simant_data_group.rb(0x4104 + slot)
+        dir_idx = (caste_now & 7) ^ 4
+        dx_val = sx8(simant_data_group.rb(dir_idx))
+        dy_val = sx8(simant_data_group.rb(8 + dir_idx))
+        add_ant_to_r_list(pack, simant_data_group, dgroup,
+                          y=y_field + dx_val, x=x_field + dy_val,
+                          caste=(caste_now + 8) & 0xFF, field_c=9, field_e=0)
+
+    slot = pack.rw(0x9B6A)
+    caste_now = simant_data_group.rb(0x46E6 + slot)
+    if not (caste_now & 0x80):
+        simant_data_group.wb(0x44F0 + slot, 7)
+        return
+
+    mode = (caste_now & 0x78) >> 3
+    field_c = dgroup.rb(0x22E6 + mode)
+    simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
+
+
 def start_fight_a(dgroup, simant_data_group, pack, slot1: int, x1: int,
                    y1: int, x2: int, y2: int) -> None:
     """Initiate combat between a yard ant at `(x1, y1)` (A-list slot

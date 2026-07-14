@@ -1,5 +1,31 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.154) — /goal grind: _DoNestFightB/_DoNestFightR — nest combat tick
+- RECOVERED `do_nest_fight_b`/`do_nest_fight_r` (`_DoNestFightB`/
+  `_DoNestFightR`, seg6:3A54/6072, args x=[bp+6], y=[bp+8], FAR
+  return) — the nest-list cousin of `do_fight_a`'s yard combat tick,
+  same overall shape (reroll caste low bits via `_SRand1(7)`, stamp the
+  life grid, `_SRand16()` 1-in-16 kill-tick). Composes the already-
+  recovered `get_new_mode`, `add_ant_to_b_list`/`r_list`.
+- Confirmed a GENUINE structural asymmetry by independent disassembly
+  of both (not assumed): on a kill tick, both spawn a corpse-tail
+  record when the dying caste's mode is exactly `0x60`, using the SAME
+  coordinate-role-swap convention already established elsewhere. But
+  the final `field_c` resolution diverges completely — `_DoNestFightB`
+  calls the general `get_new_mode(sub, full_byte=caste)`; `_DoNestFightR`
+  does NOT call `get_new_mode`/`get_new_mode_r` at all, instead reading
+  a plain 16-entry static DGROUP table (`dgroup[0x22E6+mode]`) directly.
+  The "wrong colony" fallback branch is also inverted (B's abnormal
+  case is colony-bit SET, R's is colony-bit CLEAR) — consistent in
+  INTENT (both mean "this ant's colony bit doesn't match my routine")
+  but genuinely different code shape, not a copy-paste twin.
+- 8 cases (4 scenarios × both colonies: no-kill roll, kill without
+  corpse spawn, kill with corpse spawn into the normal tail, kill with
+  corpse spawn into the wrong-colony fallback) — ALL GREEN ON THE
+  FIRST RUN, confirming the careful independent-disassembly discipline
+  continues to pay off on asymmetric B/R pairs.
+- Suite: simant 1600 (+8), full suite green.
+
 ## 2026-07-14 (cont.153) — /goal grind: _SimEggB/_SimEggR — nest egg/larva growth tick
 - RECOVERED `sim_egg_b`/`sim_egg_r` (`_SimEggB`/`_SimEggR`, seg6:3CA0/
   62A6, args x=[bp+6], y=[bp+8], FAR return). Both advance a nest egg/

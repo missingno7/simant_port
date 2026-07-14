@@ -2948,6 +2948,74 @@ def test_dofighta_state_diff_matches_asm(slot, acting_slot, a_x, a_y, caste_init
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _DoNestFightB/_DoNestFightR (seg6:3A54/6072) — nest combat tick ------
+# Composes get_new_mode (B) / a direct DGROUP table (R), and
+# add_ant_to_b_list/r_list for the corpse-spawn branch.
+_DONESTFIGHT_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x22E0, 0xCBF4),   # 0x22E6 table (R) through both nest life planes + SRand seed
+    (_SDG, 0, 0x8B00),                       # compass table, B/R-list fields, GetNewMode tables
+    (_PACK, 0x7200, 0xA000),                 # slot ptr + GetNewMode fields + A-list counts
+]
+_NESTFIGHTBALLOONS_STUB = [(3, 0x499A)]
+
+
+def _donestfight_seed(x, y, slot, caste_off, field_e_off, field_c_off,
+                      xfield_off, yfield_off, count_off, caste_init, field_e,
+                      seed_val, mode_base_hi=2, mode_base_lo=3, gate_flag=0,
+                      tbl2=0x25, tbl6=0x30, tbl_direct=0x40, tbl_word=0x1122):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B6A, slot)
+        m.mem.wb(sdg, caste_off + slot, caste_init)
+        m.mem.wb(sdg, field_e_off + slot, field_e)
+        m.mem.wb(sdg, xfield_off + slot, 20)
+        m.mem.wb(sdg, yfield_off + slot, 30)
+        m.mem.ww(pack, count_off, 5)
+        m.mem.ww(pack, 0x7690, mode_base_hi)
+        m.mem.ww(pack, 0x9B8A, mode_base_lo)
+        m.mem.ww(pack, 0x9FCE, gate_flag)
+        for i in range(8):
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_hi << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_lo << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_hi << 3) + i), tbl6)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_lo << 3) + i), tbl6)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, tbl_direct)
+        m.mem.ww(sdg, 0x8A58, tbl_word)
+        m.mem.wb(sdg, 0x85FC, 1)   # exercise the (stubbed) balloon gate too
+    return seed
+
+
+@pytest.mark.parametrize("which,off,map_base,caste_off,field_e_off,field_c_off,"
+                         "xfield_off,yfield_off,count_off", [
+    ("b", 0x3A54, 0x48E8, 0x3D18, 0x3F0E, 0x3B22, 0x392C, 0x3736, 0x99D4),
+    ("r", 0x6072, 0x58E8, 0x46E6, 0x48DC, 0x44F0, 0x42FA, 0x4104, 0x72CC),
+])
+@pytest.mark.parametrize("x,y,slot,caste_init,field_e,seed_val,label", [
+    (20, 25, 0, 0x02, 0x00, 0x01, "roll16-nonzero-noop"),
+    (20, 25, 0, 0x03, 0x08, 0x00, "kill-no-corpse-spawn"),
+    (20, 25, 1, 0x83, 0x60, 0x00, "kill-corpse-spawn-then-normal-tail"),
+    (20, 25, 2, 0x83, 0xE0, 0x00, "kill-corpse-spawn-then-wrong-colony-fallback"),
+])
+def test_donestfight_state_diff_matches_asm(which, off, map_base, caste_off,
+                                            field_e_off, field_c_off, xfield_off,
+                                            yfield_off, count_off, x, y, slot,
+                                            caste_init, field_e, seed_val, label):
+    import simant.recovered.gameplay as G
+    fn = G.do_nest_fight_b if which == "b" else G.do_nest_fight_r
+    results = _run_and_diff_segs(
+        6, off, (x, y),
+        lambda d, s, p: fn(d, s, p, x, y),
+        _DONESTFIGHT_REGIONS, stubs=_NESTFIGHTBALLOONS_STUB,
+        seed_fn=_donestfight_seed(x, y, slot, caste_off, field_e_off, field_c_off,
+                                  xfield_off, yfield_off, count_off, caste_init,
+                                  field_e, seed_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DONESTFIGHT_REGIONS):
+        assert asm_after == rec_after, f"{which} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _Bounce (seg7:12EC) — yard-edge "bounce back into the map" compass ----
 # Pure(ish): its only mutation is the SRand LFSR seed, so (unlike
 # `find_in_a_list`'s reuse of `_run_and_get_ax`'s post-execution machine) the
