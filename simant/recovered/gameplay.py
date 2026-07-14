@@ -738,6 +738,50 @@ def check_my_best_dirs(dgroup, pack, out, inside: bool, plane: int, cur_x: int,
     return si if si < 0 else -1
 
 
+def get_red_best_dirs(dgroup, inside: bool, plane: int, cur_x: int, cur_y: int,
+                      tgt_x: int, tgt_y: int) -> int:
+    """The red-colony twin of `get_my_best_dirs`.
+
+    Recovered from `_GetRedBestDirs` (SIMANTW.SYM seg6:9A18, args: plane,
+    cur_x, cur_y, tgt_x, tgt_y; FAR return) — structurally identical to
+    `get_my_best_dirs` (same 8-direction scan, same `tile_can_be_moved_on`
+    gate, same occupied/clear split via a genuine `_GetLife`/`_IsClearTile`
+    call pair), but simpler: it reads no PACK state at all.  Where
+    `get_my_best_dirs` threads PACK-resident `cand_plane`/`cand_x`/`cand_y`/
+    `check_adjacent` into `tile_can_be_moved_on`, this routine passes its
+    OWN `plane`/`tgt_x`/`tgt_y` for the candidate site and hardcodes
+    `check_adjacent` to False (confirmed the compass delta tables it reads
+    via a different pair of DGROUP pointer-globals hold the exact same
+    values as `GET_BEST_DIR_DX`/`GET_BEST_DIR_DY` by reading real memory).
+    """
+    best_dist = get_dis(cur_x, cur_y, tgt_x, tgt_y)
+    if best_dist <= 0:
+        return -1
+    best_clear, best_any = -1, -2
+    for si in range(8):
+        nx = cur_x + GET_BEST_DIR_DX[si]
+        ny = cur_y + GET_BEST_DIR_DY[si]
+        if not tile_can_be_moved_on(dgroup, inside, plane, nx, ny, plane, tgt_x,
+                                    tgt_y, False):
+            continue
+        dist = get_dis(nx, ny, tgt_x, tgt_y)
+        if dist >= best_dist:
+            continue
+        best_dist = dist
+        life_off = life_cell_offset(plane, nx, ny)
+        raw_life = dgroup.rb(life_off) if life_off is not None else 0
+        if raw_life > 0:                                  # occupied -> fallback
+            best_any = si
+        else:
+            tile_off = map_cell_offset(plane, nx, ny)
+            tile = dgroup.rb(tile_off) if tile_off is not None else 0
+            if is_clear_tile(plane, tile, raw_life):
+                best_clear = si
+            else:
+                best_any = si
+    return best_clear if best_clear >= 0 else best_any
+
+
 # The 3x3 neighbour offsets _IsClear3x3 walks (a DGROUP direction table): the 8
 # compass directions around the centre, in the order N, NE, E, SE, S, SW, W, NW.
 CLEAR_3X3_DX = (0, 1, 1, 1, 0, -1, -1, -1)

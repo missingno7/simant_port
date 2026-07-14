@@ -1398,6 +1398,48 @@ def test_checkmybestdirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, fill_til
         f"rec=(ax={rec_ax:#06x},out={rec_out:#06x})")
 
 
+# ---- _GetRedBestDirs (seg6:9A18) — red-colony pathfinding, no PACK state ---
+def _getredbestdirs_seed(plane, cur_x, cur_y, tiles, lifes, inside):
+    def seed(m):
+        from simant.recovered.gameplay import map_cell_offset, life_cell_offset
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        world = m.mem.rw(dg, 0xC4AC)
+        m.mem.wb(world, 0x9B6E, 1 if inside else 0)
+        for si in range(8):
+            nx, ny = cur_x + GET_BEST_DIR_DX[si], cur_y + GET_BEST_DIR_DY[si]
+            moff = map_cell_offset(plane, nx, ny)
+            if moff is not None:
+                m.mem.wb(dg, moff & 0xFFFF, tiles.get(si, 0x40))
+            loff = life_cell_offset(plane, nx, ny)
+            if loff is not None:
+                m.mem.wb(dg, loff & 0xFFFF, lifes.get(si, 0))
+    return seed
+
+
+@pytest.mark.parametrize("plane,cur_x,cur_y,tgt_x,tgt_y,tiles,lifes,inside", [
+    (2, 20, 20, 20, 20, {}, {}, False),                      # at target -> -1
+    (2, 20, 20, 25, 25, {}, {}, False),                       # nothing clear
+    (2, 20, 20, 25, 25, {3: 0x05}, {}, False),                 # one clear dir
+    (2, 20, 20, 25, 25, {3: 0x05, 2: 0x05}, {}, False),        # picks closer
+    (2, 20, 20, 25, 25, {3: 0x05}, {3: 7}, False),             # occupied fallback
+    (2, 20, 20, 25, 25, {6: 0x30}, {}, False),                 # pebble hard-clear
+    (2, 0, 0, 5, 5, {3: 0x05}, {}, False),                     # boundary-adjacent
+    (0, 20, 20, 25, 25, {3: 0x50}, {}, False),                 # yard, inside=False
+    (1, 20, 20, 25, 25, {3: 0x80}, {}, True),                  # yard, inside=True
+])
+def test_getredbestdirs_matches_asm(plane, cur_x, cur_y, tgt_x, tgt_y, tiles,
+                                    lifes, inside):
+    from simant.recovered.gameplay import get_red_best_dirs
+    ax, m = _run_and_get_ax(
+        6, 0x9A18, (plane, cur_x, cur_y, tgt_x, tgt_y),
+        seed_fn=_getredbestdirs_seed(plane, cur_x, cur_y, tiles, lifes, inside))
+    dg_view = ByteBackend(m.mem.block(m.seg_bases[hooks.DG_SEG_INDEX], 0, 0x10000), 0)
+    expect = get_red_best_dirs(dg_view, inside, plane, cur_x, cur_y, tgt_x, tgt_y)
+    assert ax == (expect & 0xFFFF), (
+        f"(p={plane},cur=({cur_x},{cur_y}),tgt=({tgt_x},{tgt_y}),tiles={tiles},"
+        f"lifes={lifes},in={inside}): asm={ax:#06x} rec={expect:#06x}")
+
+
 # ---- _SmoothAlarm (seg6:9380) — 4-neighbour box blur of the alarm grid -----
 # Snapshots the live grid [0x52D2..) into a scratch buffer [0x4AD2..) first,
 # then blurs read-old/write-new; both bands are covered by one region.

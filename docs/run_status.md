@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.89) — /goal grind: _GetRedBestDirs closes the pathfinding family
+- RECOVERED `get_red_best_dirs` (seg6:9A18, args: plane, cur_x, cur_y,
+  tgt_x, tgt_y; FAR return) — the red-colony twin of `get_my_best_dirs`,
+  and the last symbol in `SIMANT1_MODULE` (seg6). Structurally identical
+  control flow (verified byte-for-byte against the same disassembly
+  pattern), but simpler: reads NO PACK state at all. Where
+  `get_my_best_dirs` threads PACK-resident `cand_plane`/`cand_x`/`cand_y`/
+  `check_adjacent` into `tile_can_be_moved_on`, this routine passes its own
+  `plane`/`tgt_x`/`tgt_y` for the candidate site and hardcodes
+  `check_adjacent` to False (a literal `push 0` in the ASM, not a PACK
+  read). Confirmed the compass delta tables it reads via a DIFFERENT pair
+  of DGROUP pointer-globals (`[0xC648]`/`[0xC64A]` vs. `get_my_best_dirs`'s
+  `[0xC3C4]`/`[0xC3CA]`) hold the exact same values as `GET_BEST_DIR_DX`/
+  `GET_BEST_DIR_DY` by reading real memory rather than assuming symmetry.
+  9 scenarios (mirroring `get_my_best_dirs`'s test shape minus the PACK
+  candidate-site cases, since none apply here), all green on the first run.
+- Suite: simant 1009 (+9). This closes the entire pathfinding-tier thread
+  surveyed in cont.84/85: `_TileCanBeMovedOn` -> `_GetMyBestDirs` /
+  `_GetRedBestDirs` -> `_GetMyRandDirs` / `_CheckMyBestDirs` are all
+  recovered and cross-verified. `seg6` (SIMANT1) is now fully scanned for
+  this family — the remaining unrecovered seg6 routines are the movement-
+  execution tier (`_TryMoveDirB/R` -> `_GetOutB/R` -> the dig subsystem)
+  and combat (`_YellowFight`/`_GetWinner`), both flagged in cont.84's
+  survey as blocked on further seg5/seg7 dependencies. Continuing per
+  /goal — next step is either tackling the `_TryMoveDirB/R`/`_GetOutB/R`
+  chain (movement EXECUTION, now that movement SELECTION is fully
+  recovered) or re-surveying for smaller tractable seg5 leaves first.
+
 ## 2026-07-14 (cont.88) — /goal grind: _CheckMyBestDirs (1000 tests)
 - RECOVERED `check_my_best_dirs` (seg6:8B40, args: one FAR pointer output,
   then plane, cur_x, cur_y, tgt_x, tgt_y; FAR return) — walks
