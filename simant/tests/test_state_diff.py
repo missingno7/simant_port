@@ -229,6 +229,60 @@ def test_dropwater_state_diff_matches_asm(x, seed_val):
     assert asm_after == rec_after, _first_diff(asm_after, rec_after)
 
 
+# ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
+# Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
+# SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only
+# DGROUP + PACK (it has no cheat-flag gate).
+_DECEATB_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC00, 0xAD00),   # covers [0xAC82] (reset rate), [0xAC86] (food)
+    (_SDG, 0x8A00, 0x8B00),                 # covers [0x8A60] (no-starve flag)
+    (_PACK, 0x7400, 0x7500),                # covers [0x7402] (countdown timer)
+]
+_DECEATR_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC00, 0xAD00),   # covers [0xAC84] (reset rate), [0xAC88] (food)
+    (_PACK, 0x7C00, 0x7D00),                # covers [0x7C8E] (countdown timer)
+]
+
+
+@pytest.mark.parametrize("no_starve", [False, True])
+@pytest.mark.parametrize("timer,reset_rate,food", [
+    (5, 320, 10), (0, 320, 10), (-1, 320, 10), (-1, -64, 10),
+    (-1, 320, 0), (-1, 320, -5), (100, 0, 50),
+])
+def test_deceatb_state_diff_matches_asm(timer, reset_rate, food, no_starve):
+    from simant.recovered.gameplay import dec_eat_b
+    m = runtime.create_machine()
+    dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                     m.seg_bases[_PACK])
+    m.mem.ww(pack, 0x7402, timer & 0xFFFF)
+    m.mem.ww(dg, 0xAC82, reset_rate & 0xFFFF)
+    m.mem.ww(dg, 0xAC86, food & 0xFFFF)
+    m.mem.wb(sdg, 0x8A60, 1 if no_starve else 0)
+
+    results = _run_and_diff_segs(6, 0x48F8, (), lambda d, s, p: dec_eat_b(d, s, p),
+                                 _DECEATB_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DECEATB_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("timer,reset_rate,food", [
+    (5, 320, 10), (0, 320, 10), (-1, 320, 10), (-1, -64, 10),
+    (-1, 320, 0), (-1, 320, -5), (100, 0, 50),
+])
+def test_deceatr_state_diff_matches_asm(timer, reset_rate, food):
+    from simant.recovered.gameplay import dec_eat_r
+    m = runtime.create_machine()
+    dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+    m.mem.ww(pack, 0x7C8E, timer & 0xFFFF)
+    m.mem.ww(dg, 0xAC84, reset_rate & 0xFFFF)
+    m.mem.ww(dg, 0xAC88, food & 0xFFFF)
+
+    results = _run_and_diff_segs(6, 0x6C6A, (), lambda d, p: dec_eat_r(d, p),
+                                 _DECEATR_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DECEATR_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 def _sx(v):
     return v - 0x10000 if v & 0x8000 else v
 

@@ -1,5 +1,25 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.72) — /goal autonomous grind: _DecEatB / _DecEatR (colony hunger)
+- User set an autonomous /goal: continue core game logic recovery until stopped
+  or genuinely blocked.  Surveyed all un-recovered seg5/seg6 routines ranked by
+  subcall count to find the next batch of clean mutators for the state-diff
+  oracle (bypassing the oversized _DigTileB for now).
+- RECOVERED `dec_eat_b`/`dec_eat_r` (seg6:48F8 / 6C6A) — the two colonies' food
+  hunger-decay clocks (tick a countdown timer; on expiry, reset it to
+  reset_rate>>5 and starve the colony by 1 food unit).  Confirms and extends the
+  DGROUP/SIMANT_DATA_GROUP/PACK field layout found fixing _SetMyHealth:
+  DGROUP holds parallel per-colony fields (0xAC82/0xAC84 = reset rate B/R,
+  0xAC86/0xAC88 = food supply B/R, 0xAC8A = player health); PACK holds the
+  countdown timers (0x7402 B, 0x7C8E R) and the earlier player-status fields;
+  SIMANT_DATA_GROUP:[0x8A60] is a "no-starve" cheat flag gating ONLY the B path
+  (asymmetric — R has no such gate, confirmed from the ASM, not assumed).
+  28 state-diff cases green (both colonies, all timer/rate/food edge cases).
+- Suite: simant 739.  Continuing the grind per the /goal — next: _KillTailB/R,
+  then the scent/alarm system (_JamScentBN/RN/BT/RT, _ColonySmellBN/RN/BT/RT,
+  _AlarmHere/_AlarmHere2) that feeds the _DoForageAnt/_DoRandAntA AI directly.
+
+
 ## 2026-07-14 (cont.71) — CORRECTNESS FIX: _SetMyHealth spans 3 fixed NE segments, not 1
 - Scouting the dig chain (_DigTileB) found it far bigger than expected (running
   statistical accumulators via __aFuldiv, not just a tile write) — deferred.

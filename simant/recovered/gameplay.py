@@ -13,6 +13,13 @@ from __future__ import annotations
 from ..bridge.dgroup_view import LIFE_PLANE_BASE, MAP_PLANE_BASE
 
 
+def _sx16(v: int) -> int:
+    """Sign-extend a 16-bit word to a Python int, matching the ASM's signed
+    (`jl`/`jg`/`sar`) reads of a word field."""
+    v &= 0xFFFF
+    return v - 0x10000 if v & 0x8000 else v
+
+
 def is_it_food(tile: int, inside_nest: bool) -> int:
     """Whether a map tile value denotes food.
 
@@ -501,3 +508,42 @@ def s_get_dis(x1: int, y1: int, x2: int, y2: int) -> int:
     `get_dis` (the S prefix marks the spider routines).
     """
     return abs(x2 - x1) + abs(y2 - y1)
+
+
+def dec_eat_b(dgroup, simant_data_group, pack) -> None:
+    """Tick the black colony's hunger-decay clock; starve it by one food unit
+    on each expiry, unless the "no-starve" cheat flag is set.
+
+    Recovered from `_DecEatB` (SIMANTW.SYM seg6:48F8).  A per-tick countdown at
+    `pack[0x7402]` is decremented; when it goes negative (signed), it is reset to
+    `dgroup[0xAC82] >> 5` (the colony's configured hunger-decay rate, arithmetic
+    shift).  If the colony's food supply `dgroup[0xAC86]` is > 0 AND the
+    black-colony "no-starve" flag at `simant_data_group[0x8A60]` is clear, the
+    food supply is decremented by 1.  (`simant_data_group`/`pack` are the fixed
+    NE data segments the game reaches through DGROUP pointer-globals; see
+    `hooks.SIMANT_DATA_GROUP_SEG_INDEX` / `PACK_SEG_INDEX`.)
+    """
+    t = (pack.rw(0x7402) - 1) & 0xFFFF
+    pack.ww(0x7402, t)
+    if _sx16(t) < 0:
+        pack.ww(0x7402, (_sx16(dgroup.rw(0xAC82)) >> 5) & 0xFFFF)
+        if _sx16(dgroup.rw(0xAC86)) > 0 and simant_data_group.rw(0x8A60) == 0:
+            dgroup.ww(0xAC86, (dgroup.rw(0xAC86) - 1) & 0xFFFF)
+
+
+def dec_eat_r(dgroup, pack) -> None:
+    """Tick the red colony's hunger-decay clock; starve it by one food unit on
+    each expiry (no cheat-flag gate — that check exists only for the black
+    colony's `dec_eat_b`).
+
+    Recovered from `_DecEatR` (SIMANTW.SYM seg6:6C6A).  A per-tick countdown at
+    `pack[0x7C8E]` is decremented; when it goes negative, it is reset to
+    `dgroup[0xAC84] >> 5`.  If the colony's food supply `dgroup[0xAC88]` is > 0
+    it is decremented by 1.
+    """
+    t = (pack.rw(0x7C8E) - 1) & 0xFFFF
+    pack.ww(0x7C8E, t)
+    if _sx16(t) < 0:
+        pack.ww(0x7C8E, (_sx16(dgroup.rw(0xAC84)) >> 5) & 0xFFFF)
+        if _sx16(dgroup.rw(0xAC88)) > 0:
+            dgroup.ww(0xAC88, (dgroup.rw(0xAC88) - 1) & 0xFFFF)
