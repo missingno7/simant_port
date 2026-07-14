@@ -1978,6 +1978,104 @@ def make_new_hole_b(dgroup, simant_data_group, pack, col: int) -> None:
     dig_tile_b(dgroup, simant_data_group, pack, col, 1)
 
 
+def make_new_hole_r(dgroup, simant_data_group, pack, col: int) -> None:
+    """The red-colony twin of `make_new_hole_b` — same search/carve
+    machinery over the SAME shared yard map, but a genuinely different
+    (and more elaborate) closing step.
+
+    Recovered from `_MakeNewHoleR` (SIMANTW.SYM seg5:1D02, arg: col; FAR
+    return).  Confirmed via disassembly, not assumed by symmetry with
+    `make_new_hole_b`: the candidate search, classification, marker
+    values (same `_MakeNewHoleB` decimal/hex fix applies: `tile + 0x22`,
+    not `0x34`), and the 8-neighbour edge carve ALL operate on
+    `MAP_PLANE_BASE[0]` (the shared yard map) exactly like the black
+    twin — the "R" in the name is about which nest the closing step
+    tunnels into, not which map the search happens on.  Only the
+    candidate row FORMULA differs: `row = 0x7E - ((roll + i) % 0x20)`
+    (searching down from 126, vs. black's `+ 2` searching up from 2) —
+    and the SDG scratch fields are R's own (`[0x835E]`/`[0x8360]`/
+    `[0x8356]`/`[0x8358]`) with the hole-tracking write going to
+    `_FillHolesRN`'s array at `[0x8312 + col]`.
+
+    The closing step is where R diverges for real: instead of a single
+    `dig_tile_b(col, 1)` call, it inlines the SAME reroll/track logic
+    `dig_tile_r` uses (`_dig_tile_reroll_and_track` on the red nest map at
+    the FIXED cell `(col, 1)`, not a variable position), then calls a
+    specific 4-step sequence that is NOT the same as `dig_tile_r`'s own
+    closing smooth (which would smooth all 4 neighbours of `(col, 1)`) --
+    it smooths `(col, 0)` and `(col, 2)` and `(col-1, 1)`, then refreshes
+    the exit-map at `(col, 1)` instead of smoothing `(col+1, 1)`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 0x1F)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    inside = pack.rw(0x9B6E) != 0
+    found_row = None
+
+    if inside:
+        for i in range(0x22):
+            row = 0x7E - ((roll + i) % 0x20)
+            tile = dgroup.rb(MAP_PLANE_BASE[0] + (row << 6) + col)
+            if tile == 0:
+                m = 0x86
+            elif tile in (2, 3):
+                m = 0x8A
+            elif 0x5E <= tile <= 0x61:
+                m = (tile + 0x22) & 0xFF
+            elif tile == 0x66:
+                m = 0x85
+            elif tile == 0x68:
+                m = 0x84
+            else:
+                m = 0
+            if m:
+                found_row, marker = row, m
+                break
+        if found_row is None:
+            return
+        dgroup.wb(MAP_PLANE_BASE[0] + (found_row << 6) + col, marker & 0xFF)
+        simant_data_group.ww(0x835E, found_row)
+        simant_data_group.ww(0x8360, col)
+        simant_data_group.ww(0x8356, col)
+        simant_data_group.ww(0x8358, 0)
+    else:
+        for i in range(0x22):
+            row = 0x7E - ((roll + i) % 0x20)
+            if _clear_3x3(dgroup, 1, row, col):
+                found_row = row
+                break
+        if found_row is None:
+            return
+        dgroup.wb(MAP_PLANE_BASE[0] + (found_row << 6) + col, 0x50)
+        simant_data_group.ww(0x835E, found_row)
+        simant_data_group.ww(0x8360, col)
+        simant_data_group.ww(0x8356, col)
+        simant_data_group.ww(0x8358, 0)
+
+        def sbyte(off):
+            v = simant_data_group.rb(off)
+            return v - 0x100 if v & 0x80 else v
+
+        for di in range(8):
+            ny = sbyte(8 + di) + col
+            nx = sbyte(0 + di) + found_row
+            if not (0 <= nx <= 0x7F and 0 <= ny <= 0x3F):
+                continue
+            off = MAP_PLANE_BASE[0] + (nx << 6) + ny
+            if dgroup.rb(off) < 0x50:
+                dgroup.wb(off, HOLE_EDGE_TILES[di])
+
+    simant_data_group.wb(0x8312 + col, found_row & 0xFF)
+    _dig_tile_reroll_and_track(dgroup, pack, MAP_PLANE_BASE[3], 0x9DDC, 0x9DE2,
+                               0x7A56, 0x9FBA, 0x9FD2, col, 1)
+    smooth_edges_r(dgroup, col, 0)
+    smooth_edges_r(dgroup, col, 2)
+    smooth_edges_r(dgroup, col - 1, 1)
+    fix_exit_map_r(dgroup, simant_data_group, col, 1)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 

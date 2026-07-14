@@ -581,6 +581,76 @@ def test_makenewholeb_state_diff_matches_asm(col, seed_val, inside, row_tiles,
             f"blocked={blocked_rows} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _MakeNewHoleR (seg5:1D02) — search on the SAME yard map, red closing --
+_MAKENEWHOLER_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed
+    (_SDG, 0, 0x9000),                       # delta tables, exit-map arrays, scratch fields
+    (_PACK, 0x7200, 0xA000),                 # inside flag + red dig accumulators
+]
+
+
+def _makenewholer_seed(col, seed_val, inside, row_tiles, blocked_rows, red_tile1):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        for row in range(93, 128):
+            for c in (col - 1, col, col + 1):
+                if not (0 <= c <= 0x3F):
+                    continue
+                m.mem.wb(dg, 0x28E8 + (row << 6) + c, 0x00)
+                m.mem.wb(dg, 0x68E8 + (row << 6) + c, 0x00)
+        for row in range(95, 127):
+            if row in row_tiles:
+                m.mem.wb(dg, 0x28E8 + (row << 6) + col, row_tiles[row])
+            elif inside:
+                m.mem.wb(dg, 0x28E8 + (row << 6) + col, 0x10)   # never a marker tile
+            if row in blocked_rows:
+                m.mem.wb(dg, 0x28E8 + (row << 6) + col, 0xFF)
+        # the fixed (col, 1) cell the closing step digs on the red nest map
+        m.mem.wb(dg, 0x58E8 + (col << 6) + 1, red_tile1)
+        m.mem.ww(pack, 0x9DDC, 50)
+        m.mem.ww(pack, 0x9DDE, 0)
+        m.mem.ww(pack, 0x9DE2, 75)
+        m.mem.ww(pack, 0x9DE4, 0)
+        m.mem.ww(pack, 0x7A56, 3)
+    return seed
+
+
+@pytest.mark.parametrize("col,seed_val,inside,row_tiles,blocked_rows,red_tile1", [
+    # inside=True, roll=0 -> first candidate row=126; tile 0 -> marker 0x86
+    (10, 0, True, {126: 0x00}, (), 0x25),
+    # tile in [0x5E,0x61] -> marker = tile+0x22 (the same decimal/hex fix as B)
+    (10, 0, True, {126: 0x5E}, (), 0x25),
+    # row 126 not usable, row 125 (next candidate) is -> search advances
+    (10, 0, True, {126: 0x10, 125: 0x00}, (), 0x25),
+    # every candidate excluded -> no-op
+    (10, 0, True, {}, (), 0x25),
+    # inside=False: row 126's 3x3 is clear -> writes 0x50 + edges + red closing step
+    (10, 0, False, {}, (), 0x25),
+    # inside=False: row 126 blocked -> search advances (and the closing step's
+    # (col,1) red tile is NOT dirt this time -> reroll/track skipped)
+    (10, 0, False, {}, (126,), 0x40),
+    # boundary column
+    (0, 0, False, {}, (), 0x25),
+    (0x3F, 0, False, {}, (), 0x25),
+])
+def test_makenewholer_state_diff_matches_asm(col, seed_val, inside, row_tiles,
+                                             blocked_rows, red_tile1):
+    from simant.recovered.gameplay import make_new_hole_r
+    results = _run_and_diff_segs(
+        5, 0x1D02, (col,),
+        lambda d, s, p: make_new_hole_r(d, s, p, col),
+        _MAKENEWHOLER_REGIONS,
+        seed_fn=_makenewholer_seed(col, seed_val, inside, row_tiles, blocked_rows,
+                                   red_tile1))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLER_REGIONS):
+        assert asm_after == rec_after, (
+            f"col={col} seed={seed_val:#x} inside={inside} tiles={row_tiles} "
+            f"blocked={blocked_rows} red_tile1={red_tile1:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only

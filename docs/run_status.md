@@ -1,5 +1,38 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.99) — /goal grind: _MakeNewHoleR — the fixes from cont.98 paid off
+- RECOVERED `make_new_hole_r` (seg5:1D02, arg: col; FAR return). Confirmed
+  by disassembly rather than assumed symmetry: the search, classification,
+  marker values, and 8-neighbour edge carve ALL operate on the SAME shared
+  yard map (`MAP_PLANE_BASE[0]`) `make_new_hole_b` uses — "R" is about
+  which nest the CLOSING step tunnels into, not which map the search
+  happens on. Only the candidate row formula differs (`0x7E - ((roll+i) %
+  0x20)`, searching down from 126, vs. black's `+2` searching up from 2)
+  and the SDG scratch/hole-tracking offsets are R's own.
+  - The closing step genuinely diverges from `_MakeNewHoleB`'s simple
+    `dig_tile_b(col, 1)` call: it INLINES the same reroll/track logic
+    `dig_tile_r` uses (via the shared `_dig_tile_reroll_and_track` helper,
+    on the FIXED red-nest cell `(col, 1)`), then a specific 4-step
+    sequence that is NOT `dig_tile_r`'s own closing smooth — it smooths
+    `(col, 0)` and `(col, 2)` and `(col-1, 1)`, then refreshes the
+    exit-map at `(col, 1)` instead of smoothing `(col+1, 1)` (confirmed
+    by tracing every push/call in that tail individually, not assumed).
+  - Every lesson from cont.98's three bugs applied cleanly here: the
+    decimal/hex marker fix (`tile + 0x22`) carried straight over (the same
+    `lea dx,[si+34]` pattern appears in this routine's own classify block),
+    the carve loop reused the same `sbyte` 8-bit-sign-extension closure
+    from the start, and the "inside" success path's jump-past-the-carve
+    asymmetry was checked for and confirmed present here too before
+    writing any code.
+  - 8 scenarios (marker classification, search-advance, the "every
+    candidate excluded" no-op, the closing step both with and without a
+    dirt tile at the fixed cell, and both x-boundary cases) — ALL GREEN ON
+    THE FIRST RUN, no bugs this time.
+- Suite: simant 1151 (+8). Continuing per /goal — `_DigTileThemB/R`
+  (seg5:22D4/241C, the last dig-subsystem layer, needing `_MakeNewHoleB/R`
+  and `_DigTileB/R` — all now recovered) is next; landing it should
+  finally make `_TryMoveDirB/R` <-> `_GetOutB/R` attemptable.
+
 ## 2026-07-14 (cont.98) — /goal grind: _MakeNewHoleB — three real bugs caught
 - RECOVERED `make_new_hole_b` (seg5:1B06, arg: col; FAR return) — by far
   the trickiest single routine this session. Searches up to 34 candidate
