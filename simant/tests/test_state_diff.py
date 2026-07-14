@@ -5939,3 +5939,33 @@ def test_checknestfightr_yellowfight_gate_raises():
     with pytest.raises(NotImplementedError):
         check_nest_fight_r(dgv, ByteBackend(bytearray(0x10000), 0),
                            ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08)
+
+
+# ---- _SetAntLion (seg7:4AD8) — re-stamp an antlion's pit tile ------------
+_SETANTLION_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0x48E8),
+    (_PACK, 0x7D00, 0x8100),
+]
+
+
+def _setantlion_seed(slot, x, y, type_byte):
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        m.mem.wb(pack, 0x7D4E + slot, type_byte)
+        m.mem.wb(pack, 0x809C + slot, x)
+        m.mem.wb(pack, 0x80BC + slot, y)
+    return seed
+
+
+@pytest.mark.parametrize("slot,x,y,type_byte,label", [
+    (0, 5, 6, 0x00, "slot0-basic"),
+    (3, 10, 12, 0x07, "nonzero-slot-and-type"),
+])
+def test_setantlion_state_diff_matches_asm(slot, x, y, type_byte, label):
+    from simant.recovered.gameplay import set_ant_lion
+    results = _run_and_diff_segs(
+        7, 0x4AD8, (slot,), lambda d, p: set_ant_lion(d, p, slot),
+        _SETANTLION_REGIONS, seed_fn=_setantlion_seed(slot, x, y, type_byte))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _SETANTLION_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

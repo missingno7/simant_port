@@ -1289,7 +1289,8 @@ def find_in_r_list(pack, simant_data_group, y: int, x: int, caste: int) -> int:
 
 def find_in_lion_list(pack, simant_data_group, val0: int, val1: int) -> int:
     """Search the antlion list backward for the last-added slot whose two
-    recorded fields match `(val0, val1)`.
+    recorded fields match `(val0, val1)` — `(x, y)`, per `set_ant_lion`'s
+    own use of the SAME two arrays.
 
     Recovered from `_FindInLionList` (SIMANTW.SYM seg7:4B12, args
     val0=[bp+6], val1=[bp+8]; FAR return). The live slot count is read
@@ -1299,16 +1300,33 @@ def find_in_lion_list(pack, simant_data_group, val0: int, val1: int) -> int:
     byte arrays in PACK instead (accessed via a hardcoded `0x5EF3`
     segment literal in the real ASM — independently confirmed to equal
     the PACK selector, not SIMANT_DATA_GROUP's): `pack[0x809C + slot]
-    == val0`, `pack[0x80BC + slot] == val1`. Unlike `find_in_a_list`,
-    there is no third nonzero-field gate. Search order is backward
-    (highest slot first). Returns the found 0-based slot index, or
-    `0xFFFF` if none match.
+    == val0` (x), `pack[0x80BC + slot] == val1` (y). Unlike
+    `find_in_a_list`, there is no third nonzero-field gate. Search
+    order is backward (highest slot first). Returns the found 0-based
+    slot index, or `0xFFFF` if none match.
     """
     count = simant_data_group.rw(0x8A88)
     for slot in range(count - 1, -1, -1):
         if pack.rb(0x809C + slot) == val0 and pack.rb(0x80BC + slot) == val1:
             return slot
     return 0xFFFF
+
+
+def set_ant_lion(dgroup, pack, slot: int) -> None:
+    """Re-stamp an antlion's pit tile onto the yard map at its own
+    recorded position.
+
+    Recovered from `_SetAntLion` (SIMANTW.SYM seg7:4AD8, arg
+    slot=[bp+6]; FAR return). Composes the already-recovered `set_map`.
+    Reads the SAME per-slot PACK arrays `find_in_lion_list` searches —
+    `pack[0x809C + slot]` (x), `pack[0x80BC + slot]` (y) — plus a THIRD
+    per-slot growth/type byte at `pack[0x7D4E + slot]`, and writes
+    `set_map(plane=1, x, y, value=that type byte + 0x38)`.
+    """
+    x = pack.rb(0x809C + slot)
+    y = pack.rb(0x80BC + slot)
+    value = (pack.rb(0x7D4E + slot) + 0x38) & 0xFF
+    set_map(dgroup, 1, x, y, value)
 
 
 def find_ant_index(pack, simant_data_group, colony: int, field0: int,

@@ -1,5 +1,18 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.166) — /goal grind: _SetAntLion — antlion pit re-stamp
+- RECOVERED `set_ant_lion` (`_SetAntLion`, SIMANTW.SYM seg7:4AD8, arg
+  slot=[bp+6]; FAR return, 58 bytes) — composes the already-recovered
+  `set_map`. Re-stamps an antlion's pit tile onto the YARD map plane
+  (`plane=1`) at its own recorded position, reading the SAME two PACK
+  arrays `find_in_lion_list` searches (`pack[0x809C+slot]`=x,
+  `pack[0x80BC+slot]`=y — confirmed and cross-referenced back into
+  `find_in_lion_list`'s own docstring, which only had them as generic
+  `val0`/`val1` until now) plus a third per-slot growth/type byte at
+  `pack[0x7D4E+slot]`, written as `set_map(1, x, y, type+0x38)`.
+- 2 cases — all green on the first real-ASM run.
+- Suite: simant 1692 (+2), full suite green.
+
 ## 2026-07-15 (cont.165) — /goal grind: _CheckNestFightB/R — nest combat trigger
 - RECOVERED `check_nest_fight_b`/`check_nest_fight_r` (`_CheckNestFightB`/
   `_CheckNestFightR`, SIMANTW.SYM seg6:3BA2/61A2, args x=[bp+6],
