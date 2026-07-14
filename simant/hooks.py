@@ -1347,6 +1347,62 @@ def _make_isnotobstacle_island(machine):
     return island
 
 
+# -- _IsItDigable (seg5:95C6) — can a yard cell be dug (dirt or grass)? --------
+# Yard planes only (plane>=2); reads the map, then delegates to _IsItDirt and
+# adds a grass (0x1C..0x1F) case.  Residue:
+#   plane<2      -> ax=0; everything else preserved (dx never loaded).
+#   coord-invalid-> ax=0, bx=0, cx=y, dx=x (returns before the dirt path).
+#   plane>3 (coords ok) -> ax=0, bx=0, cx=y, dx=0 (reaches the grass sbb path).
+#   valid dirt   -> ax=1, bx=y, cx=y, dx=tile (the _IsItDirt arg residue).
+#   valid other  -> ax=grass?1:0, bx=y, cx=y, dx=grass?1:0.
+# es preserved; si/di push/pop'd.
+ISITDIGABLE_SEG_INDEX = 5
+ISITDIGABLE_OFF = 0x95C6
+ISITDIGABLE_SIG = bytes.fromhex("c802000057568b7e0683ff027d03e9d9008b5608")
+
+
+def _make_isitdigable_island(machine):
+    from .recovered.gameplay import is_it_digable, is_it_dirt, is_valid_b, map_cell_offset
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane = _sx(m.rw(ss, (sp + 4) & 0xFFFF))
+        x_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        x = _sx(x_w)
+        y_w = m.rw(ss, (sp + 8) & 0xFFFF)
+        y = _sx(y_w)
+        if plane < 2:
+            s.ax = 0                                  # everything else preserved
+        else:
+            off = map_cell_offset(plane, x, y)
+            s.cx = y_w
+            if off is None:                           # coords / plane out of range
+                s.ax = 0
+                s.bx = 0
+                # coord-invalid returns with dx = the loaded x; plane>3 (valid
+                # coords) falls through the grass sbb path leaving dx = 0.
+                s.dx = 0 if is_valid_b(x, y) else x_w
+            else:
+                tile = m.rb(s.ds, off & 0xFFFF)
+                s.bx = y_w
+                if is_it_dirt(tile):
+                    s.ax = 1
+                    s.dx = tile                       # _IsItDirt leaves dx = its arg
+                else:
+                    grass = 1 if 0x1C <= tile <= 0x1F else 0
+                    s.ax = grass
+                    s.dx = grass
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsValidLocation (seg5:56DA) — plane-aware coordinate validity -----------
 # is_valid_a on the yard planes (plane<=1), is_valid_b on the nest planes.  Only
 # ax and dx are touched; dx = ax (both hold the 1/0 result).  Rest preserved.
@@ -2341,6 +2397,8 @@ _ISLANDS = [
      lambda machine, off: _make_iscleartile_island(machine), "_IsClearTile"),
     (ISVALIDLOC_SEG_INDEX, ISVALIDLOC_OFF, ISVALIDLOC_SIG,
      lambda machine, off: _make_isvalidloc_island(machine), "_IsValidLocation"),
+    (ISITDIGABLE_SEG_INDEX, ISITDIGABLE_OFF, ISITDIGABLE_SIG,
+     lambda machine, off: _make_isitdigable_island(machine), "_IsItDigable"),
     (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
      lambda machine, off: _make_isithole_island(machine), "_IsItHole"),
     (GETMAP_SEG_INDEX, GETMAP_OFF, GETMAP_SIG,
@@ -2388,7 +2446,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 66
+EXPECTED_ISLAND_COUNT = 67
 
 
 def install(machine) -> int:

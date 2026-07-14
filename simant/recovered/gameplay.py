@@ -290,6 +290,20 @@ def is_valid_location(plane: int, x: int, y: int) -> int:
     return is_valid_a(x, y) if plane <= 1 else is_valid_b(x, y)
 
 
+def is_it_digable(plane: int, tile: int) -> int:
+    """Whether a yard-plane map tile can be dug.
+
+    Recovered from `_IsItDigable` (SIMANTW.SYM seg5:95C6): only the yard planes
+    (plane >= 2) are diggable, and a tile is diggable when it is dirt
+    (`is_it_dirt`) or grass (0x1C..0x1F).  Returns 1 / 0.
+    """
+    if plane < 2:
+        return 0
+    if is_it_dirt(tile):
+        return 1
+    return 1 if 0x1C <= tile <= 0x1F else 0
+
+
 def get_dir(x1: int, y1: int, x2: int, y2: int) -> int:
     """Compass direction (0..8) from point 1 to point 2.
 

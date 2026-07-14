@@ -2135,6 +2135,53 @@ def test_isvalidlocation_island_matches_asm(plane, x, y):
     assert isl == asm, f"(p={plane},{x},{y}): {isl} != {asm}"
 
 
+def _run_isitdigable(with_island, plane, x, y, tile):
+    from simant.recovered.gameplay import map_cell_offset
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    off = map_cell_offset(plane, x, y)
+    if off is not None:
+        m.mem.wb(DG, off & 0xFFFF, tile)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISITDIGABLE_SEG_INDEX], hooks.ISITDIGABLE_OFF
+    sp = s.sp
+    for v in (y, x, plane, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsItDigable")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("plane,x,y,tile", [
+    (0, 0x10, 0x10, 0x20), (1, 0x10, 0x10, 0x1C),           # plane<2 -> 0
+    (2, 0x10, 0x10, 0x20), (2, 0x10, 0x10, 0x2E),           # dirt
+    (2, 0x10, 0x10, 0x1C), (3, 0x10, 0x10, 0x1F),           # grass
+    (2, 0x10, 0x10, 0x1B), (2, 0x10, 0x10, 0x40),           # neither
+    (2, 0x40, 0x10, 0x00), (2, 0x10, 0x40, 0x00),           # coord-invalid
+    (4, 0x10, 0x10, 0x00), (5, 0x10, 0x10, 0x00),           # plane>3 (coords ok)
+])
+def test_isitdigable_island_matches_asm(plane, x, y, tile):
+    asm = _run_isitdigable(False, plane, x, y, tile)
+    isl = _run_isitdigable(True, plane, x, y, tile)
+    assert isl == asm, f"(p={plane},{x:#x},{y:#x},t={tile:#x}): {isl} != {asm}"
+    from simant.recovered.gameplay import is_it_digable
+    if plane >= 2 and map_cell_offset_ok(plane, x, y):
+        assert asm["ax"] == is_it_digable(plane, tile)
+
+
+def map_cell_offset_ok(plane, x, y):
+    from simant.recovered.gameplay import map_cell_offset
+    return map_cell_offset(plane, x, y) is not None
+
+
 # ---- _IsClearTile (seg5:5B2C) — map passable + no blocking ant ---------------
 def _run_iscleartile(with_island, plane, x, y, map_tile, life):
     from simant.recovered.gameplay import life_cell_offset, map_cell_offset
