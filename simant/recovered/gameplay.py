@@ -999,6 +999,71 @@ def get_my_next_rand_dirs(dgroup, pack, plane: int, x: int, y: int,
     return get_my_best_dirs(dgroup, pack, inside, plane, x, y, tgt_x, tgt_y)
 
 
+def get_my_best_dir(dgroup, pack, plane: int, x: int, y: int, tgt_x: int,
+                    tgt_y: int) -> int:
+    """Entry point that first checks a "stuck" sentinel (`pack[0x72E4]`,
+    the SAME field `get_my_next_rand_dirs`/`get_my_initial_rand_dir`
+    write) before falling into the exact same probe-and-dispatch walk
+    `get_my_next_rand_dirs` performs.
+
+    Recovered from `_GetMyBestDir` (SIMANTW.SYM seg6:8D3A, args
+    plane=[bp+6], cur_x=[bp+8], cur_y=[bp+10], tgt_x=[bp+12],
+    tgt_y=[bp+14]; FAR return).  Composes
+    the already-recovered `get_my_best_dirs`, `get_dir`, and
+    `get_my_rand_dirs`.  The "normal" path (`pack[0x72E4] >= 0`, signed)
+    is compiler-duplicated but algorithmically IDENTICAL to
+    `get_my_next_rand_dirs`'s own body (confirmed field-for-field:
+    same `_GetMyBestDirs`/`_GetMyRandDirs` near-call targets, same
+    `pack[0x78A4]`/`[0xA0D8]` out1/out2 cells, same 64-step bound, same
+    forced-`-1`-on-success and `pack[0x72E4]=0xFFFF`-on-tail writes) —
+    reused directly here rather than re-implementing a byte-identical
+    copy, EXCEPT for one extra step every path through it takes here
+    that `get_my_next_rand_dirs` itself does NOT have: an unconditional
+    `pack[0x72E4] -= 1` at the very end (confirmed only by getting a
+    state-diff mismatch on the very first test run and re-reading the
+    disassembly past where the earlier hand-derivation had stopped —
+    the real ASM has one more instruction, `dec es:[bx]`, after what
+    looked like the routine's natural end).
+
+    When `pack[0x72E4] < 0` instead (a "stuck" sentinel from a PREVIOUS
+    call): retries `get_my_best_dirs` once from the ORIGINAL `(x, y)`.
+    If that ISN'T `-2` (nothing clear), returns it as-is. If it IS `-2`
+    but `pack[0x72E4]` no longer equals `-2` (state moved on since the
+    sentinel was set), also just returns `-2` as-is. Only when BOTH are
+    `-2` (double-confirmed still stuck) does it commit a fresh
+    `get_my_rand_dirs` search — the EXACT same "commit" sequence
+    `get_my_initial_rand_dir` performs (`pack[0xA0D8] = get_dir(...)-1`,
+    `pack[0x72E4] = 0x10`, `pack[0x78A4] = 0`, then `get_my_rand_dirs`) —
+    this branch does NOT get the extra `pack[0x72E4] -= 1` step; that
+    only happens on the "normal path" above.
+    """
+    inside = pack.rw(0x9B6E) != 0
+
+    if _sx16(pack.rw(0x72E4)) >= 0:
+        result = get_my_next_rand_dirs(dgroup, pack, plane, x, y, tgt_x, tgt_y)
+        pack.ww(0x72E4, (pack.rw(0x72E4) - 1) & 0xFFFF)
+        return result
+
+    result = get_my_best_dirs(dgroup, pack, inside, plane, x, y, tgt_x, tgt_y)
+    if result != -2:
+        return result
+    if pack.rw(0x72E4) != 0xFFFE:
+        return result
+
+    direction = (get_dir(x, y, tgt_x, tgt_y) - 1) & 0xFFFF
+    pack.ww(0xA0D8, direction)
+    pack.ww(0x72E4, 0x10)
+    pack.ww(0x78A4, 0)
+
+    out1 = [pack.rw(0x78A4)]
+    out2 = [pack.rw(0xA0D8)]
+    result = get_my_rand_dirs(dgroup, pack, out1, out2, inside, plane,
+                              x, y, tgt_x, tgt_y)
+    pack.ww(0x78A4, out1[0] & 0xFFFF)
+    pack.ww(0xA0D8, out2[0] & 0xFFFF)
+    return result
+
+
 def check_my_best_dirs(dgroup, pack, out, inside: bool, plane: int, cur_x: int,
                        cur_y: int, tgt_x: int, tgt_y: int) -> int:
     """Walk `get_my_best_dirs` forward up to 64 steps toward the target,

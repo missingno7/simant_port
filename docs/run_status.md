@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.157) — /goal grind: _GetMyBestDir — stuck-sentinel gate + probe walk
+- RECOVERED `get_my_best_dir` (`_GetMyBestDir`, seg6:8D3A, args
+  plane=[bp+6], cur_x=[bp+8], cur_y=[bp+10], tgt_x=[bp+12],
+  tgt_y=[bp+14], FAR return) — composes `get_my_best_dirs`, `get_dir`,
+  and `get_my_rand_dirs`. First checks a "stuck" sentinel
+  (`pack[0x72E4]`, the SAME field `get_my_next_rand_dirs`/
+  `get_my_initial_rand_dir` already use); when clear, runs the SAME
+  probe-and-dispatch walk `get_my_next_rand_dirs` performs. When set
+  (a stuck signal from a PREVIOUS call), retries `get_my_best_dirs`
+  once and only commits a fresh `get_my_rand_dirs` search (the exact
+  `get_my_initial_rand_dir` commit sequence) when DOUBLE-confirmed
+  still stuck.
+- First test run caught a genuine gap in the reuse plan, not a logic
+  bug: the "normal path" is compiler-duplicated from the SAME shape as
+  `get_my_next_rand_dirs`, so the plan was to just call it directly —
+  but the real ASM has ONE extra instruction past where a first read of
+  the disassembly stopped (`dec es:[bx]` on `pack[0x72E4]`, right after
+  what looked like the routine's natural end at the shared return
+  point). The state-diff mismatch pointed straight at the exact byte
+  (`pack[0x72E4]`'s low byte, `0xFE` vs `0xFF`) — fixed by wrapping the
+  `get_my_next_rand_dirs` call with an unconditional
+  `pack[0x72E4] -= 1` afterward, confirmed correct across both the
+  "commits a fresh search" and "doesn't" sub-paths.
+- 4 cases (normal path at-target, stuck-retry succeeding outright,
+  stuck-retry failing with a sentinel mismatch, and double-confirmed
+  stuck committing a fresh search) — green after the fix.
+- Suite: simant 1612 (+4), full suite green.
+
 ## 2026-07-14 (cont.156) — /goal grind: _DoReturnFoodAnt — a food-carrying ant heads home
 - RECOVERED `do_return_food_ant` (`_DoReturnFoodAnt`, seg6:1CB4, arg
   slot=[bp+4], NEAR return) — another genuinely TOP-LEVEL `_Do*Ant*`

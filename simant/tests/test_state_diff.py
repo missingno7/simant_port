@@ -5092,6 +5092,40 @@ def test_getmynextranddirs_state_diff_matches_asm(
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _GetMyBestDir (seg6:8D3A) — stuck-sentinel gate + the SAME probe walk
+# as get_my_next_rand_dirs. Composes get_my_best_dirs, get_dir, get_my_rand_dirs.
+def _getmybestdir_seed(plane, x, y, tgt_x, tgt_y, tiles, sentinel_72e4,
+                       out1_init=0, out2_init=3):
+    base = _getmynextranddirs_seed(
+        plane, x, y, tgt_x, tgt_y, tiles, False, False, 0, 0, 0, -100, -100,
+        out1_init, out2_init)
+
+    def seed(m):
+        base(m)
+        m.mem.ww(m.seg_bases[_PACK], 0x72E4, sentinel_72e4 & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "plane,x,y,tgt_x,tgt_y,tiles,sentinel_72e4,label", [
+    (2, 20, 20, 20, 20, {}, 0, "normal-path-already-at-target"),
+    (2, 20, 20, 20, 20, {}, 0xFFFF, "stuck-retry-succeeds-neg1-returned-asis"),
+    (2, 20, 20, 25, 25, {}, 0xFFFF, "stuck-retry-neg2-but-sentinel-mismatch"),
+    (2, 20, 20, 25, 25, {}, 0xFFFE, "stuck-double-confirmed-commits-randdirs"),
+])
+def test_getmybestdir_state_diff_matches_asm(plane, x, y, tgt_x, tgt_y, tiles,
+                                             sentinel_72e4, label):
+    from simant.recovered.gameplay import get_my_best_dir
+    results = _run_and_diff_segs(
+        6, 0x8D3A, (plane, x, y, tgt_x, tgt_y),
+        lambda d, s, p: get_my_best_dir(d, p, plane, x, y, tgt_x, tgt_y),
+        _GETMYNEXTRANDDIRS_REGIONS,
+        seed_fn=_getmybestdir_seed(plane, x, y, tgt_x, tgt_y, tiles, sentinel_72e4))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _GETMYNEXTRANDDIRS_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _GetMyRandDirs (seg6:8928) — sticky-direction search, 2 far-ptr I/O ---
 # Two output words are passed as a genuine far pointer pair (offset, segment
 # words on the stack); seeded/read back at fixed PACK offsets since any
