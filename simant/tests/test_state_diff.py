@@ -8,8 +8,11 @@ require the two resulting images to be byte-identical.  Because both start from 
 identical pre-state, only the mutation itself has to match.
 
 This is the harness the seg6 behavior layer (`_DoForageAnt`, ...) will use; it is
-bootstrapped here on two leaf mutators: `_SetMap` (one map-cell write) and
-`_SetMyHealth` (multi-field, selector-indirect player-health write).
+bootstrapped here on leaf mutators: `_SetMap` (one map-cell write), `_DropWater`
+(RNG-threaded), and `_SetMyHealth` (spans three FIXED NE data segments — DGROUP,
+SIMANT_DATA_GROUP, PACK — via `hooks.SIMANT_DATA_GROUP_SEG_INDEX` / `PACK_SEG_INDEX`;
+`_run_and_diff_segs` generalizes the single-DGROUP harness to N named segment
+windows for this case).
 """
 from __future__ import annotations
 
@@ -86,6 +89,54 @@ def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, seed_fn=None,
     return asm_after[:SIM_HI], bytes(rec[:SIM_HI])
 
 
+def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None):
+    """Like `_run_and_diff`, but for a routine that mutates through MULTIPLE
+    fixed NE data segments (e.g. via a DGROUP pointer-global into
+    SIMANT_DATA_GROUP/PACK — see `hooks.SIMANT_DATA_GROUP_SEG_INDEX`/
+    `PACK_SEG_INDEX`).  `regions` is [(seg_index, lo, hi), ...]: the byte window
+    of each touched segment to snapshot/diff (real load-time data, not seeded —
+    these are fixed segments, not per-test scratch).  `apply_recovered` receives
+    one `ByteBackend` per region, positional, in `regions` order, each addressed
+    by the SAME real offsets the ASM uses (so `view.rw(0x8A5E)` reads the byte at
+    that real offset within its segment, not window-relative index 0).
+
+    Returns a list of (label, asm_window, recovered_window) for each region.
+    """
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    s = m.cpu.s
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = dg
+    for o, v in (seed or {}).items():
+        m.mem.ww(dg, o, v & 0xFFFF)
+
+    befores = [bytes(m.mem.block(m.seg_bases[si], lo, hi - lo))
+              for si, lo, hi in regions]
+
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[seg], off
+    sp = s.sp
+    for v in (*reversed(args), SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(50_000):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError(f"ASM {seg}:{off:#06x} did not return")
+    asm_afters = [bytes(m.mem.block(m.seg_bases[si], lo, hi - lo))
+                  for si, lo, hi in regions]
+
+    recs = [bytearray(b) for b in befores]
+    views = [ByteBackend(rec, -lo) for rec, (_si, lo, _hi) in zip(recs, regions)]
+    apply_recovered(*views)
+
+    return [(f"seg{si}[{lo:#06x}:{hi:#06x}]", asm_after, bytes(rec))
+            for (si, lo, hi), asm_after, rec in zip(regions, asm_afters, recs)]
+
+
 # ---- _SetMap (seg5:617A) — one map-cell write ------------------------------
 # _SetMap's screen redraw (_ZapEuMapAt, seg3:0) is stubbed; only the map byte
 # changes.
@@ -108,18 +159,20 @@ def test_setmap_state_diff_matches_asm(plane, x, y, value):
     assert asm_after == rec_after, _first_diff(asm_after, rec_after)
 
 
-# ---- _SetMyHealth (seg5:8C70) — multi-field selector-indirect write --------
-# Point every world-state selector global at DGROUP so the ASM's es:[...] reads
-# and writes land in the same image the recovered view mutates; seed the god
-# flag and the current-health field it reads.
-_HEALTH_SEL_GLOBALS = (0xC49A, 0xC49C, 0xC49E, 0xC4A0)
-
-
-def _health_seed(dg, god, current):
-    s = {g: dg for g in _HEALTH_SEL_GLOBALS}     # selectors -> DGROUP
-    s[0x8A5E] = 1 if god else 0                  # god-mode flag
-    s[0x9BEC] = current & 0xFFFF                  # current health (read)
-    return s
+# ---- _SetMyHealth (seg5:8C70) — spans 3 FIXED NE data segments -------------
+# _SetMyHealth writes DGROUP:[0xAC8A] directly, and (through DGROUP pointer-
+# globals that are load-time-fixed, never reassigned — see hooks.py) reads the
+# god-mode flag from SIMANT_DATA_GROUP:[0x8A5E] and writes PACK:[0x9CF0]/
+# [0x9AF2] (+ reads PACK:[0x9BEC]).  These are REAL, permanent segments — not
+# seeded pointers — so the test uses their actual NE segment indices, only
+# seeding the god-mode flag and the current-health input within them.
+_SDG = hooks.SIMANT_DATA_GROUP_SEG_INDEX
+_PACK = hooks.PACK_SEG_INDEX
+_HEALTH_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC00, 0xAD00),   # covers [0xAC8A]
+    (_SDG, 0x8A00, 0x8B00),                 # covers [0x8A5E] (god-mode flag)
+    (_PACK, 0x9A00, 0x9D00),                # covers [0x9AF2],[0x9BEC],[0x9CF0]
+]
 
 
 @pytest.mark.parametrize("god", [False, True])
@@ -130,12 +183,16 @@ def _health_seed(dg, god, current):
 def test_setmyhealth_state_diff_matches_asm(new_health, current, god):
     from simant.recovered.gameplay import set_my_health
     m = runtime.create_machine()
-    dg = m.seg_bases[hooks.DG_SEG_INDEX]
-    seed = _health_seed(dg, god, current)
-    asm_after, rec_after = _run_and_diff(
+    god_base, current_base = m.seg_bases[_SDG], m.seg_bases[_PACK]
+    m.mem.wb(god_base, 0x8A5E, 1 if god else 0)
+    m.mem.ww(current_base, 0x9BEC, current & 0xFFFF)
+
+    results = _run_and_diff_segs(
         5, 0x8C70, (new_health,),
-        lambda v: set_my_health(v, _sx(new_health)), seed=seed)
-    assert asm_after == rec_after, _first_diff(asm_after, rec_after)
+        lambda dg, sdg, pack: set_my_health(dg, sdg, pack, _sx(new_health)),
+        _HEALTH_REGIONS)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _HEALTH_REGIONS):
+        assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
 # ---- _DropWater (seg5:0C54) — RNG-threaded map column update ---------------
@@ -176,7 +233,8 @@ def _sx(v):
     return v - 0x10000 if v & 0x8000 else v
 
 
-def _first_diff(a, b):
+def _first_diff(a, b, base=0):
     d = [i for i in range(len(a)) if a[i] != b[i]]
-    return (f"{len(d)} differing DGROUP bytes; first at "
-            + ", ".join(f"{i:#06x}(asm={a[i]:#04x} rec={b[i]:#04x})" for i in d[:6]))
+    return (f"{len(d)} differing bytes; first at "
+            + ", ".join(f"{i + base:#06x}(asm={a[i]:#04x} rec={b[i]:#04x})"
+                        for i in d[:6]))

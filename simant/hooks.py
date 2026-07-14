@@ -105,6 +105,15 @@ UNPACK_SEG_INDEX = 7
 UNPACK_OFF = 0xA668
 UNPACK_SIG = bytes.fromhex("558bec83ec045756")   # push bp;mov bp,sp;sub sp,4;push di;push si
 DG_SEG_INDEX = 10                                # DGROUP (auto-data) segment
+# Two further FIXED NE data segments the game keeps pointer-copies of in DGROUP
+# globals (e.g. [0xC49A]/[0xC49C]/[0xC49E]/[0xC4A0]/[0xC320]/[0xC4AC] — read via
+# `mov es, word ptr [Gxxxx]` then `es:[field]`).  Confirmed by exhaustive scan:
+# no instruction anywhere in seg1-7 ever WRITES those globals, so they are
+# load-time-relocated constants, not runtime-reassigned "current colony"
+# pointers — SIMANT_DATA_GROUP and PACK are as permanently fixed as DGROUP
+# itself, just addressed indirectly (a compiler "based pointer" idiom).
+SIMANT_DATA_GROUP_SEG_INDEX = 8
+PACK_SEG_INDEX = 9
 
 
 def _make_unpack_island(machine):

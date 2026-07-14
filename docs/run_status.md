@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.71) — CORRECTNESS FIX: _SetMyHealth spans 3 fixed NE segments, not 1
+- Scouting the dig chain (_DigTileB) found it far bigger than expected (running
+  statistical accumulators via __aFuldiv, not just a tile write) — deferred.
+  Surveyed cleaner mutators instead and found a real bug in the LAST session's
+  work while picking the next one.
+- BUG FOUND: `_SetMyHealth`'s `es:[0x8a5e]`/`[0x9cf0]`/`[0x9bec]`/`[0x9af2]`
+  reads/writes go through DGROUP pointer-globals ([0xC49A]/[0xC49C]/[0xC49E]/
+  [0xC4A0]) that at REAL boot resolve to TWO OTHER fixed NE data segments —
+  `SIMANT_DATA_GROUP` (NE seg 8) and `PACK` (NE seg 9) — not DGROUP.  My
+  recovered `set_my_health` had folded all fields into one flat DGROUP view; the
+  state-diff test only passed because it artificially pointed those selectors AT
+  DGROUP for both the ASM run and the recovered fn (tautological, not faithful).
+  Confirmed by exhaustive scan: no instruction in seg1-7 ever WRITES those
+  pointer-globals — they are load-time-relocated constants (a compiler "based
+  pointer" idiom for cross-segment data), permanently fixed, exactly like DGROUP
+  itself.  (The existing PREDICATE islands — _IsItFood etc. — are unaffected:
+  they dynamically follow the selector at runtime in both ASM and island, so
+  their byte-exactness proof holds regardless of what the selector points to.)
+- FIXED: added `hooks.SIMANT_DATA_GROUP_SEG_INDEX`(8) / `PACK_SEG_INDEX`(9).
+  `set_my_health(dgroup, simant_data_group, pack, new_health)` now takes one
+  view per real segment.  Added `_run_and_diff_segs` (multi-segment state-diff:
+  N (seg_index, lo, hi) windows, seeded/diffed against their REAL fixed-segment
+  addresses, not artificial ones).  18 cases still green, now faithfully.
+- Suite: simant 718.  Lesson for future mutators: a `mov es, word ptr [Gxxxx]`
+  world-state global should be checked against a fresh boot (does it resolve to
+  DGROUP, or another fixed segment?) before assuming a flat DGROUP view — grep
+  all 7 code segments for writers to the global to confirm it's load-fixed, not
+  dynamically reassigned.
+
+
 ## 2026-07-14 (cont.70) — state-diff oracle threads RNG; recover _DropWater
 - RECOVERED `_DropWater` (seg5:0C54), the third mutator and a new axis: RNG
   threading.  It flows/evaporates the water column at Y=x across nest planes 2/3
