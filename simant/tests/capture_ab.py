@@ -30,11 +30,14 @@ _REGS = ("ax", "bx", "cx", "dx", "si", "di", "bp", "sp", "cs", "ip",
 
 
 def demo_path(default: str = "cold_nohooks") -> Path | None:
-    """The demo to drive a capture: $SIMANT_DEMO, else `default` in the repo
-    root; None if neither exists (the test skips)."""
+    """The demo to drive a capture: $SIMANT_DEMO, else `default`, resolved under
+    artifacts/demos/; None if neither exists (the test skips)."""
+    from simant.runtime import resolve_demo
     for cand in (os.environ.get("SIMANT_DEMO"), default):
-        if cand and Path(cand).exists():
-            return Path(cand)
+        if cand:
+            p = resolve_demo(cand)
+            if p.exists():
+                return p
     return None
 
 

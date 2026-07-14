@@ -20,6 +20,31 @@ EXE_PATH = ASSETS / "ANTWIN" / "SIMANTW.EXE"
 
 GAME_NAME = "simant"
 
+# Recorded demos live under artifacts/demos/ (git-ignored scratch — dos_re
+# convention); a repro promoted to a test baseline goes to artifacts/test_oracles/.
+DEMOS_DIR = REPO_ROOT / "artifacts" / "demos"
+
+
+def demo_out_path(name: str) -> Path:
+    """Where `--record-demo NAME` writes: artifacts/demos/NAME.jsonl.  A NAME that
+    is already a path (has a suffix or a directory part) is used verbatim."""
+    p = Path(name)
+    if p.suffix or len(p.parts) > 1:
+        return p
+    DEMOS_DIR.mkdir(parents=True, exist_ok=True)
+    return DEMOS_DIR / f"{name}.jsonl"
+
+
+def resolve_demo(name: str) -> Path:
+    """Locate a demo by NAME so bare names recorded with --record-demo replay
+    without a path: tries the path as given, then artifacts/demos/NAME(.jsonl).
+    Returns the first that exists, else the canonical artifacts/demos/NAME.jsonl
+    (so a 'not found' error names the expected location)."""
+    for cand in (Path(name), DEMOS_DIR / name, DEMOS_DIR / f"{name}.jsonl"):
+        if cand.exists():
+            return cand
+    return DEMOS_DIR / f"{name}.jsonl"
+
 
 def assets_present() -> bool:
     return EXE_PATH.exists()

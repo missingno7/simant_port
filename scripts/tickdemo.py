@@ -44,6 +44,7 @@ except (AttributeError, ValueError):
 from simant.runtime import create_machine, install_hooks  # noqa: E402
 from win16.api.system import Win16System  # noqa: E402
 from win16.demo import DemoDivergence, DemoDriver, DemoEnded  # noqa: E402
+from simant.runtime import resolve_demo  # noqa: E402
 from win16.tick_demo import (TickDemoDriver, TickDemoRecorder,  # noqa: E402
                              default_digest)
 
@@ -78,7 +79,7 @@ def _run(machine, budget: int) -> str:
 def cmd_convert(args) -> int:
     machine = create_machine()
     sysobj = Win16System(machine)
-    v4 = DemoDriver(args.v4demo)
+    v4 = DemoDriver(resolve_demo(args.v4demo))
     if v4.snapshot:
         raise SystemExit("convert needs a COLD-START v4 demo (snapshot-anchored "
                          "demos don't carry the boot state)")

@@ -45,7 +45,8 @@ simant/           the adapter + recovered logic:
   hooks.py          lifted islands (hot ASM routines reimplemented, byte-exact)
   probes/           profile.py (PC-sampler) + symbols.py (SIMANTW.SYM name lookup)
   tests/            island A/B oracles + state-view seam + boot/splash gate
-scripts/          play.py (interactive; --record, --resume; dos_re hotkeys:
+scripts/          play.py (interactive; --record-demo NAME -> artifacts/demos/,
+                  --resume; dos_re hotkeys:
                   F10 screenshot, F11 demo-record toggle, F12 snapshot),
                   boot.py (frontier probe), replay.py (headless demo replay,
                   --from-snapshot for anchored demos),

@@ -36,6 +36,7 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from simant.runtime import assets_present, create_machine, install_hooks  # noqa: E402
 from win16.demo import DemoDriver, DemoDivergence, DemoEnded  # noqa: E402
+from simant.runtime import resolve_demo  # noqa: E402
 from win16.vmsnap import digest, load_snapshot  # noqa: E402
 
 VERSION = 1
@@ -71,7 +72,7 @@ def _machine(args):
 def _trace(args) -> tuple[list[dict], str]:
     """Replay the demo, returning the checkpoint list and the end-status."""
     m = _machine(args)
-    driver = DemoDriver(args.demo)
+    driver = DemoDriver(resolve_demo(args.demo))
     cpu = m.cpu
     sysobj = m.api.services["system"]
     checkpoints: list[dict] = []

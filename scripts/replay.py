@@ -17,14 +17,15 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from simant.runtime import assets_present, create_machine
+from simant.runtime import assets_present, create_machine, resolve_demo
 from win16.demo import DemoDivergence, DemoDriver, DemoEnded
 from win16.vmsnap import digest, save_snapshot
 
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Replay a win16 demo headlessly.")
-    ap.add_argument("demo", help="demo file recorded by play.py --record")
+    ap.add_argument("demo", help="demo NAME (in artifacts/demos/) or a path, "
+                                 "recorded by play.py --record-demo")
     ap.add_argument("--budget", type=int, default=200_000_000,
                     help="max instructions to execute")
     ap.add_argument("--png", metavar="DIR", default=None,
@@ -38,7 +39,7 @@ def main() -> None:
     if not assets_present():
         raise SystemExit("assets/ANTWIN/SIMANTW.EXE not found")
 
-    driver = DemoDriver(args.demo)
+    driver = DemoDriver(resolve_demo(args.demo))
     anchor = f", anchored to snapshot {driver.snapshot}" if driver.snapshot else ""
     print(f"[replay] {args.demo}: {len(driver.records)} records "
           f"(exe {driver.exe}{anchor})")

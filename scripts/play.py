@@ -42,7 +42,7 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
-from simant.runtime import EXE_PATH, GAME_NAME
+from simant.runtime import EXE_PATH, GAME_NAME, demo_out_path
 from win16.api.core import Win16ApiGap
 from win16.api.objects import Window
 from win16.api.system import Win16System
@@ -885,11 +885,12 @@ class PlayApp:
             # Anchor the demo to the resumed snapshot (if any) so replay.py
             # can demand the same starting state — the bug-repro workflow.
             anchor = Path(resume).name if resume else None
+            out = demo_out_path(record)
             self.recorder = DemoRecorder(
-                record, self.machine.exe.path.name, snapshot=anchor,
+                out, self.machine.exe.path.name, snapshot=anchor,
                 instruction=self.machine.cpu.instruction_count)
             self.machine.api.services["demo_recorder"] = self.recorder
-            print(f"[play] recording demo to {record}"
+            print(f"[play] recording demo to {out}"
                   + (f" (anchored to {anchor})" if anchor else ""), flush=True)
 
         # Host audio: square-wave synthesis of the SOUND.DRV voice stream, plus
@@ -1023,7 +1024,7 @@ class PlayApp:
         finally:
             self.driver.resume()
 
-    # -- demo recording (F11 toggle; --record records from launch) ----------------
+    # -- demo recording (F11 toggle; --record-demo records from launch) ------------
     def toggle_demo_record(self) -> None:
         """Start/stop demo recording mid-session.  Starting one first saves an
         anchor snapshot, so the demo is replayable out of the box:
@@ -1089,7 +1090,7 @@ class PlayApp:
         """Save an INSPECTION snapshot with the CPU parked in a modal handler.
         Memory + CPU + pixels are consistent (the worker is blocked); it is not
         resumable (the native modal call stack is not captured) — use it to
-        examine state, and demos (--record) for reproducible replay."""
+        examine state, and demos (--record-demo) for reproducible replay."""
         from win16.vmsnap import SnapshotError, save_snapshot
         stamp = time.strftime("%H%M%S")
         out = Path("artifacts") / "snapshots" / f"box_{tag}_{stamp}"
@@ -1247,8 +1248,10 @@ def main() -> None:
                     help="time multiplier (1.0 = real speed)")
     ap.add_argument("--scale", type=int, default=1,
                     help="integer pixel scale (e.g. 2 doubles the windows)")
-    ap.add_argument("--record", metavar="FILE", default=None,
-                    help="record a demo (message + dialog event stream) to FILE")
+    ap.add_argument("--record-demo", "--record", dest="record_demo",
+                    metavar="NAME", default=None,
+                    help="record a demo (message + dialog event stream) to "
+                         "artifacts/demos/NAME.jsonl (--record is a deprecated alias)")
     ap.add_argument("--mute", action="store_true", help="disable host audio output")
     ap.add_argument("--snapshot-on-box", metavar="TEXT", default=None,
                     help="save an inspection snapshot whenever a MessageBox whose "
@@ -1262,7 +1265,7 @@ def main() -> None:
     if not EXE_PATH.exists():
         raise SystemExit(f"{EXE_PATH} not found — put the game files under assets/")
     PlayApp(EXE_PATH, WINFLAGS_NO_FPU, args.speed, args.scale,
-            record=args.record, mute=args.mute,
+            record=args.record_demo, mute=args.mute,
             snapshot_on_box=args.snapshot_on_box,
             hooks=not args.no_hooks,
             resume=args.resume).run()
