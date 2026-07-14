@@ -1473,6 +1473,83 @@ def test_stealfood_state_diff_matches_asm(colony, seg, off, map_base,
             f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _EatFoodB / _EatFoodR (seg6:4844 / 6BB6) — unconditional food nibble +
+# colony-growth trigger. _TryEatFoodB / _TryEatFoodR (seg6:47C6 / 6B38) — the
+# SAME, but gated on the tile being in [0x10, 0x13].
+@pytest.mark.parametrize("colony,seg,off,map_base,count_off,ant1,ant2,"
+                         "timer_off,cap_off", [
+    ("B", 6, 0x4844, 0x48E8, 0x9EA4, 0xAC82, 0xAC98, 0x7402, 0xAC86),
+    ("R", 6, 0x6BB6, 0x58E8, 0x72DE, 0xAC84, 0xACA4, 0x7C8E, 0xAC88),
+])
+@pytest.mark.parametrize("tile,ant_sum,timer,cap,label", [
+    (0x10, 0, 0, 10, "reroll tile; low ant sum -> growth triggers"),
+    (0x12, 0x800, 0, 10, "decrement tile; high ant sum -> no growth"),
+    (0x05, 0, 0, 10, "OUTSIDE the food-pile range -> still processed unconditionally"),
+    (0x12, 0, 0, 100, "growth would trigger, but cap already at 100"),
+])
+def test_eatfood_state_diff_matches_asm(colony, seg, off, map_base, count_off,
+                                        ant1, ant2, timer_off, cap_off, tile,
+                                        ant_sum, timer, cap, label):
+    from simant.recovered.gameplay import eat_food_b, eat_food_r
+    fn = eat_food_b if colony == "B" else eat_food_r
+    x, y = 10, 20
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(dg, map_base + (x << 6) + y, tile)
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(pack, count_off, 5)
+        m.mem.ww(dg, ant1, ant_sum)
+        m.mem.ww(dg, ant2, 0)
+        m.mem.ww(pack, timer_off, timer)
+        m.mem.ww(dg, cap_off, cap)
+
+    results = _run_and_diff_segs(
+        seg, off, (x, y),
+        lambda d, p: fn(d, p, x, y),
+        _STEALFOOD_REGIONS, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _STEALFOOD_REGIONS):
+        assert asm_after == rec_after, (
+            f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
+
+
+@pytest.mark.parametrize("colony,seg,off,map_base,count_off,ant1,ant2,"
+                         "timer_off,cap_off", [
+    ("B", 6, 0x47C6, 0x48E8, 0x9EA4, 0xAC82, 0xAC98, 0x7402, 0xAC86),
+    ("R", 6, 0x6B38, 0x58E8, 0x72DE, 0xAC84, 0xACA4, 0x7C8E, 0xAC88),
+])
+@pytest.mark.parametrize("tile,label", [
+    (0x10, "in range, reroll tile"),
+    (0x12, "in range, decrement tile"),
+    (0x05, "OUTSIDE the food-pile range -> complete no-op"),
+    (0x14, "one past the range -> complete no-op"),
+])
+def test_tryeatfood_state_diff_matches_asm(colony, seg, off, map_base,
+                                           count_off, ant1, ant2, timer_off,
+                                           cap_off, tile, label):
+    from simant.recovered.gameplay import try_eat_food_b, try_eat_food_r
+    fn = try_eat_food_b if colony == "B" else try_eat_food_r
+    x, y = 10, 20
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(dg, map_base + (x << 6) + y, tile)
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(pack, count_off, 5)
+        m.mem.ww(dg, ant1, 0)
+        m.mem.ww(dg, ant2, 0)
+        m.mem.ww(pack, timer_off, 0)
+        m.mem.ww(dg, cap_off, 10)
+
+    results = _run_and_diff_segs(
+        seg, off, (x, y),
+        lambda d, p: fn(d, p, x, y),
+        _STEALFOOD_REGIONS, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _STEALFOOD_REGIONS):
+        assert asm_after == rec_after, (
+            f"{colony} {label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _GetExitDirB / _GetExitDirR (seg5:119C / 1240) — exit-distance-------
 # gradient direction, biased away from `exclude`'s opposite.
 @pytest.mark.parametrize("colony,seg,off,map_base,exit_base", [

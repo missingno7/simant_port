@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.121) — /goal grind: _EatFood*/_TryEatFood* — food-nibble + colony-growth trigger
+- RECOVERED all four food-eating routines: `eat_food_b`/`r` (`_EatFoodB`/`R`,
+  seg6:4844/6BB6, FAR return) and `try_eat_food_b`/`r` (`_TryEatFoodB`/`R`,
+  seg6:47C6/6B38, FAR return), args x/y. `_EatFood*` is UNCONDITIONAL —
+  the SAME "nibble a food tile" step `steal_food_*` already recovered
+  (reroll on `0x10`, else a byte-wrapping decrement), always followed by
+  a colony-growth trigger. `_TryEatFood*` is the SAME body but GATED — a
+  complete no-op unless the tile is in `[0x10, 0x13]` (the valid
+  food-pile range); `_EatFood*` processes ANY tile value unconditionally,
+  a real behavioral difference from its "Try" sibling, not just naming.
+- The growth trigger (`_food_growth_trigger`, shared by all four):
+  accumulates a per-colony timer (`pack[timer_off] += 5` every call)
+  against a threshold derived from two DGROUP ant-count-ish stats
+  (`(count1 + count2) >> 4`); once the timer catches up, resets it to `0`
+  and bumps a DGROUP counter capped at `100` — the timer reset happens
+  BEFORE the cap check, so it resets even on the tick where the cap is
+  already maxed (verified this exact ordering with a dedicated test
+  case, not just assumed from a first read of the branch).
+- 16 cases (4 scenarios x 2 families x both colonies) — ALL GREEN ON THE
+  FIRST RUN.
+- Suite: simant 1343 (+16). Only `_PickupFoodA` (a genuine `_DoForageAnt`
+  dependency) remains in the food family; `_RaidOutB/R`/`_QueenMoveB/R`
+  are the larger stretch targets after that.
+
 ## 2026-07-14 (cont.120) — /goal grind: _LostHead*/_LostTail* — trail-marker occupancy family
 - RECOVERED all five `_Lost*` routines: `lost_head_a` (`_LostHeadA`,
   seg6:0B1E, NEAR return, yard/A-list), `lost_head_b`/`r` (`_LostHeadB`/`R`,

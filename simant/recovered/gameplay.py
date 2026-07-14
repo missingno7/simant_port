@@ -3094,6 +3094,110 @@ def steal_food_r(dgroup, pack, x: int, y: int) -> None:
     _steal_food(dgroup, pack, MAP_PLANE_BASE[3], 0x72DE, x, y)
 
 
+def _reroll_or_decrement_food_tile(dgroup, idx: int) -> None:
+    """The same "nibble a food tile" step `_steal_food` uses: reroll via
+    `_SRand8` on the "full pile" tile (`0x10`), else a genuine
+    byte-wrapping decrement with no underflow guard."""
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    tile = dgroup.rb(idx)
+    if tile == 0x10:
+        seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        dgroup.wb(idx, roll)
+    else:
+        dgroup.wb(idx, (tile - 1) & 0xFF)
+
+
+def _food_growth_trigger(dgroup, pack, ant_count1: int, ant_count2: int,
+                         timer_off: int, cap_off: int) -> None:
+    """Shared tail of `eat_food_b`/`r`/`try_eat_food_b`/`r`: accumulate a
+    per-colony "time to grow" timer (`pack[timer_off]`, `+5` every call)
+    against a threshold derived from two DGROUP ant-count-ish stats
+    (`(dgroup[ant_count1] + dgroup[ant_count2]) >> 4`); once the timer
+    catches up, resets it to `0` and bumps a DGROUP counter
+    (`dgroup[cap_off]`, capped at `100`) — presumably a colony-growth
+    trigger (new ant/egg spawn eligibility), though the caller/consumer of
+    `cap_off` is not yet recovered.
+    """
+    threshold = _sx16(dgroup.rw(ant_count1)) + _sx16(dgroup.rw(ant_count2))
+    threshold >>= 4
+    pack.ww(timer_off, (pack.rw(timer_off) + 5) & 0xFFFF)
+    if threshold >= _sx16(pack.rw(timer_off)):
+        return
+    pack.ww(timer_off, 0)
+    if dgroup.rw(cap_off) >= 100:
+        return
+    dgroup.ww(cap_off, (dgroup.rw(cap_off) + 1) & 0xFFFF)
+
+
+def _eat_food(dgroup, pack, map_base: int, food_count_off: int,
+             ant_count1: int, ant_count2: int, timer_off: int,
+             cap_off: int, x: int, y: int) -> None:
+    """Shared body of `eat_food_b`/`r`: UNCONDITIONALLY nibbles the food
+    tile at `(x, y)` (like `_steal_food`, but always — no tile-range gate)
+    and always runs the colony-growth trigger afterward.
+    """
+    idx = map_base + (x << 6) + y
+    _reroll_or_decrement_food_tile(dgroup, idx)
+    if _sx16(pack.rw(food_count_off)) > 0:
+        pack.ww(food_count_off, (pack.rw(food_count_off) - 1) & 0xFFFF)
+    _food_growth_trigger(dgroup, pack, ant_count1, ant_count2, timer_off, cap_off)
+
+
+def eat_food_b(dgroup, pack, x: int, y: int) -> None:
+    """Recovered from `_EatFoodB` (SIMANTW.SYM seg6:4844, FAR return, args
+    x=[bp+6], y=[bp+8]). See `_eat_food`.
+    """
+    _eat_food(dgroup, pack, MAP_PLANE_BASE[2], 0x9EA4, 0xAC82, 0xAC98,
+             0x7402, 0xAC86, x, y)
+
+
+def eat_food_r(dgroup, pack, x: int, y: int) -> None:
+    """The red-colony twin of `eat_food_b`.
+
+    Recovered from `_EatFoodR` (SIMANTW.SYM seg6:6BB6, FAR return, args
+    x=[bp+6], y=[bp+8]).
+    """
+    _eat_food(dgroup, pack, MAP_PLANE_BASE[3], 0x72DE, 0xAC84, 0xACA4,
+             0x7C8E, 0xAC88, x, y)
+
+
+def _try_eat_food(dgroup, pack, map_base: int, food_count_off: int,
+                  ant_count1: int, ant_count2: int, timer_off: int,
+                  cap_off: int, x: int, y: int) -> None:
+    """Shared body of `try_eat_food_b`/`r`: like `_eat_food`, but GATED —
+    a complete no-op unless the tile at `(x, y)` is in `[0x10, 0x13]` (the
+    valid food-pile range).
+    """
+    idx = map_base + (x << 6) + y
+    tile = dgroup.rb(idx)
+    if not (0x10 <= tile <= 0x13):
+        return
+    _reroll_or_decrement_food_tile(dgroup, idx)
+    if _sx16(pack.rw(food_count_off)) > 0:
+        pack.ww(food_count_off, (pack.rw(food_count_off) - 1) & 0xFFFF)
+    _food_growth_trigger(dgroup, pack, ant_count1, ant_count2, timer_off, cap_off)
+
+
+def try_eat_food_b(dgroup, pack, x: int, y: int) -> None:
+    """Recovered from `_TryEatFoodB` (SIMANTW.SYM seg6:47C6, FAR return,
+    args x=[bp+6], y=[bp+8]). See `_try_eat_food`.
+    """
+    _try_eat_food(dgroup, pack, MAP_PLANE_BASE[2], 0x9EA4, 0xAC82, 0xAC98,
+                  0x7402, 0xAC86, x, y)
+
+
+def try_eat_food_r(dgroup, pack, x: int, y: int) -> None:
+    """The red-colony twin of `try_eat_food_b`.
+
+    Recovered from `_TryEatFoodR` (SIMANTW.SYM seg6:6B38, FAR return, args
+    x=[bp+6], y=[bp+8]).
+    """
+    _try_eat_food(dgroup, pack, MAP_PLANE_BASE[3], 0x72DE, 0xAC84, 0xACA4,
+                  0x7C8E, 0xAC88, x, y)
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.

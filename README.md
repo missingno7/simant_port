@@ -178,7 +178,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}` done | 74 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_SimEggA`/`_Lost{Head,Tail}*` done; forage/nest frontier | 51 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_SimEggA`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}` done; forage/nest frontier | 55 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family done | 14 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -248,8 +248,10 @@ move and then actually move* is byte-exact, end to end:
   underflow guard). The 5-routine `_Lost*` family (`lost_head_a`/`b`/`r`,
   `lost_tail_b`/`r`) — trail-marker occupancy checks that trust an intact
   encoded tile value first, falling back to an actual ant-list search
-  only when the tile has changed. `_DeadAntHere` (a 100-slot corpse-decay
-  ring buffer),
+  only when the tile has changed. `eat_food_b`/`r`/`try_eat_food_b`/`r`
+  (the same food-tile nibble as `steal_food_*`, plus a shared
+  colony-growth trigger keyed off two DGROUP ant-count stats).
+  `_DeadAntHere` (a 100-slot corpse-decay ring buffer),
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
   LFSR used for map generation).
