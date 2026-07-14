@@ -1,5 +1,58 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.103) — /goal grind: _GetNewMode + _DoFightA — first TOP-LEVEL `_Do*Ant*` routine
+- A research survey (Explore agent) found the entire seg7 `_GetNewMode*`
+  family and `_DoFightA` (seg6:27E6) fully unblocked — every callee already
+  recovered or zero-blocker — correcting cont.84's stale claim that this
+  family was blocked. `_DoFightA` is the recommended target: a genuine
+  top-level combat-resolution routine, one call-hop below `_DoAntSimA`.
+- RECOVERED `get_new_mode` (`_GetNewMode`, seg7:0910, FAR return, args
+  sub/full_byte) — a caste mode-transition lookup with three tiers: if
+  `full_byte & 0x80`, an `_SRand1(7)`-plus-caste-derived-index lookup into
+  one of two 8-row tables (`sub==2`/`sub==6`) or a direct table read
+  otherwise; else gated on `pack[0x9FCE]` between a second pack-resident
+  mode-base (`[0x9B8A]`) feeding the SAME rolled-lookup tables, or a flat
+  word constant (`[0x8A58]`) for `sub in (2, 6)`. Verified all 7 DGROUP
+  pointer-global selectors independently (`0xC4C4`→PACK, `0xC4DA`→SDG,
+  `0xC4E0`/`0xC4E2`→PACK, `0xC4DC`/`0xC4DE`/`0xC4CC`→SDG) rather than
+  trusting the survey's callee-list-only summary. 9 state-diff cases
+  (every branch combination) — ALL GREEN ON THE FIRST RUN.
+- RECOVERED `do_fight_a` (`_DoFightA`, seg6:27E6, NEAR call/return, arg:
+  `slot` — the A-list index of the yard ant being resolved). Always
+  rerolls the ant's caste low 3 bits via `_SRand1(7)` and stamps the
+  result into the yard life grid; then rolls `_SRand16()` — on a 1-in-16
+  hit, resolves a KILL: overwrites the life-grid cell and caste field with
+  the ant's `field_e`, computes a new mode via the just-recovered
+  `get_new_mode(sub=(field_e & 0x78) >> 3, full_byte=field_e)`, writes it
+  into the ACTING ant's (`pack[0x9B6A]`, NOT this ant's) `field_c`, clears
+  this ant's `field_e`, and calls the already-recovered `dead_ant_here`.
+  On any other roll, the ASM conditionally calls `ANTEDIT!_FightBalloons`
+  (a speech-balloon UI routine gated on `simant_data_group[0x85FC]`) — a
+  pure presentation side effect with no simulation feedback, deliberately
+  OMITTED (not stubbed-and-called, just never invoked) per this project's
+  core/presentation split, matching the existing `_ZapEuMapAt`-style
+  redraw-stub convention. Caught and corrected a stale research-survey
+  guess in passing: selector `0xC322` (the `[0x85FC]` gate) resolves to
+  SDG, not PACK as the survey had assumed — verified independently via
+  `m.mem.rw(dg, 0xC322)` against both segment bases on a fresh machine.
+  4 state-diff cases (no-kill early-return; kill via the direct-table
+  sub; kill via each rolled-table sub, one per mode-base gate state) —
+  ALL GREEN ON THE FIRST RUN. Added a `stubs=` parameter to
+  `_run_and_diff_segs` (mirroring the existing `_run_and_diff` one) to
+  neutralize the `_FightBalloons` far call cleanly.
+- Suite: simant 1199 (+13: 9 + 4). **`_DoFightA` is the first genuinely
+  TOP-LEVEL `_Do*Ant*`-tier routine recovered** — previous rounds only
+  closed supporting tiers (pathfinding selection, dig subsystem, movement
+  execution). Next candidates per the survey, all zero-blocker: the rest
+  of the seg7 `_GetNewMode*`/`_Bounce`/`_Get*Dir` family; `_GetWinner`,
+  `_RandTurn`, `_GetExitDirB/R`, `_GetEnterDirB/R`, `_GoInNest`,
+  `_StartFightA`; `_DoDigOutAntA` (seg6:1480, fully disassembled by the
+  survey, zero-blocker). `_DoForageAnt` remains a maybe (needs its own
+  `_DoTroph`/`_YellowFight` gate-shape re-verified end-to-end); the other
+  `_Do*Ant*` routines (`_DoDigInB`, `_DoNestAntB`, `_DoAntSimA/B`) stay
+  blocked on a real sound-engine routine and/or a dialog/camera-follow UI
+  subsystem.
+
 ## 2026-07-14 (cont.102) — /goal grind: _TryMoveDirB <-> _GetOutB — movement EXECUTION DONE
 - RECOVERED `try_move_dir_b`/`get_out_b` (seg6:439E/520A; both FAR return)
   — the black-colony twins, closing the movement-EXECUTION tier for BOTH

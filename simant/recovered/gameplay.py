@@ -2459,6 +2459,131 @@ def get_out_b(dgroup, simant_data_group, pack, x: int) -> int:
     return 0
 
 
+def get_new_mode(dgroup, simant_data_group, pack, sub: int, full_byte: int) -> int:
+    """Pick a caste's new "mode" byte given its current sub-mode and the
+    full status byte it came from — used by combat resolution (`_DoFightA`
+    and siblings) to look up a demoted/promoted caste after a kill or
+    similar transition.
+
+    Recovered from `_GetNewMode` (SIMANTW.SYM seg7:0910, args sub=[bp+6],
+    full_byte=[bp+8]; FAR return).  `full_byte`'s bit `0x80` selects one of
+    two symmetric branches (each reading its OWN colony's PACK-resident
+    "mode table base" — `pack[0x7690]` for the `0x80`-set branch,
+    `pack[0x9B8A]` for the other, gated there additionally by
+    `pack[0x9FCE] == 1`); within either, `sub == 2` and `sub == 6` reroll
+    via `_SRand8` and index into one of two small SIMANT_DATA_GROUP tables
+    (`[0x89E6..)` for `sub==2`, `[0x8A16..)` for `sub==6`, both indexed as
+    `(table_base << 3) + roll`), while every other `sub` (or the `0x80`-
+    clear branch when `pack[0x9FCE] != 1`) reads a fixed per-sub byte
+    table at `[0x8A46 + sub]`.  The one remaining case — `0x80` clear,
+    `pack[0x9FCE] != 1`, AND `sub` in `{2, 6}` — instead reads a single
+    fixed WORD at `[0x8A58]` (not sign-extended, unlike every other path,
+    which reads a BYTE and sign-extends it via `cbw`).  All of these
+    mode-transition tables are read LIVE (never hardcoded), matching this
+    project's established convention for such game-data tables.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    def rolled_lookup(table_base: int, mode_base: int) -> int:
+        seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        idx = pack.rw(mode_base)
+        return sx8(simant_data_group.rb(((idx << 3) + roll + table_base) & 0xFFFF))
+
+    if full_byte & 0x80:
+        if sub == 2:
+            return rolled_lookup(0x89E6, 0x7690)
+        if sub == 6:
+            return rolled_lookup(0x8A16, 0x7690)
+        return sx8(simant_data_group.rb((sub + 0x8A46) & 0xFFFF))
+
+    if pack.rw(0x9FCE) == 1:
+        if sub == 2:
+            return rolled_lookup(0x89E6, 0x9B8A)
+        if sub == 6:
+            return rolled_lookup(0x8A16, 0x9B8A)
+        return sx8(simant_data_group.rb((sub + 0x8A46) & 0xFFFF))
+
+    if sub in (2, 6):
+        return simant_data_group.rw(0x8A58)
+    return sx8(simant_data_group.rb((sub + 0x8A46) & 0xFFFF))
+
+
+def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
+    """Resolve one tick of combat for a yard ("A"-list) ant: jitter its
+    caste, and on a 1-in-16 roll, kill it — recovered from SIMANT1's
+    `_DoFightA`, the first genuinely TOP-LEVEL `_Do*Ant*` behavior routine
+    this project has recovered (one call-hop below `_DoAntSimA`).
+
+    Recovered from `_DoFightA` (SIMANTW.SYM seg6:27E6, arg: slot — the
+    A-list index of the ant being resolved, read via
+    `simant_data_group[0x23A4/0x278E + slot]` for its position, same as
+    `find_in_a_list`; NEAR return, no meaningful AX contract).
+
+    Always: rerolls the low 3 bits of the ant's caste
+    (`simant_data_group[0x2F62 + slot]`) via `_SRand1(7)` (a genuine
+    ADD, not OR, into the pre-masked `& 0xF8` value — behaviourally
+    identical to OR since the roll is always < 8, ported as the literal
+    ADD anyway) and stamps the result into the yard life grid at the
+    ant's position.
+
+    Then rolls `_SRand16()`; on a `0` (1-in-16 chance): overwrites the
+    life-grid cell AND the caste field with the ant's `field_e`
+    (`simant_data_group[0x334C + slot]`), computes a new mode via
+    `get_new_mode(sub=(field_e & 0x78) >> 3, full_byte=field_e)`, writes
+    that into the ACTING ant's (not this ant's — `pack[0x9B6A]`)
+    `field_c` (`[0x2B78]`), clears this ant's `field_e`, and calls
+    `dead_ant_here(a_x, a_y, colony_bit)` — where `colony_bit` is the
+    now-current caste's `0x80` bit — recording this death into the
+    ring-buffer `_DeadAntHere` maintains.
+
+    On any OTHER `_SRand16()` roll (no kill this tick): the ASM
+    conditionally calls `ANTEDIT!_FightBalloons` (a speech-balloon UI
+    routine, gated on a SIMANT_DATA_GROUP flag at `[0x85FC]`) — a pure
+    presentation side effect with no simulation-state impact, deliberately
+    NOT ported here (matches this project's existing redraw/sound-stub
+    convention, e.g. `_ZapEuMapAt`); this recovered function is a no-op
+    beyond the caste reroll already done above on that path.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    a_x = simant_data_group.rb(0x23A4 + slot)
+    a_y = simant_data_group.rb(0x278E + slot)
+
+    seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    caste_off = 0x2F62 + slot
+    new_caste = ((simant_data_group.rb(caste_off) & 0xF8) + roll) & 0xFF
+    simant_data_group.wb(caste_off, new_caste)
+    life_off = LIFE_PLANE_BASE[0] + (a_x << 6) + a_y
+    dgroup.wb(life_off, new_caste)
+
+    seed, roll16 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 15)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    if roll16 != 0:
+        return
+
+    field_e = simant_data_group.rb(0x334C + slot)
+    dgroup.wb(life_off, field_e)
+    simant_data_group.wb(caste_off, field_e)
+
+    sub = (field_e & 0x78) >> 3
+    new_mode = get_new_mode(dgroup, simant_data_group, pack, sub, field_e) & 0xFF
+
+    acting_slot = pack.rw(0x9B6A)
+    simant_data_group.wb(0x2B78 + acting_slot, new_mode)
+    simant_data_group.wb(0x334C + slot, 0)
+
+    colony_bit = simant_data_group.rb(caste_off) & 0x80
+    dead_ant_here(dgroup, pack, a_x, a_y, colony_bit)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 

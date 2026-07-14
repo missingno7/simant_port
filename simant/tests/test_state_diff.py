@@ -100,7 +100,7 @@ def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, seed_fn=None,
 
 
 def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
-                       near=False, seed_fn=None):
+                       near=False, seed_fn=None, stubs=()):
     """Like `_run_and_diff`, but for a routine that mutates through MULTIPLE
     fixed NE data segments (e.g. via a DGROUP pointer-global into
     SIMANT_DATA_GROUP/PACK — see `hooks.SIMANT_DATA_GROUP_SEG_INDEX`/
@@ -119,6 +119,9 @@ def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
     before the pre-state snapshot — the only correct way to seed PACK/
     SIMANT_DATA_GROUP/etc. beyond the `seed` dict (DGROUP words only).
 
+    `stubs`, like `_run_and_diff`'s, neutralizes far side calls (screen
+    redraw / sound / UI) with a plain far return so only sim state changes.
+
     Returns a list of (label, asm_window, recovered_window) for each region.
     """
     m = runtime.create_machine()
@@ -130,6 +133,8 @@ def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
         m.mem.ww(dg, o, v & 0xFFFF)
     if seed_fn is not None:
         seed_fn(m)
+    for stub_seg, stub_off in stubs:
+        m.cpu.replacement_hooks[(m.seg_bases[stub_seg], stub_off)] = _far_return_stub
 
     befores = [bytes(m.mem.block(m.seg_bases[si], lo, hi - lo))
               for si, lo, hi in regions]
@@ -970,6 +975,136 @@ def test_getoutb_state_diff_matches_asm(x, hole_marker, hole_x_val, slot, caste,
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
         assert asm_after == rec_after, (
             f"x={x} marker={hole_marker:#x} hole_x={hole_x_val} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+# ---- _GetNewMode (seg7:0910) — caste mode-transition lookup ---------------
+_GETNEWMODE_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xCBF0, 0xCBF4),   # SRand seed
+    (_SDG, 0x8900, 0x8B00),                 # tables at 0x89E6/0x8A16/0x8A46/0x8A58
+    (_PACK, 0x7600, 0xA000),   # mode_base [0x7690]/[0x9B8A], gate flag [0x9FCE]
+]
+
+
+def _getnewmode_seed(seed_val, mode_base_hi, mode_base_lo, gate_flag, tbl2, tbl6,
+                     tbl_direct, tbl_word):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x7690, mode_base_hi)
+        m.mem.ww(pack, 0x9B8A, mode_base_lo)
+        m.mem.ww(pack, 0x9FCE, gate_flag)
+        for i in range(8):
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_hi << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_lo << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_hi << 3) + i), tbl6)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_lo << 3) + i), tbl6)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, tbl_direct)
+        m.mem.ww(sdg, 0x8A58, tbl_word)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "sub,full_byte,seed_val,mode_base_hi,mode_base_lo,gate_flag,tbl2,tbl6,"
+    "tbl_direct,tbl_word", [
+    (2, 0x80, 0x1234, 1, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # 0x80 set, sub=2 -> rolled
+    (6, 0x80, 0x1234, 1, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # 0x80 set, sub=6 -> rolled
+    (4, 0x80, 0x1234, 1, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # 0x80 set, other sub -> direct
+    (2, 0x00, 0x1234, 1, 3, 1, 0x25, 0x30, 0x40, 0x1122),   # 0x80 clear, gate=1, sub=2
+    (6, 0x00, 0x1234, 1, 3, 1, 0x25, 0x30, 0x40, 0x1122),   # 0x80 clear, gate=1, sub=6
+    (4, 0x00, 0x1234, 1, 3, 1, 0x25, 0x30, 0x40, 0x1122),   # 0x80 clear, gate=1, other
+    (2, 0x00, 0x1234, 1, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # 0x80 clear, gate!=1, sub=2 -> word
+    (6, 0x00, 0x1234, 1, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # 0x80 clear, gate!=1, sub=6 -> word
+    (4, 0x00, 0x1234, 1, 3, 0, 0x25, 0x30, 0x40, 0x1122),   # 0x80 clear, gate!=1, other
+])
+def test_getnewmode_state_diff_matches_asm(sub, full_byte, seed_val, mode_base_hi,
+                                           mode_base_lo, gate_flag, tbl2, tbl6,
+                                           tbl_direct, tbl_word):
+    from simant.recovered.gameplay import get_new_mode
+    results = _run_and_diff_segs(
+        7, 0x910, (sub, full_byte),
+        lambda d, s, p: get_new_mode(d, s, p, sub, full_byte),
+        _GETNEWMODE_REGIONS,
+        seed_fn=_getnewmode_seed(seed_val, mode_base_hi, mode_base_lo, gate_flag,
+                                 tbl2, tbl6, tbl_direct, tbl_word))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GETNEWMODE_REGIONS):
+        assert asm_after == rec_after, (
+            f"sub={sub} full_byte={full_byte:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+# ---- _DoFightA (seg6:27E6) — yard combat resolution (first top-level -----
+# `_Do*Ant*` behavior routine recovered) -------------------------------------
+# NEAR call/return. `_FightBalloons` (ANTEDIT seg3:0x499A, presentation-only
+# speech-balloon UI) is stubbed -- the recovered function omits it entirely.
+_DOFIGHTA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # life plane (via _DeadAntHere's window) + SRand seed
+    (_SDG, 0x2300, 0x8B00),                 # A-list fields [0x23A4.."0x334C]+slot/acting_slot + GetNewMode tables
+    (_PACK, 0x7600, 0xA000),   # GetNewMode's pack fields + acting-slot ptr [0x9B6A] + _DeadAntHere ring buffer
+]
+_FIGHTBALLOONS_STUB = [(3, 0x499A)]
+
+
+def _dofighta_seed(slot, acting_slot, a_x, a_y, caste_init, field_e, seed_val,
+                   mode_base_hi=2, mode_base_lo=3, gate_flag=0, tbl2=0x25,
+                   tbl6=0x30, tbl_direct=0x40, tbl_word=0x1122,
+                   dead_counter=5, dead_old_x=1, dead_old_y=1, dead_old_tile=0x14,
+                   dead_inside=False):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(sdg, 0x23A4 + slot, a_x)
+        m.mem.wb(sdg, 0x278E + slot, a_y)
+        m.mem.wb(sdg, 0x2F62 + slot, caste_init)
+        m.mem.wb(sdg, 0x334C + slot, field_e)
+        m.mem.wb(sdg, 0x2B78 + acting_slot, 0x11)   # sentinel -- must change only on a kill
+        m.mem.ww(pack, 0x9B6A, acting_slot)
+        m.mem.ww(pack, 0x7690, mode_base_hi)
+        m.mem.ww(pack, 0x9B8A, mode_base_lo)
+        m.mem.ww(pack, 0x9FCE, gate_flag)
+        for i in range(8):
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_hi << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_lo << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_hi << 3) + i), tbl6)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_lo << 3) + i), tbl6)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, tbl_direct)
+        m.mem.ww(sdg, 0x8A58, tbl_word)
+        m.mem.ww(pack, 0x9EA8, dead_counter)
+        next_slot = (dead_counter + 1) % 0x64
+        m.mem.wb(pack, 0x9C82 + next_slot, dead_old_x)
+        m.mem.ww(pack, 0x9D76 + next_slot, dead_old_y)
+        m.mem.wb(dg, 0x28E8 + (dead_old_x << 6) + dead_old_y, dead_old_tile)
+        m.mem.wb(pack, 0x9B6E, 1 if dead_inside else 0)
+        m.mem.wb(sdg, 0x85FC, 1)   # exercise the (stubbed) FightBalloons gate too
+    return seed
+
+
+@pytest.mark.parametrize("slot,acting_slot,a_x,a_y,caste_init,field_e,seed_val,"
+                         "mode_base_hi,mode_base_lo,gate_flag", [
+    (0x10, 0x40, 5, 7, 0x02, 0x00, 0x02, 2, 3, 0),    # SRand16 != 0 -> no kill, no side calls
+    (0x10, 0x40, 5, 7, 0x03, 0x08, 0x0C, 2, 3, 0),    # kill, 0x80 clear, sub=1 not in (2,6) -> direct table
+    (0x10, 0x40, 10, 12, 0x85, 0x94, 0x0C, 2, 3, 0),  # kill, 0x80 SET, sub=2 -> rolled via mode_base_hi
+    (0x10, 0x40, 10, 12, 0x05, 0x36, 0x0C, 2, 3, 1),  # kill, 0x80 clear, gate=1, sub=6 -> rolled via mode_base_lo
+])
+def test_dofighta_state_diff_matches_asm(slot, acting_slot, a_x, a_y, caste_init,
+                                         field_e, seed_val, mode_base_hi,
+                                         mode_base_lo, gate_flag):
+    from simant.recovered.gameplay import do_fight_a
+    results = _run_and_diff_segs(
+        6, 0x27E6, (slot,),
+        lambda d, s, p: do_fight_a(d, s, p, slot),
+        _DOFIGHTA_REGIONS, near=True, stubs=_FIGHTBALLOONS_STUB,
+        seed_fn=_dofighta_seed(slot, acting_slot, a_x, a_y, caste_init, field_e,
+                               seed_val, mode_base_hi=mode_base_hi,
+                               mode_base_lo=mode_base_lo, gate_flag=gate_flag),
+        )
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DOFIGHTA_REGIONS):
+        assert asm_after == rec_after, (
+            f"slot={slot:#x} field_e={field_e:#x} seed_val={seed_val:#x} {label}: "
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 

@@ -36,10 +36,12 @@ read/decrement), and the mode-population/red-initiator subsystem
 (`_ClrModePop`/`_TallyModePop`/`_MakeRedInitiator`, including a genuine
 mutator-calling-mutator chain). Those needed a **state-diff oracle** (snapshot → run
 recovered logic on a copy of the pre-state → diff against the ASM's mutation)
-instead of the return-value oracle the foundation was built with. What remains is
-the top two layers — the per-ant **behaviors** (`_DoForageAnt`, `_DoNestAntB`,
-`_DoDigInB`) and the **orchestrators** above them, which compose the now-recovered
-mutator tier. The graph below is a real slice of the `seg5`/`seg6`/`seg7` call
+instead of the return-value oracle the foundation was built with. The first genuine
+top-level `_Do*Ant*` routine is now also byte-exact: `_DoFightA` (yard combat
+resolution, composed with the newly-recovered `_GetNewMode` caste mode-transition
+lookup). What remains is the rest of the per-ant **behaviors** (`_DoForageAnt`,
+`_DoNestAntB`, `_DoDigInB`) and the **orchestrators** above them, which compose the
+now-recovered mutator tier. The graph below is a real slice of the `seg5`/`seg6`/`seg7` call
 graph (every edge is an actual call); green nodes are proven byte-exact against the
 original ASM, an amber ring marks the most-called routines, dashed nodes are the
 not-yet-recovered frontier.
@@ -55,6 +57,11 @@ flowchart TD
     dnb["_DoNestAntB"]
     dfor["_DoForageAnt"]
     ddig["_DoDigInB"]
+  end
+  subgraph L2c["combat resolution (started)"]
+    dfa["_DoFightA"]
+    gnm["_GetNewMode"]
+    dah["_DeadAntHere"]
   end
   subgraph L3m["mutator tier — lists, scent, mode-pop (done)"]
     fial["_FindInAList"]
@@ -105,6 +112,8 @@ flowchart TD
   das --> dab & daa
   dab --> dnb
   daa --> dfor & gbd
+  daa -.-> dfa
+  dfa --> gnm & dah & srand
   dnb --> ddig & iyel & srand
   dfor --> iva & iyel & srand
   dfor -.-> fial & aal & csd
@@ -137,6 +146,7 @@ flowchart TD
   class tcbmo,gmbd,grbd,gmrd,cmbd done;
   class dtb,dttb,mnhb,exh,seb,fxm,afld done;
   class tmdb,gob done;
+  class dfa,gnm,dah done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
 
@@ -145,8 +155,8 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done** | 70 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; forage/nest/combat behaviors frontier | 37 / 123 | movement **done** |
-| `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 | mostly rendering |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA` combat resolution done; forage/nest behaviors frontier | 38 / 123 | movement **done** |
+| `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode` done | 5 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
 The recovered routines are deliberately the load-bearing ones — `_SRand1` has 88
@@ -181,6 +191,14 @@ move and then actually move* is byte-exact, end to end:
   sharing) branch that calls the unrecovered `_DoTroph` — the port computes
   that gate's condition exactly and raises loudly if it would ever fire,
   rather than fake the outcome.
+- **Combat resolution, started**: `_DoFightA` — the first genuinely
+  **top-level** `_Do*Ant*` routine recovered (one call-hop below
+  `_DoAntSimA`): per-tick caste jitter plus a 1-in-16 kill roll that
+  composes the caste mode-transition lookup `_GetNewMode` (`seg7`) and the
+  already-recovered `_DeadAntHere`. Its presentation-only branch
+  (`ANTEDIT!_FightBalloons`, a speech-balloon UI call) is deliberately
+  omitted, not ported — same core/presentation split as the redraw stubs
+  below.
 - **Also recovered**: `_DeadAntHere` (a 100-slot corpse-decay ring buffer),
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
@@ -190,9 +208,9 @@ move and then actually move* is byte-exact, end to end:
 `_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`) that composes all of the above into
 an actual decision, `_DoTroph`'s own dependency chain (a real sound-engine
 routine plus a dialog/busy-wait UI routine — presentation/audio work, not
-core sim logic), and combat (`_YellowFight`/`_GetWinner`, which also needs
-`SIMTWO!_GetNewMode` from `seg7`). That's the next milestone toward the
-[VM-less native port](docs/vmless_port.md).
+core sim logic), and the rest of combat (`_YellowFight`/`_GetWinner`, which
+now only needs zero-blocker leftovers now that `_GetNewMode` is done). That's
+the next milestone toward the [VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 
@@ -216,7 +234,7 @@ scaffolding a native backend discards. `python -m simant.probes.callgraph` repor
 
 | Role | Recovered / total | In the native port |
 |------|:-----------------:|--------------------|
-| **core** | **33 / 583** | runs unchanged — *the denominator* |
+| **core** | **40 / 583** | runs unchanged — *the denominator* |
 | presentation | 18 / 490 | reimplemented natively |
 | runtime | 9 / 240 | provided by Python |
 
