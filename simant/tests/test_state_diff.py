@@ -6000,3 +6000,101 @@ def test_notmowed_state_diff_matches_asm(index, bit, word_val, label):
     ByteBackend(fresh_pack, 0).ww(0xA0B6 + (index << 1), word_val)
     expect = not_mowed(ByteBackend(fresh_pack, 0), index, bit)
     assert ax == (expect & 0xFFFF), f"{label} return-value: asm={ax:#06x} rec={expect:#06x}"
+
+
+# ---- _DoRestB/R (seg6:367E/5D7E) — nest combat resolution + retreat ------
+# Composes is_yellow_ant, find_in_b/r_list, get_winner, get_new_mode -- all
+# already recovered. Reuses _donestfight_seed-style mode-table population
+# plus _checknestfight_seed-style list seeding.
+_DOREST_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x22E0, 0xCBF4),
+    (_SDG, 0x3700, 0x8B00),
+    (_PACK, 0x7200, 0xA100),
+]
+
+
+def _dorest_seed(x, y, life_base, tile, count_off, y_off, x_off, caste_off,
+                 slots, acting_slot=0, acting_caste=0x03, cheat_flag=1,
+                 mode_base_hi=2, mode_base_lo=3, gate_flag=0,
+                 tbl2=0x25, tbl6=0x30, tbl_direct=0x40, tbl_word=0x1122):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(dg, life_base + (x << 6) + y, tile)
+        m.mem.ww(dg, 0xCE98, 0)
+        m.mem.wb(sdg, 0x8A5C, cheat_flag)
+        m.mem.ww(pack, count_off, len(slots))
+        for slot, (yv, xv, cv) in enumerate(slots):
+            m.mem.wb(sdg, y_off + slot, yv)
+            m.mem.wb(sdg, x_off + slot, xv)
+            m.mem.wb(sdg, caste_off + slot, cv)
+        m.mem.ww(pack, 0x9B6A, acting_slot)
+        m.mem.wb(sdg, caste_off + acting_slot, acting_caste)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+        m.mem.ww(pack, 0x7690, mode_base_hi)
+        m.mem.ww(pack, 0x9B8A, mode_base_lo)
+        m.mem.ww(pack, 0x9FCE, gate_flag)
+        for i in range(8):
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_hi << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x89E6 + ((mode_base_lo << 3) + i), tbl2)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_hi << 3) + i), tbl6)
+            m.mem.wb(sdg, 0x8A16 + ((mode_base_lo << 3) + i), tbl6)
+        for s in range(8):
+            m.mem.wb(sdg, 0x8A46 + s, tbl_direct)
+        m.mem.ww(sdg, 0x8A58, tbl_word)
+    return seed
+
+
+@pytest.mark.parametrize("which,off,life_base,count_off,y_off,x_off,"
+                         "caste_off,tile,found_slot,seed_val,label", [
+    ("b", 0x367E, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x50, False, 1234,
+     "b-out-of-range-retreat"),
+    ("b", 0x367E, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x90, False, 1234,
+     "b-in-range-not-in-list-retreat"),
+    ("b", 0x367E, 0x88E8, 0x99D4, 0x3736, 0x392C, 0x3D18, 0x90, True, 1234,
+     "b-in-range-found-fight"),
+    ("r", 0x5D7E, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x05, False, 1234,
+     "r-out-of-range-notyellow-retreat"),
+    ("r", 0x5D7E, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x30, False, 1234,
+     "r-in-range-not-in-list-retreat"),
+    ("r", 0x5D7E, 0x98E8, 0x72CC, 0x4104, 0x42FA, 0x46E6, 0x30, True, 1234,
+     "r-in-range-found-fight"),
+])
+def test_dorest_state_diff_matches_asm(which, off, life_base, count_off,
+                                       y_off, x_off, caste_off, tile,
+                                       found_slot, seed_val, label):
+    import simant.recovered.gameplay as G
+    fn = G.do_rest_b if which == "b" else G.do_rest_r
+    x, y, attacker = 20, 25, 0x08
+    slots = [(x, y, tile)] if found_slot else []
+    results = _run_and_diff_segs(
+        6, off, (x, y, attacker), lambda d, s, p: fn(d, s, p, x, y, attacker),
+        _DOREST_REGIONS,
+        seed_fn=_dorest_seed(x, y, life_base, tile, count_off, y_off, x_off,
+                             caste_off, slots, acting_slot=5, cheat_flag=1))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOREST_REGIONS):
+        assert asm_after == rec_after, f"{which} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dorestb_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_rest_b
+    dg = bytearray(0x10000)
+    dg[0x88E8] = 0xFE
+    dgv = ByteBackend(dg, 0)
+    dgv.ww(0xCE98, 1)
+    with pytest.raises(NotImplementedError):
+        do_rest_b(dgv, ByteBackend(bytearray(0x10000), 0),
+                  ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08)
+
+
+def test_dorestr_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_rest_r
+    dg = bytearray(0x10000)
+    dg[0x98E8] = 0xFE   # out of the 8..0x67 range
+    dgv = ByteBackend(dg, 0)
+    dgv.ww(0xCE98, 0)
+    with pytest.raises(NotImplementedError):
+        do_rest_r(dgv, ByteBackend(bytearray(0x10000), 0),
+                  ByteBackend(bytearray(0x10000), 0), 0, 0, 0x08)

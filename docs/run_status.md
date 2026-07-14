@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.168) — /goal grind: _DoRestB/R — nest combat + retreat
+- RECOVERED `do_rest_b`/`do_rest_r` (`_DoRestB`/`_DoRestR`, SIMANTW.SYM
+  seg6:367E/5D7E, args x=[bp+6], y=[bp+8], attacker=[bp+10]; FAR
+  return, 294/298 bytes). Despite the name shared with `do_rest_ant`,
+  disassembly showed these are genuinely nest-COMBAT-resolution
+  routines, not "take a rest" ones — the survey's size-based guess
+  ("colony-specific counterpart to `_DoRestAnt`") was wrong; their
+  opening phase is essentially `check_nest_fight_b`/`r` (cont.165)
+  inlined again, with a SECOND "retreat" phase appended for when no
+  fight happens. Composes `is_yellow_ant`, `find_in_b_list`/
+  `find_in_r_list`, `get_winner`, and `get_new_mode` — all already
+  recovered.
+  - Confirmed the SAME B/R asymmetries `check_nest_fight_b`/`r`
+    established (check order, `_YellowFight` gate polarity, argument)
+    hold here too — independently re-verified via the raw
+    disassembly for THIS pair, not assumed from the sibling.
+  - Retreat phase (reached only when no fight happened): the acting
+    ant moves into the target cell (stamps its own caste there), then
+    a `_SRand1(20)` roll of `0` (1-in-20) recomputes the acting ant's
+    own `field_c` via `get_new_mode`; any other roll ends in a
+    presentation-only balloon tail, deliberately not ported (same
+    split as `do_rest_ant`'s own balloon gate).
+  - The `_YellowFight` branch raises `NotImplementedError` for the
+    same reason `check_nest_fight_b`/`r`'s does.
+- 8 cases (3 B, 3 R, plus a `NotImplementedError`-gate check per
+  colony) — ALL GREEN ON THE FIRST REAL-ASM RUN.
+- Suite: simant 1705 (+8), full suite green.
+
 ## 2026-07-15 (cont.167) — /goal grind: _NotMowed — grass-cut test-and-clear
 - RECOVERED `not_mowed` (`_NotMowed`, SIMANTW.SYM seg7:203E, args
   index=[bp+6], bit=[bp+8]; FAR return, 52 bytes) — a packed-bit

@@ -5187,6 +5187,139 @@ def do_rest_ant(dgroup, simant_data_group, pack, slot: int) -> None:
         simant_data_group.wb(0x2B78 + slot, 2)
 
 
+def do_rest_b(dgroup, simant_data_group, pack, x: int, y: int,
+              attacker: int) -> None:
+    """Despite the name shared with `do_rest_ant`, this is genuinely a
+    NEST-combat-resolution routine, not a "take a rest" one — its
+    opening phase is essentially `check_nest_fight_b` inlined again
+    (same `is_yellow_ant`/`_YellowFight` gate, same `0x88..0xE7` tile
+    range, same `find_in_b_list` + `get_winner` resolution), with a
+    SECOND "retreat" phase appended for when no fight happens at all.
+
+    Recovered from `_DoRestB` (SIMANTW.SYM seg6:367E, args x=[bp+6],
+    y=[bp+8], attacker=[bp+10]; FAR return, 294 bytes). Composes
+    `is_yellow_ant`, `find_in_b_list`, `get_winner`, and `get_new_mode`
+    — all already recovered.
+
+    Combat phase: `is_yellow_ant(tile) == 1 AND dgroup[0xCE98] != 0`
+    defers to the UNRECOVERED `_YellowFight(2, pack[0x9B6A])` — raises
+    `NotImplementedError` per this project's fail-loud rule (same
+    precedent as `check_nest_fight_b`'s own gate); everything else is
+    byte-exact. Otherwise: a tile in `0x88..0xE7` found via
+    `find_in_b_list` (coordinate-role-swap convention) resolves combat
+    exactly like `check_nest_fight_b` does, and a fight (of either
+    kind) ends the routine here — its own presentation-only balloon
+    tail is deliberately not ported.
+
+    Retreat phase (only reached when NO fight happened — out of range,
+    or a range hit with nothing found): stamps the ACTING ant's own
+    caste (`simant_data_group[0x3D18 + pack[0x9B6A]]`) onto the target
+    cell — it moves in. A `_SRand1(20)` roll of `0` (1-in-20)
+    recomputes the acting ant's own `field_c` via `get_new_mode` on its
+    own `(caste & 0x78) >> 3` mode and stores it; any other roll ends
+    the routine in the SAME presentation-only balloon tail the combat
+    phase's fight branch skips.
+    """
+    cell = LIFE_PLANE_BASE[2] + (x << 6) + y
+    tile = dgroup.rb(cell)
+
+    if is_yellow_ant(tile) == 1 and dgroup.rw(0xCE98) != 0:
+        raise NotImplementedError(
+            "do_rest_b: _YellowFight branch reached (not recovered) -- "
+            "x={!r} y={!r} attacker={!r}".format(x, y, attacker))
+
+    fought = False
+    if 0x88 <= tile <= 0xE7:
+        found = find_in_b_list(pack, simant_data_group, y=x, x=y, caste=tile)
+        if found != 0xFFFF:
+            winner = get_winner(dgroup, simant_data_group, pack, tile,
+                                attacker) & 0xFF
+            simant_data_group.wb(0x3F0E + found, winner)
+            new_caste = ((winner & 0x80) + 0x70) & 0xFF
+            simant_data_group.wb(0x3D18 + found, new_caste)
+            dgroup.wb(cell, new_caste)
+            simant_data_group.wb(0x3B22 + found, 0x0A)
+            fought = True
+
+    if fought:
+        return
+
+    from .simone import SRAND_SEED_OFF, srand1
+
+    slot = pack.rw(0x9B6A)
+    own_caste = simant_data_group.rb(0x3D18 + slot)
+    dgroup.wb(cell, own_caste)
+
+    seed, roll20 = srand1(dgroup.rw(SRAND_SEED_OFF), 20)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll20 != 0:
+        return
+
+    slot = pack.rw(0x9B6A)
+    own_caste = simant_data_group.rb(0x3D18 + slot)
+    mode = (own_caste & 0x78) >> 3
+    field_c = get_new_mode(dgroup, simant_data_group, pack, mode, own_caste)
+    simant_data_group.wb(0x3B22 + slot, field_c & 0xFF)
+
+
+def do_rest_r(dgroup, simant_data_group, pack, x: int, y: int,
+              attacker: int) -> None:
+    """The red-colony twin of `do_rest_b` — NOT a mechanical twin
+    (independently confirmed via the raw disassembly): the caste-range
+    check runs FIRST here (opposite order from black, matching
+    `check_nest_fight_r`'s own reordering vs `check_nest_fight_b`), and
+    the `_YellowFight` gate polarity is inverted (`dgroup[0xCE98] == 0`
+    triggers it here, vs `!= 0` for black) with a different
+    `_YellowFight` first argument (`3`, vs `2` for black) — the SAME
+    asymmetries `check_nest_fight_r` has vs `check_nest_fight_b`.
+
+    Recovered from `_DoRestR` (SIMANTW.SYM seg6:5D7E, args x=[bp+6],
+    y=[bp+8], attacker=[bp+10]; FAR return, 298 bytes). Composes
+    `find_in_r_list`, `get_winner`, `is_yellow_ant`, and `get_new_mode`
+    — all already recovered; the `_YellowFight` branch raises
+    `NotImplementedError` for the same reason `do_rest_b`'s does.
+    """
+    cell = LIFE_PLANE_BASE[3] + (x << 6) + y
+    tile = dgroup.rb(cell)
+
+    fought = False
+    if 8 <= tile <= 0x67:
+        found = find_in_r_list(pack, simant_data_group, y=x, x=y, caste=tile)
+        if found != 0xFFFF:
+            winner = get_winner(dgroup, simant_data_group, pack, tile,
+                                attacker) & 0xFF
+            simant_data_group.wb(0x48DC + found, winner)
+            new_caste = ((winner & 0x80) + 0x70) & 0xFF
+            simant_data_group.wb(0x46E6 + found, new_caste)
+            dgroup.wb(cell, new_caste)
+            simant_data_group.wb(0x44F0 + found, 0x0A)
+            fought = True
+    elif is_yellow_ant(tile) == 1 and dgroup.rw(0xCE98) == 0:
+        raise NotImplementedError(
+            "do_rest_r: _YellowFight branch reached (not recovered) -- "
+            "x={!r} y={!r} attacker={!r}".format(x, y, attacker))
+
+    if fought:
+        return
+
+    from .simone import SRAND_SEED_OFF, srand1
+
+    slot = pack.rw(0x9B6A)
+    own_caste = simant_data_group.rb(0x46E6 + slot)
+    dgroup.wb(cell, own_caste)
+
+    seed, roll20 = srand1(dgroup.rw(SRAND_SEED_OFF), 20)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll20 != 0:
+        return
+
+    slot = pack.rw(0x9B6A)
+    own_caste = simant_data_group.rb(0x46E6 + slot)
+    mode = (own_caste & 0x78) >> 3
+    field_c = get_new_mode(dgroup, simant_data_group, pack, mode, own_caste)
+    simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
+
+
 def do_repo_fly(dgroup, simant_data_group, pack, slot: int) -> None:
     """A yard ant occasionally departs on a "reproductive flight" —
     vanishes from the yard A-list/life-grid, bumping a per-colony
