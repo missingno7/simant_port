@@ -4425,6 +4425,61 @@ def do_rest_ant(dgroup, simant_data_group, pack, slot: int) -> None:
         simant_data_group.wb(0x2B78 + slot, 2)
 
 
+def do_repo_fly(dgroup, simant_data_group, pack, slot: int) -> None:
+    """A yard ant occasionally departs on a "reproductive flight" —
+    vanishes from the yard A-list/life-grid, bumping a per-colony
+    departure counter (each capped at 50 per some outer cycle) and,
+    rarely, an additional milestone counter.
+
+    Recovered from `_DoRepoFly` (SIMANTW.SYM seg6:0D4A, arg slot=[bp+4];
+    NEAR return).
+
+    Gated on a `_SRand32()` roll of exactly `0` (1-in-32) — anything
+    else is a pure no-op. Then requires the slot's OWN colony's
+    departure counter (`pack[0x807A]` black / `[0x9C26]` red) to be
+    `< 50`, or aborts. Clears the slot's caste and its yard life-grid
+    cell — the ant vanishes.
+
+    If `pack[0x80B4] == 2` (an outer game-phase gate): increments that
+    SAME colony counter, then rolls `_SRand16()`; a `0` (1-in-16) bumps
+    a DGROUP milestone counter (`dgroup[0xAC8C]` black / `[0xAC8E]` red)
+    — the real ASM also calls a presentation-only redraw-invalidation
+    stub here (`SIMANT!_InvalQueenStorageDisp`), deliberately NOT
+    ported (no simulation effect, same split as `_FightBalloons`).
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    caste = simant_data_group.rb(0x2F62 + slot)
+    is_red = (caste & 0x80) != 0
+    count_off = 0x9C26 if is_red else 0x807A
+
+    seed, roll32 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 31)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll32 != 0:
+        return
+
+    if pack.rw(count_off) >= 50:
+        return
+
+    simant_data_group.wb(0x2F62 + slot, 0)
+    x = simant_data_group.rb(0x23A4 + slot)
+    y = simant_data_group.rb(0x278E + slot)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
+
+    if pack.rw(0x80B4) != 2:
+        return
+
+    pack.ww(count_off, (pack.rw(count_off) + 1) & 0xFFFF)
+
+    seed, roll16 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 15)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll16 != 0:
+        return
+
+    milestone_off = 0xAC8E if is_red else 0xAC8C
+    dgroup.ww(milestone_off, (dgroup.rw(milestone_off) + 1) & 0xFFFF)
+
+
 def rand_turn(dgroup, simant_data_group, caste_low3: int) -> int:
     """Pick a purely random direction from the caste-mode table — no
     yard-edge handling, no gradient, just a fresh `_SRand8()` roll.

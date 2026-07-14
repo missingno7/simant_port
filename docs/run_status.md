@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.151) — /goal grind: _DoRepoFly — reproductive-flight departure
+- RECOVERED `do_repo_fly` (`_DoRepoFly`, seg6:0D4A, arg slot=[bp+4],
+  NEAR return) — a yard ant occasionally departs on a "reproductive
+  flight": gated on a `_SRand32()` roll of `0` (1-in-32) and the slot's
+  own colony departure counter (`pack[0x807A]` black / `[0x9C26]` red)
+  being `< 50`, clears the slot's caste and yard life-grid cell. If
+  `pack[0x80B4] == 2` (an outer game-phase gate), also increments that
+  SAME colony counter and rolls `_SRand16()`; a further `0` (1-in-16)
+  bumps a DGROUP milestone counter.
+- Caught a real test-infrastructure bug via a genuine crash, not a
+  silent divergence: the FIRST test run failed EVERY case (including
+  the trivial "roll32 nonzero, immediate no-op" one) with `INT 03h ...
+  no Win16 service installed` — traced to forgetting `near=True` on
+  `_run_and_diff_segs` for this NEAR-return routine, which mismatches
+  the sentinel-return convention (pushes a CS word the real `ret near`
+  never pops) and sends the CPU off into garbage code after return. One
+  keyword fix, all 10 cases passed immediately after.
+- The real ASM's rare-milestone branch also calls a presentation-only
+  redraw-invalidation stub (`SIMANT!_InvalQueenStorageDisp`) — omitted,
+  and confirmed harmless by the state-diff itself passing with it
+  un-simulated (same core/presentation split as `_FightBalloons`).
+- 10 cases (5 scenarios × both colonies) — all green after the fix.
+- Suite: simant 1579 (+10), full suite green.
+
 ## 2026-07-14 (cont.150) — /goal grind: _DoRestAnt — a top-level _Do*Ant* orchestrator
 - Dispatched a 6th research survey. Confirmed `_IsThisFood` was already
   a false lead (it's already `is_this_food`, recovered in cont.60) —

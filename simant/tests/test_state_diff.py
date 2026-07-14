@@ -2298,6 +2298,50 @@ def test_dorestant_state_diff_matches_asm(x, y, slot, inside, tile, seed_val,
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _DoRepoFly (seg6:0D4A) — a yard ant departs on a reproductive flight -
+_DOREPOFLY_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map/life + AC8C/AC8E + SRand seed
+    (_SDG, 0x2300, 0x3800),                  # A-list slot fields
+    (_PACK, 0x7200, 0x9E00),                 # 807A/9C26/80B4
+]
+
+
+def _dorepofly_seed(is_red, x, y, seed_val, count, gate_80b4):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(sdg, 0x2F62 + 0, 0x81 if is_red else 0x01)
+        m.mem.wb(sdg, 0x23A4 + 0, x)
+        m.mem.wb(sdg, 0x278E + 0, y)
+        m.mem.ww(pack, 0x9C26 if is_red else 0x807A, count)
+        m.mem.ww(pack, 0x80B4, gate_80b4)
+        m.mem.ww(dg, 0xAC8C, 10)
+        m.mem.ww(dg, 0xAC8E, 20)
+    return seed
+
+
+@pytest.mark.parametrize("is_red", [False, True])
+@pytest.mark.parametrize("seed_val,count,gate_80b4,label", [
+    (0x0001, 5, 2, "roll32-nonzero-noop"),
+    (0x0000, 50, 2, "count-at-cap-noop"),
+    (0x0000, 5, 0, "vanish-only-gate-fails"),
+    (0x4000, 5, 2, "vanish-plus-count-no-milestone"),
+    (0x0000, 5, 2, "vanish-plus-count-plus-milestone"),
+])
+def test_dorepofly_state_diff_matches_asm(is_red, seed_val, count, gate_80b4, label):
+    from simant.recovered.gameplay import do_repo_fly
+    x, y = 20, 25
+    results = _run_and_diff_segs(
+        6, 0xD4A, (0,),
+        lambda d, s, p: do_repo_fly(d, s, p, 0),
+        _DOREPOFLY_REGIONS, near=True,
+        seed_fn=_dorepofly_seed(is_red, x, y, seed_val, count, gate_80b4))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DOREPOFLY_REGIONS):
+        assert asm_after == rec_after, (
+            f"is_red={is_red} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.
