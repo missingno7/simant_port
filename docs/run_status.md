@@ -1,5 +1,19 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.60) — recovered _IsThisFood; completes the _IsThis* family
+- RECOVERED `_IsThisFood` (seg5:5F04): plane<=1 tail-calls the recovered
+  `_IsItFood` (world-state driven); plane>1 is the yard nest-food band 0x10..0x13.
+  Pure is_this_food(plane, tile, inside); the island replicates _IsItFood's
+  residue on the nest path (dx=tile, es=world selector) and dx=result on the yard
+  path.  Completes the _IsThis* classification family (egg/grass/pebble/food).
+  18 A/B cases green.  Islands 62 -> 63.  Suite: simant 547.
+- NOTE: re-synced after a prior compacted context — _GetDir/_GetDis/_SGetDis/
+  _GetLife + the bridge/dgroup_view.py state seam were already recovered.  The
+  clean-leaf phase is nearly done; the remaining sim routines (_IsNotObstacle,
+  _IsClearTile, _IsItAHole, _TileCanBeMovedOn) are COMPOUND (multi-plane map+life
+  reads, sub-call residues, a hardcoded world selector 0x5EF3) — each a careful
+  map/life-reading island, the next phase.
+
 ## 2026-07-14 (cont.59) — FIXED OrphanReturnError: crash snapshots dropped the callback frame
 - The owner resumed crash_003251 (the prior CallbackOverrun crash snapshot),
   played through game-over -> Quick Start, and hit `OrphanReturnError` at 455M.
