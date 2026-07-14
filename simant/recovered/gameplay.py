@@ -529,6 +529,136 @@ def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     dgroup.wb(LIFE_PLANE_BASE[2] + x + (y << 6), 0)
 
 
+def _colony_decay_linear(view, base: int) -> None:
+    """Shared body of colony_smell_decay_[br]n: decrement every nonzero cell of
+    a 64x32 (2048-cell) half-res scent grid by 1 (floor at 0, via an explicit
+    nonzero guard — decrementing an already-0 byte would underflow to 0xFF)."""
+    for i in range(0x800):
+        v = view.rb(base + i)
+        if v != 0:
+            view.wb(base + i, v - 1)
+
+
+def colony_smell_decay_bn(simant_data_group) -> None:
+    """Decay the black colony's NEST home-scent grid by 1/tick (floor 0).
+
+    Recovered from `_ColonySmellBN` (SIMANTW.SYM seg6:92AA).  A 64x32 half-res
+    grid at `simant_data_group[0x62D2 .. +0x800)`.
+    """
+    _colony_decay_linear(simant_data_group, 0x62D2)
+
+
+def colony_smell_decay_rn(simant_data_group) -> None:
+    """The red-colony twin of `colony_smell_decay_bn` (grid at [0x72D2..)).
+
+    Recovered from `_ColonySmellRN` (SIMANTW.SYM seg6:92D8).
+    """
+    _colony_decay_linear(simant_data_group, 0x72D2)
+
+
+def _colony_decay_exponential(view, base: int) -> None:
+    """Shared body of colony_smell_decay_[br]t: halve every cell of a 64x32
+    half-res TRAIL scent grid (new = v - (v >> 1), i.e. ceil(v/2)); a cell
+    already below 8 snaps straight to 0 instead of decaying gradually."""
+    for i in range(0x800):
+        v = view.rb(base + i)
+        view.wb(base + i, 0 if v < 8 else v - (v >> 1))
+
+
+def colony_smell_decay_bt(simant_data_group) -> None:
+    """Decay the black colony's TRAIL scent grid (exponential; grid at
+    [0x6AD2..), see `_colony_decay_exponential`).
+
+    Recovered from `_ColonySmellBT` (SIMANTW.SYM seg6:9306).
+    """
+    _colony_decay_exponential(simant_data_group, 0x6AD2)
+
+
+def colony_smell_decay_rt(simant_data_group) -> None:
+    """The red-colony twin of `colony_smell_decay_bt` (grid at [0x7AD2..)).
+
+    Recovered from `_ColonySmellRT` (SIMANTW.SYM seg6:9344).
+    """
+    _colony_decay_exponential(simant_data_group, 0x7AD2)
+
+
+def _jam_scent(view, base: int, x: int, y: int, value: int) -> None:
+    """Shared body of jam_scent_{b,r}{n,t}: set-if-greater a cell on a 64x32
+    half-res scent grid at `base`.  Cell = `((x & 0xFFFE) << 4) + (y >> 1)`
+    (arithmetic shift on y) — equal to `(x >> 1) * 32 + (y >> 1)` for
+    non-negative x, matching the colony_smell_decay_* iteration order.  Only
+    writes when `value` is (signed) greater than the existing cell; the stored
+    value is truncated to a byte.
+    """
+    idx = ((x & 0xFFFE) << 4) + (_sx16(y) >> 1)
+    if _sx16(view.rb(base + idx)) < _sx16(value):
+        view.wb(base + idx, value & 0xFF)
+
+
+def jam_scent_bn(simant_data_group, x: int, y: int, value: int) -> None:
+    """Jam the black colony's NEST scent (grid at [0x62D2..), see `_jam_scent`).
+
+    Recovered from `_JamScentBN` (SIMANTW.SYM seg6:94B6, args x, y, value).
+    """
+    _jam_scent(simant_data_group, 0x62D2, x, y, value)
+
+
+def jam_scent_rn(simant_data_group, x: int, y: int, value: int) -> None:
+    """The red-colony twin of `jam_scent_bn` (grid at [0x72D2..)).
+
+    Recovered from `_JamScentRN` (SIMANTW.SYM seg6:94F6, args x, y, value).
+    """
+    _jam_scent(simant_data_group, 0x72D2, x, y, value)
+
+
+def jam_scent_bt(simant_data_group, x: int, y: int, value: int) -> None:
+    """Jam the black colony's TRAIL scent (grid at [0x6AD2..)).
+
+    Recovered from `_JamScentBT` (SIMANTW.SYM seg6:9536, args x, y, value).
+    """
+    _jam_scent(simant_data_group, 0x6AD2, x, y, value)
+
+
+def jam_scent_rt(simant_data_group, x: int, y: int, value: int) -> None:
+    """The red-colony twin of `jam_scent_bt` (grid at [0x7AD2..)).
+
+    Recovered from `_JamScentRT` (SIMANTW.SYM seg6:9576, args x, y, value).
+    """
+    _jam_scent(simant_data_group, 0x7AD2, x, y, value)
+
+
+def alarm_here(simant_data_group, x: int, y: int, delta: int) -> int:
+    """Add `delta` to the alarm level at (x, y), clamped to a max of 200
+    (0xC8) but with NO lower clamp — a large negative delta wraps the stored
+    byte, matching the ASM exactly (only the upper bound is checked before the
+    byte-truncating store).  Grid cell = `((x>>1)<<5) + (y>>1)` (arithmetic
+    shifts) on the 64x32 half-res alarm grid at `simant_data_group[0x52D2..)`.
+    Returns the stored (post-clamp, post-truncation) byte value.
+
+    Recovered from `_AlarmHere` (SIMANTW.SYM seg6:943C, args x, y, delta).
+    """
+    idx = ((_sx16(x) >> 1) << 5) + (_sx16(y) >> 1)
+    summed = (simant_data_group.rb(0x52D2 + idx) + delta) & 0xFFFF
+    v = 0xC8 if _sx16(summed) > 0xC8 else summed
+    stored = v & 0xFF
+    simant_data_group.wb(0x52D2 + idx, stored)
+    return stored
+
+
+def alarm_here2(simant_data_group, x: int, y: int, value: int) -> None:
+    """Set-if-not-less the alarm level at (x, y) to `value` (same grid as
+    `alarm_here`): only overwrites when the existing (always non-negative
+    byte) cell is <= `value` (signed compare); the stored value is truncated
+    to a byte.
+
+    Recovered from `_AlarmHere2` (SIMANTW.SYM seg6:947E, args x, y, value).
+    """
+    idx = ((_sx16(x) >> 1) << 5) + (_sx16(y) >> 1)
+    existing = simant_data_group.rb(0x52D2 + idx)
+    if _sx16(existing) <= _sx16(value):
+        simant_data_group.wb(0x52D2 + idx, value & 0xFF)
+
+
 def kill_tail_r(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a red-colony ant's tail segment from the sim — the twin of
     `kill_tail_b` on the red colony's per-ant fields and life plane 3.

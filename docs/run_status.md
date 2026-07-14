@@ -1,6 +1,37 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-14 (cont.73) — /goal grind: _KillTailB/R — the per-ant record array
+## 2026-07-14 (cont.74) — /goal grind: the full scent/alarm pheromone system (10 fns)
+- RECOVERED the whole pheromone/alarm subsystem `_DoForageAnt`/`_DoRandAntA` feed
+  on: `_ColonySmellB/RN`, `_ColonySmellB/RT`, `_JamScentB/RN`, `_JamScentB/RT`,
+  `_AlarmHere`, `_AlarmHere2` (seg6:92AA/92D8/9306/9344/94B6/94F6/9536/9576/
+  943C/947E).  All operate on SIMANT_DATA_GROUP-resident 64x32 half-res grids:
+    - Colony smell (NEST): linear -1/tick decay, floor 0 (grids @0x62D2 B /
+      0x72D2 R) — a guarded nonzero check (naive dec would underflow to 0xFF).
+    - Colony smell (TRAIL): exponential halving decay `v - (v>>1)`, snapping to
+      0 below 8 (grids @0x6AD2 B / 0x7AD2 R) — a visibly different decay curve
+      from the nest variant, confirmed from the ASM branch structure, not
+      assumed.
+    - JamScent: "set if greater" at cell `((x&0xFFFE)<<4)+(y>>1)` on the SAME
+      grids the ColonySmell family decays (shared base offsets, confirmed).
+    - AlarmHere: add a delta to a cell (grid @0x52D2), clamped to <=200 but
+      with NO LOWER CLAMP — a large negative delta wraps the stored byte
+      (matches the ASM's cmp/jg exactly: only checks the upper bound before
+      the byte-truncating store).  AlarmHere2: "set if not less".
+  All ants-index/coordinate math done via a shared `_sx16` signed-word helper
+  (added to gameplay.py) for exact SAR/CMP fidelity across the full word range.
+- HARNESS FIX: found and fixed a real gap — `_run_and_diff_segs` always pushed
+  a FAR return frame (CS+IP), but most of this family returns via a NEAR `ret`
+  (pops IP only; CS unchanged) since they're called from OTHER seg6 routines in
+  the SAME segment.  Added a `near=True` mode (push IP only; completion check is
+  IP-only, CS assumed unchanged).  _JamScentBT is the one FAR-retf outlier in an
+  otherwise-near family — confirmed per-routine from the actual ASM ending, not
+  assumed uniform.
+- 44 new state-diff cases green.  Suite: simant 793.
+- Continuing per /goal.  These are DIRECT AI inputs (_DoForageAnt/_DoRandAntA
+  read the smell grids via _GetSmellT-family accessors, not yet recovered) —
+  next candidates: _FindInAList/BList/RList (ant-list search, read-only —
+  likely predicate-tier, quick), then _AddAntToAList/BList/RList (list insert).
+
 - RECOVERED `kill_tail_b`/`kill_tail_r` (seg6:42B0 / 6762): clear an ant's
   has-tail flag and clear the corresponding life-grid cell.  DISCOVERS the
   per-ant record layout in SIMANT_DATA_GROUP: parallel flat arrays indexed by

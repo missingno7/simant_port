@@ -89,7 +89,8 @@ def _run_and_diff(seg, off, args, apply_recovered, *, seed=None, seed_fn=None,
     return asm_after[:SIM_HI], bytes(rec[:SIM_HI])
 
 
-def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None):
+def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None,
+                       near=False):
     """Like `_run_and_diff`, but for a routine that mutates through MULTIPLE
     fixed NE data segments (e.g. via a DGROUP pointer-global into
     SIMANT_DATA_GROUP/PACK — see `hooks.SIMANT_DATA_GROUP_SEG_INDEX`/
@@ -99,6 +100,11 @@ def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None):
     one `ByteBackend` per region, positional, in `regions` order, each addressed
     by the SAME real offsets the ASM uses (so `view.rw(0x8A5E)` reads the byte at
     that real offset within its segment, not window-relative index 0).
+
+    `near=True` for a routine that returns via a NEAR `ret` (pops only IP, CS
+    unchanged) rather than a far `retf` — common for calls between routines in
+    the SAME NE segment.  A near-return routine only needs SENT_IP pushed (no
+    return CS slot), and the completion check is IP-only (CS never changes).
 
     Returns a list of (label, asm_window, recovered_window) for each region.
     """
@@ -116,13 +122,15 @@ def _run_and_diff_segs(seg, off, args, apply_recovered, regions, *, seed=None):
     s.sp = 0xFF00
     s.cs, s.ip = m.seg_bases[seg], off
     sp = s.sp
-    for v in (*reversed(args), SENT_CS, SENT_IP):
+    tail = (SENT_IP,) if near else (SENT_CS, SENT_IP)
+    for v in (*reversed(args), *tail):
         sp = (sp - 2) & 0xFFFF
         m.mem.ww(s.ss, sp, v & 0xFFFF)
     s.sp = sp
+    target = (s.cs & 0xFFFF, SENT_IP) if near else (SENT_CS, SENT_IP)
     for _ in range(50_000):
         m.cpu.step()
-        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == target:
             break
     else:
         raise AssertionError(f"ASM {seg}:{off:#06x} did not return")
@@ -335,6 +343,106 @@ def test_killtailr_state_diff_matches_asm(ant_idx, x, y, flag):
                                  _KILLTAILR_REGIONS)
     for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _KILLTAILR_REGIONS):
         assert asm_after == rec_after, f"{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- Colony scent decay (seg6:92AA/92D8/9306/9344) — no-arg grid tick ------
+# Each decays a 64x32 (0x800-byte) half-res scent grid in SIMANT_DATA_GROUP.
+_SCENT_SPAN = 0x800
+
+
+@pytest.mark.parametrize("routine,off,base,fn_name", [
+    ("_ColonySmellBN", 0x92AA, 0x62D2, "colony_smell_decay_bn"),
+    ("_ColonySmellRN", 0x92D8, 0x72D2, "colony_smell_decay_rn"),
+    ("_ColonySmellBT", 0x9306, 0x6AD2, "colony_smell_decay_bt"),
+    ("_ColonySmellRT", 0x9344, 0x7AD2, "colony_smell_decay_rt"),
+])
+def test_colonysmell_decay_state_diff_matches_asm(routine, off, base, fn_name):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    m = runtime.create_machine()
+    sdg = m.seg_bases[_SDG]
+    # a mixed pattern: zeros, small values (<8), and larger values, covering
+    # every branch of both the linear and exponential decay curves.
+    for i in range(_SCENT_SPAN):
+        m.mem.wb(sdg, base + i, [0, 1, 7, 8, 9, 100, 255, 3][i % 8])
+
+    results = _run_and_diff_segs(6, off, (), lambda s: fn(s),
+                                 [(_SDG, base, base + _SCENT_SPAN)], near=True)
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, f"{routine}: {_first_diff(asm_after, rec_after, base)}"
+
+
+# ---- JamScent family (seg6:94B6/94F6/9536/9576) — set-if-greater a cell ----
+# _JamScentBT is the one FAR (`retf`) outlier of this family; the rest are NEAR.
+_JAM_REGION_SPAN = 0x900   # a 64x32 grid is 0x800 bytes; pad for the idx formula
+
+
+@pytest.mark.parametrize("routine,off,base,fn_name,near", [
+    ("_JamScentBN", 0x94B6, 0x62D2, "jam_scent_bn", True),
+    ("_JamScentRN", 0x94F6, 0x72D2, "jam_scent_rn", True),
+    ("_JamScentBT", 0x9536, 0x6AD2, "jam_scent_bt", False),
+    ("_JamScentRT", 0x9576, 0x7AD2, "jam_scent_rt", True),
+])
+@pytest.mark.parametrize("x,y,value,existing", [
+    (0, 0, 50, 10), (1, 1, 50, 10), (126, 62, 200, 199), (0, 63, 0, 5),
+    (64, 32, 255, 0), (32, 16, 5, 5), (32, 16, 4, 5),
+])
+def test_jamscent_state_diff_matches_asm(routine, off, base, fn_name, near,
+                                         x, y, value, existing):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    m = runtime.create_machine()
+    sdg = m.seg_bases[_SDG]
+    idx = ((x & 0xFFFE) << 4) + (y >> 1)
+    m.mem.wb(sdg, base + idx, existing)
+
+    results = _run_and_diff_segs(6, off, (x, y, value),
+                                 lambda s: fn(s, x, y, value),
+                                 [(_SDG, base, base + _JAM_REGION_SPAN)], near=near)
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, f"{routine}: {_first_diff(asm_after, rec_after, base)}"
+
+
+# ---- _AlarmHere / _AlarmHere2 (seg6:943C / 947E) — alarm grid update -------
+_ALARM_BASE = 0x52D2
+
+
+@pytest.mark.parametrize("x,y,delta,existing", [
+    (0, 0, 10, 5), (10, 10, -5, 20), (126, 62, 1000, 0), (0, 0, -1000, 5),
+    (32, 16, 0, 100), (64, 32, 200, 0),
+])
+def test_alarmhere_state_diff_matches_asm(x, y, delta, existing):
+    from simant.recovered.gameplay import alarm_here
+    m = runtime.create_machine()
+    sdg = m.seg_bases[_SDG]
+    idx = ((x >> 1) << 5) + (y >> 1)
+    m.mem.wb(sdg, _ALARM_BASE + idx, existing)
+
+    results = _run_and_diff_segs(6, 0x943C, (x, y, delta),
+                                 lambda s: alarm_here(s, x, y, delta),
+                                 [(_SDG, _ALARM_BASE, _ALARM_BASE + _JAM_REGION_SPAN)],
+                                 near=True)
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, _first_diff(asm_after, rec_after, _ALARM_BASE)
+
+
+@pytest.mark.parametrize("x,y,value,existing", [
+    (0, 0, 50, 10), (10, 10, 5, 20), (126, 62, 200, 199), (0, 0, 5, 5),
+    (32, 16, 0, 100), (64, 32, 255, 0),
+])
+def test_alarmhere2_state_diff_matches_asm(x, y, value, existing):
+    from simant.recovered.gameplay import alarm_here2
+    m = runtime.create_machine()
+    sdg = m.seg_bases[_SDG]
+    idx = ((x >> 1) << 5) + (y >> 1)
+    m.mem.wb(sdg, _ALARM_BASE + idx, existing)
+
+    results = _run_and_diff_segs(6, 0x947E, (x, y, value),
+                                 lambda s: alarm_here2(s, x, y, value),
+                                 [(_SDG, _ALARM_BASE, _ALARM_BASE + _JAM_REGION_SPAN)],
+                                 near=True)
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, _first_diff(asm_after, rec_after, _ALARM_BASE)
 
 
 def _sx(v):
