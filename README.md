@@ -66,6 +66,13 @@ flowchart TD
     tmp["_TallyModePop"]
     mri["_MakeRedInitiator"]
   end
+  subgraph L3p["pathfinding-selection tier (done)"]
+    tcbmo["_TileCanBeMovedOn"]
+    gmbd["_GetMyBestDirs"]
+    grbd["_GetRedBestDirs"]
+    gmrd["_GetMyRandDirs"]
+    cmbd["_CheckMyBestDirs"]
+  end
   subgraph L3["helpers + pathfinding core"]
     gbd["_GetBestDir"]
     gmap["_GetMap"]
@@ -95,6 +102,11 @@ flowchart TD
   ihole --> iva & ifood
   tmp --> mri
   mri --> fial
+  gmbd --> tcbmo & gdis
+  grbd --> tcbmo & gdis
+  gmrd --> tcbmo & gdis
+  cmbd --> gmbd
+  dfor -.-> gmbd
 
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
@@ -102,6 +114,7 @@ flowchart TD
   class gmap,ihole,ifood,ipeb,gdis,glife,gbd,inobs done;
   class iva,idirt,iyel,srand load;
   class fial,aal,rfal,cla,csd,jsc,tmp,mri done;
+  class tcbmo,gmbd,grbd,gmrd,cmbd done;
   class das,dab,daa,dnb,dfor,ddig front;
 ```
 
@@ -109,8 +122,8 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
-| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry | 57 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop **done**; forage/dig/nest behaviors frontier | 26 / 123 | mutator tier **done** |
+| `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry | 58 / 169 | foundation **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding **done**; forage/dig/nest behaviors frontier | 32 / 123 | selection tier **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop | 4 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime + tile expanders (MakeTable / Xfer) | 23 / 248 | hot paths lifted |
 
@@ -130,10 +143,18 @@ colony twins), the scent/pheromone grids (`_ColonySmellDecayBN/RN/BT/RT`,
 `_JamScentBN/RN/BT/RT`, `_AlarmHere`, `_DecTSmell`, `_GetSmellT`, `_FillHolesBN/RN`),
 and the mode-population/red-initiator subsystem (`_ClrModePop`, `_TallyModePop`,
 `_MakeRedInitiator`, `_KillTailB/R`, `_DropFoodB/R`, `_DrownBList/RList`,
-`_KillSpider`, `_SetAntIndex`). Missing is the per-ant **behavior tier** in `seg6`
-(`_DoForageAnt`, `_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`) that composes these
-mutators into an actual decision, and the fight/RNG helpers (`_GetWinner`). That's
-the next milestone toward the [VM-less native port](docs/vmless_port.md).
+`_KillSpider`, `_SetAntIndex`). Also new: the full **pathfinding-selection
+tier** above `_GetBestDir` — `_TileCanBeMovedOn` (the movement/self-exclusion
+predicate `_GetMyBestDirs`/`_GetRedBestDirs` share), `_GetMyBestDirs` /
+`_GetRedBestDirs` (yellow-ant and red-colony neighbour selection), and the two
+routines that compose them — `_GetMyRandDirs` (stateful sticky-direction
+search across ticks via far-pointer in/out state) and `_CheckMyBestDirs`
+(walks up to 64 steps toward a target). Missing is the per-ant **behavior
+tier** in `seg6` (`_DoForageAnt`, `_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`)
+that composes all of this into an actual decision, the movement-EXECUTION
+chain (`_TryMoveDirB/R` -> `_GetOutB/R` -> the dig subsystem), and combat
+(`_YellowFight`/`_GetWinner`). That's the next milestone toward the
+[VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 
