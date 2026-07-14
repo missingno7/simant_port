@@ -304,6 +304,23 @@ def is_it_digable(plane: int, tile: int) -> int:
     return 1 if 0x1C <= tile <= 0x1F else 0
 
 
+def is_it_a_hole(plane: int, x: int, y: int, tile: int, inside: bool) -> int:
+    """Whether cell (plane, x, y) is a hole, on any plane.
+
+    Recovered from `_IsItAHole` (SIMANTW.SYM seg5:9B4A): on the nest planes
+    (plane <= 1) it defers to `is_it_hole` (plane-0 yard map + the inside flag);
+    on the yard planes (plane > 1) a hole is the top row (y <= 0, i.e. y == 0 for
+    a valid cell) whose plane tile is exactly 0x18.  `tile` is the relevant map
+    read (plane-0 for the nest planes, the plane's own array for the yard).
+    Returns 1 / 0.
+    """
+    if plane <= 1:
+        return is_it_hole(tile, inside)
+    if y > 0:
+        return 0
+    return 1 if tile == 0x18 else 0
+
+
 def get_dir(x1: int, y1: int, x2: int, y2: int) -> int:
     """Compass direction (0..8) from point 1 to point 2.
 

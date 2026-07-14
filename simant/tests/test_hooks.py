@@ -2182,6 +2182,53 @@ def map_cell_offset_ok(plane, x, y):
     return map_cell_offset(plane, x, y) is not None
 
 
+# ---- _IsItAHole (seg5:9B4A) — hole on any plane (delegates _IsItHole) --------
+def _run_isitahole(with_island, plane, x, y, inside, tile):
+    from simant.recovered.gameplay import map_cell_offset
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    DG = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = DG
+    world = m.mem.rw(DG, hooks.ISITFOOD_WORLD_SEG_G)
+    m.mem.ww(world, hooks.ISITFOOD_INSIDE_FLAG_OFF, 1 if inside else 0)
+    # plane<=1 reads the plane-0 map; plane>1 reads its own plane
+    seed_plane = 0 if plane <= 1 else plane
+    off = map_cell_offset(seed_plane, x, y)
+    if off is not None:
+        m.mem.wb(DG, off & 0xFFFF, tile)
+    s.sp = 0xFF00
+    s.ax, s.bx, s.cx, s.dx = 0xA1A1, 0xB1B1, 0xC1C1, 0xD1D1
+    s.si, s.di, s.bp, s.es = 0x1111, 0x2222, 0x3333, 0x9999
+    s.cs, s.ip = m.seg_bases[hooks.ISITAHOLE_SEG_INDEX], hooks.ISITAHOLE_OFF
+    sp = s.sp
+    for v in (y, x, plane, SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    _step_to_return(m, s, with_island, "_IsItAHole")
+    return _pred_regs(s)
+
+
+@pytest.mark.parametrize("inside", [False, True])
+@pytest.mark.parametrize("plane,x,y,tile", [
+    (0, 0x10, 0x10, 0x80), (0, 0x10, 0x10, 0x50), (1, 0x10, 0x10, 0x00),
+    (0, 0x80, 0x10, 0x00),                                  # nest: invalid coord
+    (2, 0x10, 0x00, 0x18), (3, 0x10, 0x00, 0x18),           # yard hole (top row)
+    (2, 0x10, 0x00, 0x19),                                  # yard non-hole
+    (2, 0x10, 0x10, 0x18),                                  # yard y>0 -> 0
+    (2, 0x10, -1, 0x18),                                    # yard y<0 invalid
+    (2, 0x40, 0x00, 0x18),                                  # yard x invalid
+    (4, 0x10, 0x00, 0x18),                                  # plane>3
+])
+def test_isitahole_island_matches_asm(plane, x, y, tile, inside):
+    asm = _run_isitahole(False, plane, x, y, inside, tile)
+    isl = _run_isitahole(True, plane, x, y, inside, tile)
+    assert isl == asm, f"(p={plane},{x:#x},{y},t={tile:#x},in={inside}): {isl} != {asm}"
+
+
 # ---- _IsClearTile (seg5:5B2C) — map passable + no blocking ant ---------------
 def _run_iscleartile(with_island, plane, x, y, map_tile, life):
     from simant.recovered.gameplay import life_cell_offset, map_cell_offset

@@ -1476,6 +1476,68 @@ def _make_iscleartile_island(machine):
     return island
 
 
+# -- _IsItAHole (seg5:9B4A) — is a cell a hole on any plane? -------------------
+# plane<=1 tail-calls _IsItHole(x, y) — so it leaves _IsItHole's residue exactly.
+# plane>1: yard-plane hole (y<=0 top row, plane tile == 0x18).  Residue:
+#   y>0            -> ax=0, dx=plane.
+#   coord-invalid  -> ax=0, dx=0xFFFF, cx=0xFFFF.
+#   plane>3 (ok)   -> ax=0, dx=0xFFFF, cx=0.
+#   valid 2/3      -> ax=(tile==0x18), dx=tile, cx=0, bx=x<<6.
+# es preserved on the yard branch; si/di push/pop'd.
+ISITAHOLE_SEG_INDEX = 5
+ISITAHOLE_OFF = 0x9B4A
+ISITAHOLE_SIG = bytes.fromhex("c802000057568b560683fa017f12ff760aff7608")
+
+
+def _make_isitahole_island(machine):
+    from .recovered.gameplay import (is_it_hole, is_valid_a, is_valid_b,
+                                     map_cell_offset)
+
+    def _sx(v):
+        return v - 0x10000 if v & 0x8000 else v
+
+    def island(cpu) -> None:
+        m, s = cpu.mem, cpu.s
+        ss, sp = s.ss, s.sp
+        ret_ip, ret_cs = m.rw(ss, sp), m.rw(ss, (sp + 2) & 0xFFFF)
+        plane_w = m.rw(ss, (sp + 4) & 0xFFFF)
+        plane = _sx(plane_w)
+        x_w = m.rw(ss, (sp + 6) & 0xFFFF)
+        y_w = m.rw(ss, (sp + 8) & 0xFFFF)
+        x, y = _sx(x_w), _sx(y_w)
+        if plane <= 1:                                # tail-call _IsItHole(x, y)
+            if not is_valid_a(x, y):
+                s.ax = 0
+                s.dx = x_w if not 0 <= x <= 0x7F else y_w
+            else:
+                world_seg = m.rw(s.ds, ISITFOOD_WORLD_SEG_G)
+                inside = m.rw(world_seg, ISITFOOD_INSIDE_FLAG_OFF) != 0
+                tile = m.rb(s.ds, map_cell_offset(0, x, y) & 0xFFFF)
+                s.ax = is_it_hole(tile, inside)
+                s.es = world_seg
+                s.bx = (x << 6) & 0xFFFF
+                s.dx = tile if inside else y_w
+        elif y > 0:                                   # yard: below the top row
+            s.ax = 0
+            s.dx = plane_w
+        else:
+            off = map_cell_offset(plane, x, y)        # plane>1 -> is_valid_b
+            if off is None:                           # coord-invalid or plane>3
+                s.ax = 0
+                s.dx = 0xFFFF
+                s.cx = 0 if is_valid_b(x, y) else 0xFFFF
+            else:
+                tile = m.rb(s.ds, off & 0xFFFF)
+                s.ax = 1 if tile == 0x18 else 0
+                s.dx = tile
+                s.cx = 0
+                s.bx = (x << 6) & 0xFFFF
+        s.sp = (sp + 4) & 0xFFFF
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 # -- _IsItHole (seg6:2CC0) — is this yard cell a nest hole/entrance? -----------
 # Bounds-checks (x, y) via _IsValidA, then reads the plane-0 yard map and the
 # world inside/outside flag ([0xC320]:[0x9B6E]).  Hole = 0x80..0x8F inside,
@@ -2399,6 +2461,8 @@ _ISLANDS = [
      lambda machine, off: _make_isvalidloc_island(machine), "_IsValidLocation"),
     (ISITDIGABLE_SEG_INDEX, ISITDIGABLE_OFF, ISITDIGABLE_SIG,
      lambda machine, off: _make_isitdigable_island(machine), "_IsItDigable"),
+    (ISITAHOLE_SEG_INDEX, ISITAHOLE_OFF, ISITAHOLE_SIG,
+     lambda machine, off: _make_isitahole_island(machine), "_IsItAHole"),
     (ISITHOLE_SEG_INDEX, ISITHOLE_OFF, ISITHOLE_SIG,
      lambda machine, off: _make_isithole_island(machine), "_IsItHole"),
     (GETMAP_SEG_INDEX, GETMAP_OFF, GETMAP_SIG,
@@ -2446,7 +2510,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 67
+EXPECTED_ISLAND_COUNT = 68
 
 
 def install(machine) -> int:
