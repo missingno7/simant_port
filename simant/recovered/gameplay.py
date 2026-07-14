@@ -2349,6 +2349,91 @@ def make_red_queen(dgroup, simant_data_group, pack, x: int, y: int, direction: i
     pack.ww(0x79DC, (pack.rw(0x79DC) + 1) & 0xFFFF)
 
 
+def place_red_queen(dgroup, simant_data_group, pack) -> None:
+    """Carve a tunnel from deep in the red nest up toward the surface and
+    found a red queen at its far end — the scenario-init/no-args sibling of
+    `make_red_queen` (which takes an already-chosen position; this routine
+    SEARCHES for one via a random walk, then inlines the same
+    dig-plus-two-list-records tail).
+
+    Recovered from `_PlaceRedQueen` (SIMANTW.SYM seg7:67DA, NO args; FAR
+    return).  Composes `dig_tile_r` (seg5:21DE, called up to 15x) and
+    `add_ant_to_r_list` (seg5:2FA4, called 2x); consumes `_SRand4()` once
+    and `_SRand1(3)` up to 9 times from the shared LFSR seed.  Verified
+    against an instrumented real-ASM trace of every `_AddAntToRList` call's
+    actual arguments — a hand-derivation from the disassembly alone missed
+    a hardcoded `+2` on x buried in a `lea ax,[si+2]` between the SDG
+    scratch-store and the compass-offset digs; the trace caught it directly.
+
+    - Rolls `_SRand4() + 7` (7..10) as a row count, then digs a wandering
+      vertical tunnel from `(x=0x20, y=1)` up to `y=count-1`: each step
+      digs the current cell, then nudges `x` by `_SRand1(3)-1` (-1, 0, or
+      +1), keeping the nudge only if it stays within `8..0x38` (otherwise
+      the wander holds its position for that step).
+    - Digs 2 more cells stepping diagonally (`x+=1, y+=1` each time), then
+      ONE more at the final diagonal position — that final `(x, y)` is
+      recorded into SIMANT_DATA_GROUP scratch fields `[0x8366]`/`[0x8368]`
+      (the red-colony analogue of `make_new_hole_b`'s black-side
+      `[0x835A]`/`[0x835C]` "last placed" record).
+    - Digs ONE more cell at `x+2` (same y) — a genuinely separate
+      hardcoded offset, not the compass table — and from THAT bumped `x`
+      (not the original), digs 2 more cells offset by 1x and 2x the FIXED
+      compass-direction-6 delta (`simant_data_group[0x06]`/`[0x0E]` — not
+      caller-supplied, unlike `make_red_queen`'s direction parameter).
+    - Appends two ant-list records, also anchored on the bumped `x+2`
+      (per the coordinate-role-swap convention), with LITERAL castes
+      `0xE2`/`0xEA` (not a `direction + constant` formula, since there's
+      no direction parameter here) and the SAME `field_c=9`, `field_e=0`
+      as `make_red_queen`.
+    - Finally increments the SAME `pack[0x79DC]` red-queen counter
+      `make_red_queen` uses.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll4 = srand_pow2(seed, 3)
+    count = roll4 + 7
+
+    x = 0x20
+    for i in range(1, count):
+        dig_tile_r(dgroup, simant_data_group, pack, x, i)
+        seed, roll3 = srand1(seed, 3)
+        nx = x + (roll3 - 1)
+        if 8 <= nx <= 0x38:
+            x = nx
+    y = count
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    for _ in range(2):
+        dig_tile_r(dgroup, simant_data_group, pack, x, y)
+        x += 1
+        y += 1
+    dig_tile_r(dgroup, simant_data_group, pack, x, y)
+
+    simant_data_group.ww(0x8366, x & 0xFFFF)
+    simant_data_group.ww(0x8368, y & 0xFFFF)
+
+    x2 = x + 2
+    dig_tile_r(dgroup, simant_data_group, pack, x2, y)
+
+    dy6 = sx8(simant_data_group.rb(0x0E))
+    dx6 = sx8(simant_data_group.rb(0x06))
+
+    dig_tile_r(dgroup, simant_data_group, pack, x2 + dx6, y + dy6)
+    dig_tile_r(dgroup, simant_data_group, pack, x2 + 2 * dx6, y + 2 * dy6)
+
+    add_ant_to_r_list(pack, simant_data_group, dgroup, y=x2, x=y,
+                       caste=0xE2, field_c=9, field_e=0)
+    add_ant_to_r_list(pack, simant_data_group, dgroup, y=x2 + dx6, x=y + dy6,
+                       caste=0xEA, field_c=9, field_e=0)
+
+    pack.ww(0x79DC, (pack.rw(0x79DC) + 1) & 0xFFFF)
+
+
 HOLE_EDGE_TILES = (0x19, 0x1A, 0x1C, 0x1F, 0x1E, 0x1D, 0x1B, 0x18)  # dgroup[0x230C..)
 
 

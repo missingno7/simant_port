@@ -584,6 +584,42 @@ def test_makeredqueen_state_diff_matches_asm(x, y, direction, seed_val, count_r)
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _PlaceRedQueen (seg7:67DA) — dig a tunnel + found a red queen, NO args
+_PLACEREDQUEEN_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x58E8, 0xCBF4),
+    (_SDG, 0, 0x8400),   # dig tables + R-list fields + the [0x8366]/[0x8368] scratch
+    (_PACK, 0x7200, 0xA000),
+]
+
+
+def _placeredqueen_seed(seed_val, count_r):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        for off in (0x7A56, 0x9DDC, 0x9DDE, 0x9DE2, 0x9DE4):
+            m.mem.ww(pack, off, 0)
+        m.mem.ww(pack, 0x72CC, count_r)
+        m.mem.ww(pack, 0x79DC, 3)
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,count_r", [
+    (0x1234, 0),
+    (0x0001, 5),          # different SRand4/SRand1 rolls -> different wander/count
+    (0xBEEF, 0x1F3),       # near the R-list 500-slot cap
+])
+def test_placeredqueen_state_diff_matches_asm(seed_val, count_r):
+    from simant.recovered.gameplay import place_red_queen
+    results = _run_and_diff_segs(
+        7, 0x67DA, (),
+        lambda d, s, p: place_red_queen(d, s, p),
+        _PLACEREDQUEEN_REGIONS, seed_fn=_placeredqueen_seed(seed_val, count_r))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _PLACEREDQUEEN_REGIONS):
+        assert asm_after == rec_after, (
+            f"seed={seed_val:#x} count_r={count_r} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _MakeNewHoleB (seg5:1B06) — search + carve a new above-ground hole ---
 _MAKENEWHOLEB_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed

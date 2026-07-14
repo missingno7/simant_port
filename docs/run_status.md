@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.135) — /goal grind: _PlaceRedQueen — scenario-init red queen founding
+- RECOVERED `place_red_queen` (`_PlaceRedQueen`, seg7:67DA, NO args, FAR
+  return) — the scenario-init/no-args sibling of `make_red_queen`: rolls
+  `_SRand4()+7` (7..10) as a row count, digs a wandering vertical tunnel
+  from `(0x20, 1)` (each step nudging x by `_SRand1(3)-1`, clamped to
+  `8..0x38`), steps 2 more cells diagonally, digs one more, records that
+  position into new SDG scratch fields `[0x8366]`/`[0x8368]` (the red
+  analogue of `_MakeNewHoleB`'s `[0x835A]`/`[0x835C]`), then digs 3 more
+  cells and appends 2 ant-list records anchored on a hardcoded `x+2`
+  bump. Composes `dig_tile_r` (up to 15x) and `add_ant_to_r_list` (2x).
+- Caught a real derivation bug via instrumentation, not by re-reading
+  harder: a hand-trace of the disassembly predicted a formula that
+  looked internally consistent but was WRONG — missed that a
+  `lea ax,[si+2]` between the SDG scratch-store and the compass-offset
+  digs permanently bumps x by 2 before every downstream use, including
+  both `_AddAntToRList` calls. First-pass state-diff test caught it (an
+  off-by-2-rows life-plane mismatch), but rather than keep re-deriving
+  by hand, wrote a throwaway script that ran the REAL ASM with a
+  breakpoint at `_AddAntToRList`'s entry to print its actual (y, x,
+  caste, fc, fe) stack args directly, and a second breakpoint at the SDG
+  scratch-store to capture the real si/di — ground truth in two
+  instrumented runs instead of a third manual re-trace. Confirms the
+  session's "verify branch polarity/derivations against a real trace,
+  don't just re-read the listing" discipline generalizes past
+  branch-polarity bugs to plain arithmetic-derivation bugs too.
+- 3 cases (including a near-cap R-list count) — green after the fix.
+- Suite: simant 1425 (+3), full suite green.
+
 ## 2026-07-14 (cont.134) — /goal grind: _MakeBlkQueen/_MakeRedQueen — founding queen chamber
 - RECOVERED `make_blk_queen`/`make_red_queen` (`_MakeBlkQueen`/`_MakeRedQueen`,
   seg7:671A/6906, FAR return, args x=[bp+6]/y=[bp+8]/direction=[bp+10]) —
