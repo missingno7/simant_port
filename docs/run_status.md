@@ -1,5 +1,16 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.119) — /goal grind: _SimEggA — yard egg tick
+- RECOVERED `sim_egg_a` (`_SimEggA`, seg6:0A1C, NEAR return, arg: slot) —
+  a tiny (88-byte) routine, only dependency `_SRand1`. Always stamps the
+  egg's caste onto the yard life grid at its own recorded position (even
+  on a tick where nothing else happens — a redundant-looking but faithful
+  re-stamp), then rolls `_SRand1(200)`; only on an exact `0` does it clear
+  the egg's caste field and its life-grid cell (hatched or died, either
+  way gone).
+- 2 cases (roll misses, roll hits) — ALL GREEN ON THE FIRST RUN.
+- Suite: simant 1312 (+2).
+
 ## 2026-07-14 (cont.118) — /goal grind: _StealFoodB/R — new candidate batch after a fresh survey pass
 - The prior survey's zero-blocker candidate list is now fully closed
   (cont.117). Dispatched a fresh research pass (Explore agent) to find

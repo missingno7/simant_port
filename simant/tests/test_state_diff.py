@@ -1125,6 +1125,36 @@ def test_getwinner_state_diff_matches_asm(cheat_flag, arg_a, arg_b, rand_state,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _SimEggA (seg6:0A1C) — yard egg tick ----------------------------------
+_SIMEGGA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x68E8, 0xCBF4),   # yard life plane + SRand seed
+    (_SDG, 0x2300, 0x3800),                 # A-list fields
+]
+
+
+@pytest.mark.parametrize("slot,a_x,a_y,caste,seed_val,label", [
+    (0x10, 5, 7, 0x81, 0x1234, "roll != 0 -> caste re-stamped, nothing removed"),
+    (0x10, 5, 7, 0x81, 0x0000, "roll == 0 -> egg removed"),
+])
+def test_simegga_state_diff_matches_asm(slot, a_x, a_y, caste, seed_val, label):
+    from simant.recovered.gameplay import sim_egg_a
+
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(sdg, 0x23A4 + slot, a_x)
+        m.mem.wb(sdg, 0x278E + slot, a_y)
+        m.mem.wb(sdg, 0x2F62 + slot, caste)
+
+    results = _run_and_diff_segs(
+        6, 0x0A1C, (slot,),
+        lambda d, s: sim_egg_a(d, s, slot),
+        _SIMEGGA_REGIONS, near=True, seed_fn=seed)
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _SIMEGGA_REGIONS):
+        assert asm_after == rec_after, (
+            f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _StartFightA (seg6:266A) — initiate yard combat ----------------------
 # NEAR call/return. Composes the already-recovered _FindInAList, _GetWinner,
 # and _AlarmHere2.

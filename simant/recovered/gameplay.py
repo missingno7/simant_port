@@ -2726,6 +2726,36 @@ def get_winner(dgroup, simant_data_group, pack, arg_a: int, arg_b: int) -> int:
     return winner
 
 
+def sim_egg_a(dgroup, simant_data_group, slot: int) -> None:
+    """Stamp a yard ("A"-list) egg's caste onto the life grid, and on a
+    1-in-200 roll, remove it (hatched or died — either way, gone).
+
+    Recovered from `_SimEggA` (SIMANTW.SYM seg6:0A1C, NEAR return, arg:
+    slot). Always stamps `simant_data_group[slot].caste` into
+    `LIFE_PLANE_BASE[0]` at the egg's own recorded position — even on a
+    tick where nothing else happens, matching the caste value already
+    displayed there (a redundant-looking but faithful re-stamp). Then
+    rolls `_SRand1(200)`; only on an exact `0` does it clear the egg's
+    caste field and its life-grid cell.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    a_y = simant_data_group.rb(0x278E + slot)
+    caste = simant_data_group.rb(0x2F62 + slot)
+    a_x = simant_data_group.rb(0x23A4 + slot)
+
+    life_off = LIFE_PLANE_BASE[0] + (a_x << 6) + a_y
+    dgroup.wb(life_off, caste)
+
+    seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), 200)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll != 0:
+        return
+
+    simant_data_group.wb(0x2F62 + slot, 0)
+    dgroup.wb(life_off, 0)
+
+
 def do_fight_a(dgroup, simant_data_group, pack, slot: int) -> None:
     """Resolve one tick of combat for a yard ("A"-list) ant: jitter its
     caste, and on a 1-in-16 roll, kill it — recovered from SIMANT1's
