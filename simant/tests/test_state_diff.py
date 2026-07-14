@@ -588,6 +588,26 @@ def test_addanttorlist_state_diff_matches_asm(count):
         assert asm_after == rec_after, f"count={count} {label}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _DecTSmell (seg6:95B6) — single-cell trail-scent decrement -----------
+@pytest.mark.parametrize("x,y,is_red,existing", [
+    (0, 0, 0, 5), (0, 0, 1, 5), (126, 62, 0, 1), (126, 62, 1, 1),
+    (64, 32, 0, 0), (64, 32, 1, 0),   # already-0 cell -> no underflow
+])
+def test_dectsmell_state_diff_matches_asm(x, y, is_red, existing):
+    from simant.recovered.gameplay import dec_t_smell
+    m = runtime.create_machine()
+    sdg = m.seg_bases[_SDG]
+    idx = ((x >> 1) << 5) + (y >> 1)
+    base = 0x7AD2 if is_red else 0x6AD2
+    m.mem.wb(sdg, base + idx, existing)
+
+    results = _run_and_diff_segs(6, 0x95B6, (x, y, is_red),
+                                 lambda s: dec_t_smell(s, x, y, is_red),
+                                 [(_SDG, base, base + _JAM_REGION_SPAN)], near=True)
+    (label, asm_after, rec_after), = results
+    assert asm_after == rec_after, _first_diff(asm_after, rec_after, base)
+
+
 def _sx(v):
     return v - 0x10000 if v & 0x8000 else v
 

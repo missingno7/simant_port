@@ -645,6 +645,23 @@ def add_ant_to_r_list(pack, simant_data_group, dgroup, y: int, x: int,
     pack.ww(0x72CC, (count + 1) & 0xFFFF)
 
 
+def dec_t_smell(simant_data_group, x: int, y: int, is_red) -> None:
+    """Decrement a single cell of a colony's TRAIL scent grid by 1, if nonzero.
+
+    Recovered from `_DecTSmell` (SIMANTW.SYM seg6:95B6, args x=[bp+4], y=[bp+6],
+    is_red=[bp+8]).  Cell = `((x>>1)<<5) + (y>>1)` (arithmetic shifts) on the
+    SAME 64x32 half-res trail grid `jam_scent_bt`/`rt` and
+    `colony_smell_decay_bt`/`rt` operate on — red colony's grid at 0x7AD2,
+    black's at 0x6AD2 (`is_red` selects which; any nonzero value is "true",
+    matching the ASM's `cmp ..., 0`).
+    """
+    idx = ((_sx16(x) >> 1) << 5) + (_sx16(y) >> 1)
+    base = 0x7AD2 if is_red else 0x6AD2
+    v = simant_data_group.rb(base + idx)
+    if v != 0:
+        simant_data_group.wb(base + idx, v - 1)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
