@@ -1,5 +1,32 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.131) — /goal grind: _RaidInB/R — entering the nest with food, round 2 batch COMPLETE
+- RECOVERED `raid_in_b`/`r` (`_RaidInB`/`R`, seg6:3524/5B2A, FAR return,
+  args x/y/exclude_direction) — the entry-side twin of `raid_out_b`/`r`,
+  composing `try_move_dir_b`/`r` and `get_enter_dir_b`/`r` with no new
+  dependencies.
+- If the ant's OWN cell is a food-pile tile: nibbles it (same shape as
+  `_steal_food`/`_eat_food`), then unconditionally sets `field_c=3` and
+  ORs `0x08` into its caste (a "carrying food" bit), re-stamping the
+  updated caste on its CURRENT cell — no movement at all on this path.
+  Otherwise: tries a move biased by `exclude_direction` via a genuinely
+  different roll — `_SRand1(3)` (not `_SRand8`) combined as
+  `(roll + exclude - 2) & 7`; if blocked, tries `get_enter_dir` (falling
+  back to a fresh `_SRand1(8)` — again `_SRand1`, not the pow2-masked
+  `_SRand8`, when it finds nothing); if that's also blocked, gives up on
+  moving and sets `field_c=1` (distinct from the food-pile branch's `3`)
+  with the caste UNCHANGED.
+- 6 cases (all 3 branches x both colonies) — ALL GREEN ON THE FIRST RUN,
+  a full end-to-end composition test of the entire routine.
+- Suite: simant 1411 (+6). **This closes the entire round-2 survey
+  batch** (14 routines: `_CanBeHouseHole`, `_HoleBorder`,
+  `_GetFromAlist`, `_PickupFoodB/R`, `_PlaceEggB/R`, `_ScanForAnts`,
+  `_MakeNewTailB/R`, `_RaidInB/R`, plus `_RaidOutB/R` from earlier).
+  `_DoForageAnt` and the other top-level `_Do*Ant*` behaviors remain
+  blocked on `_YellowFight`/`_DoTroph`'s sound/dialog UI chain,
+  unchanged. A third survey pass would be needed to find the next
+  batch, or this is a natural point to shift focus.
+
 ## 2026-07-14 (cont.130) — /goal grind: _MakeNewTailB/R — append a trailing tail segment
 - RECOVERED `make_new_tail_b`/`r` (`_MakeNewTailB`/`R`, seg6:424A/66FC,
   FAR return, arg: slot) — composes `add_ant_to_b`/`r_list` with no new

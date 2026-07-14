@@ -1015,6 +1015,58 @@ def test_raidoutr_state_diff_matches_asm(tile_at_dest, label):
         assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _RaidInB / _RaidInR (seg6:3524 / 5B2A) — an ant entering the nest with
+# food, or trying to. Composes try_move_dir_b/r + get_enter_dir_b/r; reuses
+# try_move_dir_b/r's own established seed helpers, layering the ant's OWN
+# tile and food-count field on top.
+def _raidin_seed(base_seed_fn, map_base, food_count_off, x, y, own_tile,
+                 food_count):
+    def seed(m):
+        base_seed_fn(m)
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(dg, map_base + (x << 6) + y, own_tile)
+        m.mem.ww(pack, food_count_off, food_count)
+    return seed
+
+
+@pytest.mark.parametrize("own_tile,tile_at_dest,label", [
+    (0x10, 0x40, "own tile is a food pile -> nibble + carry-food stamp, no move"),
+    (0x40, 0x10, "not a food pile, first attempt succeeds -> moves"),
+    (0x40, 0x20, "not a food pile, every neighbour blocked -> field_c=1 fallback stamp"),
+])
+def test_raidinb_state_diff_matches_asm(own_tile, tile_at_dest, label):
+    from simant.recovered.gameplay import raid_in_b
+    x, y, slot, caste, seed_val, exclude = 30, 30, 0, 0x03, 0x1234, 3
+    results = _run_and_diff_segs(
+        6, 0x3524, (x, y, exclude),
+        lambda d, s, p: raid_in_b(d, s, p, x, y, exclude),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_raidin_seed(
+            _trymoveb_seed(x, y, tile_at_dest, slot, caste, seed_val),
+            0x48E8, 0x9EA4, x, y, own_tile, 5))
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("own_tile,tile_at_dest,label", [
+    (0x10, 0x40, "own tile is a food pile -> nibble + carry-food stamp, no move"),
+    (0x40, 0x10, "not a food pile, first attempt succeeds -> moves"),
+    (0x40, 0x20, "not a food pile, every neighbour blocked -> field_c=1 fallback stamp"),
+])
+def test_raidinr_state_diff_matches_asm(own_tile, tile_at_dest, label):
+    from simant.recovered.gameplay import raid_in_r
+    x, y, slot, caste, seed_val, exclude = 30, 30, 0, 0x03, 0x1234, 3
+    results = _run_and_diff_segs(
+        6, 0x5B2A, (x, y, exclude),
+        lambda d, s, p: raid_in_r(d, s, p, x, y, exclude),
+        _TRYMOVE_GETOUT_REGIONS,
+        seed_fn=_raidin_seed(
+            _trymove_seed(x, y, tile_at_dest, slot, caste, seed_val),
+            0x58E8, 0x72DE, x, y, own_tile, 5))
+    for (label2, asm_after, rec_after), (_si, lo, _hi) in zip(results, _TRYMOVE_GETOUT_REGIONS):
+        assert asm_after == rec_after, f"{label} {label2}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _QueenMoveB / _QueenMoveR (seg6:4154 / 6606) — queen movement + trail-
 # marker relocation. Composes get_best_dir, try_move_dir_b/r, find_in_b/
 # r_list -- all already recovered. NOT byte-symmetric between colonies (the

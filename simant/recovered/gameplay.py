@@ -3510,6 +3510,94 @@ def raid_out_r(dgroup, simant_data_group, pack, x: int, y: int) -> None:
              LIFE_PLANE_BASE[3], 0x46E6, x, y)
 
 
+def _raid_in(dgroup, simant_data_group, pack, map_base: int, food_count_off: int,
+            try_move_dir, get_enter_dir, life_plane_base: int, field_c_off: int,
+            caste_off: int, x: int, y: int, exclude_direction: int) -> None:
+    """Shared body of `raid_in_b`/`r`: an ant entering the nest carrying
+    food, mirroring `raid_out_b`/`r`'s shape for the opposite trip.
+
+    If `(x, y)`'s tile is a food-pile tile (`[0x10, 0x13]`, same as
+    `_steal_food`/`_eat_food`): nibbles it exactly like those routines,
+    then unconditionally sets the acting ant's `field_c` to `3` and ORs
+    `0x08` into its caste (a "carrying food" bit), stamping the updated
+    caste onto its OWN current cell — no movement at all on this path.
+
+    Otherwise: tries a move biased by `exclude_direction`
+    (`(_SRand1(3) + exclude_direction - 2) & 7`, a genuinely different
+    roll — `_SRand1`, not `_SRand8` — from every other "try a direction"
+    routine this session); if blocked, tries `get_enter_dir` (falling
+    back to a fresh `_SRand1(8)` roll — again `_SRand1`, not the
+    pow2-masked `_SRand8`, when it finds nothing); if THAT'S also
+    blocked, gives up on moving and instead sets `field_c` to `1`
+    (distinct from the food-pile branch's `3`) and re-stamps the
+    unchanged caste onto the ant's current cell.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    idx = map_base + (x << 6) + y
+    tile = dgroup.rb(idx)
+    if 0x10 <= tile <= 0x13:
+        if tile == 0x10:
+            seed, roll = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            dgroup.wb(idx, roll)
+        else:
+            dgroup.wb(idx, (tile - 1) & 0xFF)
+
+        if _sx16(pack.rw(food_count_off)) > 0:
+            pack.ww(food_count_off, (pack.rw(food_count_off) - 1) & 0xFFFF)
+
+        acting_slot = pack.rw(0x9B6A)
+        simant_data_group.wb(field_c_off + acting_slot, 3)
+        new_caste = simant_data_group.rb(caste_off + acting_slot) | 8
+        simant_data_group.wb(caste_off + acting_slot, new_caste)
+        dgroup.wb(life_plane_base + (x << 6) + y, new_caste & 0xFF)
+        return
+
+    seed, roll3 = srand1(dgroup.rw(SRAND_SEED_OFF), 3)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    direction = (roll3 + exclude_direction - 2) & 7
+    if try_move_dir(dgroup, simant_data_group, pack, x, y, direction):
+        return
+
+    result = get_enter_dir(dgroup, simant_data_group, x, y, exclude_direction & 7)
+    if result >= 0:
+        direction2 = result
+    else:
+        seed, direction2 = srand1(dgroup.rw(SRAND_SEED_OFF), 8)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+
+    if try_move_dir(dgroup, simant_data_group, pack, x, y, direction2):
+        return
+
+    acting_slot = pack.rw(0x9B6A)
+    simant_data_group.wb(field_c_off + acting_slot, 1)
+    caste = simant_data_group.rb(caste_off + acting_slot)
+    dgroup.wb(life_plane_base + (x << 6) + y, caste & 0xFF)
+
+
+def raid_in_b(dgroup, simant_data_group, pack, x: int, y: int,
+               exclude_direction: int) -> None:
+    """Recovered from `_RaidInB` (SIMANTW.SYM seg6:3524, FAR return, args
+    x=[bp+6], y=[bp+8], exclude_direction=[bp+10]). See `_raid_in`.
+    """
+    _raid_in(dgroup, simant_data_group, pack, MAP_PLANE_BASE[2], 0x9EA4,
+            try_move_dir_b, get_enter_dir_b, LIFE_PLANE_BASE[2], 0x3B22,
+            0x3D18, x, y, exclude_direction)
+
+
+def raid_in_r(dgroup, simant_data_group, pack, x: int, y: int,
+               exclude_direction: int) -> None:
+    """The red-colony twin of `raid_in_b`.
+
+    Recovered from `_RaidInR` (SIMANTW.SYM seg6:5B2A, FAR return, args
+    x=[bp+6], y=[bp+8], exclude_direction=[bp+10]).
+    """
+    _raid_in(dgroup, simant_data_group, pack, MAP_PLANE_BASE[3], 0x72DE,
+            try_move_dir_r, get_enter_dir_r, LIFE_PLANE_BASE[3], 0x44F0,
+            0x46E6, x, y, exclude_direction)
+
+
 def _queen_move(dgroup, simant_data_group, pack, plane: int, target_x_off: int,
                 target_y_off: int, try_move_dir, life_plane_base: int,
                 find_list, y_off: int, x_off: int, caste_off: int,
