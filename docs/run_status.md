@@ -1,5 +1,52 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.93) — /goal grind: _FixExitMapB/R (dig-subsystem, first slice)
+- Started the dig-subsystem chain cont.90's survey flagged as independently
+  tractable now: `_FixExitMapB`/`_FixExitMapR` (seg5:284E/2914, pure leaves,
+  no calls at all).
+  - Rows 0-1 (right at the nest exit) are special-cased against the
+    colony's own nest map (`_GetMap` plane 2/3): tile `0x18` (the exit tile
+    itself) marks the exit-map cell `0xFF`, anything else `0xFE` —
+    sentinels, not real distances.
+  - Every other row scans the 8 compass neighbours — the SAME direction-
+    delta tables `get_smell_t` already reads LIVE from
+    `simant_data_group[0+dir]/[8+dir]` (confirmed via the local `sbyte`
+    closure precedent, not hardcoded) — and takes the highest existing
+    exit-map value among the in-bounds ones, writing `max - 1` (or 0 if
+    every neighbour was still 0). This is a flood-fill-by-one-step-per-call
+    "distance from the nest exit" gradient, seeded by the row-0/1
+    sentinels: something that calls `_FixExitMapB` repeatedly across the
+    whole nest (presumably during dig/exit-hole maintenance, not yet
+    recovered) will eventually converge every cell to its BFS distance
+    from the nearest exit tile.
+  - Shared the body between the B/R twins via a private `_fix_exit_map`
+    helper (map plane 2 vs 3, exit-map array at SIMANT_DATA_GROUP `[0x3A4..)`
+    vs `[0x13A4..)`) — first genuinely-shared-helper pair since
+    `_ColonySmellDecay*`/`_JamScent*` earlier this session.
+  - First test run hit ANOTHER instance of the by-now-familiar "which SDG
+    offsets does the region actually need to cover" harness mistake (same
+    root cause as cont.91's `_DeadAntHere` bug, different symptom): the
+    exit-map array's region started at `0x3A4`/`0x13A4`, excluding SDG
+    offsets 0-15 where the direction-delta tables the recovered function
+    ALSO reads actually live — `IndexError: bytearray index out of range`
+    on the very first `sbyte(0)` call. Fixed by widening the SDG region to
+    start at 0. Lesson for future dig-subsystem routines (several more of
+    which will need these same delta tables): remember to include SDG[0:16]
+    in the region whenever a function reads them, not just the routine's
+    "primary" data.
+  - 14 scenarios (both twins x row-0/1 exit-tile / non-exit-tile, all-zero
+    neighbours, a picks-the-max case, and three off-grid-neighbour boundary
+    cases at x=0/x=0x3F/y=0x3F) — all green after the region fix.
+- Suite: simant 1077 (+14). Continuing per /goal — next per cont.90's
+  survey: `_SmoothEdgesB`/`_SmoothEdgesR` (seg5:255A/26E4, only calls the
+  already-recovered `_SRand8`) is the next independently-tractable dig-
+  subsystem member; `_ExitHole` (seg5:2DB6, only calls `_IsValidA`) after
+  that. Landing all three clears the way for `_DigTileThemB/R` and
+  `_MakeNewHoleB/R` (which additionally need `__aFldiv`, already done) —
+  and those, in turn, are most of what stands between today and
+  `_TryMoveDirB/R` <-> `_GetOutB/R` (the movement-EXECUTION mutual-
+  recursion pair) finally becoming attemptable.
+
 ## 2026-07-14 (cont.92) — /goal grind: __aFulmul + the MSC rand()/_RRand trio
 - RECOVERED `a_f_ulmul` (`crt_math.py`, seg4:096E, `__aFulmul`): unsigned
   32-bit long multiply truncated to 32 bits. The ASM computes three of the

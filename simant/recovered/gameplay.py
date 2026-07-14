@@ -1487,6 +1487,61 @@ def dec_t_smell(simant_data_group, x: int, y: int, is_red) -> None:
         simant_data_group.wb(base + idx, v - 1)
 
 
+def _fix_exit_map(dgroup, simant_data_group, map_base: int, exit_base: int,
+                  x: int, y: int) -> None:
+    """Shared body of `fix_exit_map_b`/`fix_exit_map_r`."""
+    def sbyte(off):
+        v = simant_data_group.rb(off)
+        return v - 0x100 if v & 0x80 else v
+
+    idx = (x << 6) + y
+    if y < 2:
+        tile = dgroup.rb(map_base + idx)
+        simant_data_group.wb(exit_base + idx, 0xFF if tile == 0x18 else 0xFE)
+        return
+
+    best = 0
+    for si in range(8):
+        nx = x + sbyte(si)
+        ny = y + sbyte(8 + si)
+        if not (0 <= nx <= 0x3F and 0 <= ny <= 0x3F):
+            continue
+        v = simant_data_group.rb(exit_base + (nx << 6) + ny)
+        if v > best:
+            best = v
+    simant_data_group.wb(exit_base + idx, (best - 1) & 0xFF if best else 0)
+
+
+def fix_exit_map_b(dgroup, simant_data_group, x: int, y: int) -> None:
+    """Refresh the black colony's "distance from the nest exit" map cell
+    (x, y), used to steer digging ants back toward the surface.
+
+    Recovered from `_FixExitMapB` (SIMANTW.SYM seg5:284E, args x=[bp+6],
+    y=[bp+8]).  Rows 0-1 (right at the exit) are special-cased against the
+    black nest map (`_GetMap` plane 2): tile `0x18` (the exit tile itself)
+    marks the cell `0xFF`, anything else `0xFE` — sentinels, not real
+    distances.  Every other row instead scans the 8 compass neighbours (the
+    same direction-delta tables `get_smell_t` already reads LIVE from
+    `simant_data_group[0+dir]/[8+dir]`, not hardcoded) and takes the
+    HIGHEST existing exit-map value among the in-bounds ones; the cell
+    becomes that max minus 1 (or 0 if every neighbour was still 0) — a
+    flood-fill-by-one-step-per-call "distance from exit" gradient, seeded
+    by the exit-tile sentinels above.  The exit-map array lives in
+    SIMANT_DATA_GROUP at `[0x3A4..)`.
+    """
+    _fix_exit_map(dgroup, simant_data_group, MAP_PLANE_BASE[2], 0x3A4, x, y)
+
+
+def fix_exit_map_r(dgroup, simant_data_group, x: int, y: int) -> None:
+    """The red-colony twin of `fix_exit_map_b` (map plane 3, exit-map array
+    at SIMANT_DATA_GROUP `[0x13A4..)`).
+
+    Recovered from `_FixExitMapR` (SIMANTW.SYM seg5:2914, args x=[bp+6],
+    y=[bp+8]).
+    """
+    _fix_exit_map(dgroup, simant_data_group, MAP_PLANE_BASE[3], 0x13A4, x, y)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 

@@ -338,6 +338,44 @@ def test_deadanthere_state_diff_matches_asm(counter, old_x, old_y, old_tile, ins
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _FixExitMapB / _FixExitMapR (seg5:284E / 2914) — exit-distance map ----
+@pytest.mark.parametrize("routine,off,map_base,exit_base,fn_name", [
+    ("_FixExitMapB", 0x284E, 0x48E8, 0x03A4, "fix_exit_map_b"),
+    ("_FixExitMapR", 0x2914, 0x58E8, 0x13A4, "fix_exit_map_r"),
+])
+@pytest.mark.parametrize("x,y,tile,neighbors", [
+    (10, 0, 0x18, {}),        # row 0, exit tile -> 0xFF
+    (10, 1, 0x20, {}),        # row 1, non-exit tile -> 0xFE
+    (10, 5, 0x00, {}),        # row>=2, all neighbours 0 -> writes 0
+    (10, 5, 0x00, {2: 5, 5: 9, 0: 1}),   # row>=2, picks the max (9) -> writes 8
+    (0, 5, 0x00, {5: 3}),       # x=0, some neighbours off-grid (x-1<0) -> skipped
+    (0x3F, 5, 0x00, {1: 4}),    # x=0x3F, some neighbours off-grid (x+1>0x3F)
+    (10, 0x3F, 0x00, {3: 6}),   # y=0x3F, some neighbours off-grid (y+1>0x3F)
+])
+def test_fixexitmap_state_diff_matches_asm(routine, off, map_base, exit_base,
+                                           fn_name, x, y, tile, neighbors):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+    GDX, GDY = G.GET_BEST_DIR_DX, G.GET_BEST_DIR_DY
+
+    def seed(m):
+        dg, sdg = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG]
+        m.mem.wb(dg, map_base + (x << 6) + y, tile)
+        for si, val in neighbors.items():
+            nx, ny = x + GDX[si], y + GDY[si]
+            if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                m.mem.wb(sdg, exit_base + (nx << 6) + ny, val)
+
+    regions = [(hooks.DG_SEG_INDEX, map_base, map_base + 0x1000),
+              (_SDG, 0, exit_base + 0x1000)]   # SDG[0..16) holds the delta tables too
+    results = _run_and_diff_segs(5, off, (x, y), lambda d, s: fn(d, s, x, y),
+                                 regions, seed_fn=seed)
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, regions):
+        assert asm_after == rec_after, (
+            f"{routine} x={x} y={y} tile={tile:#x} neighbors={neighbors} "
+            f"{label}: {_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DecEatB / _DecEatR (seg6:48F8 / 6C6A) — colony hunger-decay clocks ----
 # Both take NO ARGS (pure global-state tick).  _DecEatB spans DGROUP +
 # SIMANT_DATA_GROUP (the no-starve cheat flag) + PACK; _DecEatR spans only
