@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.137) — /goal grind: _IsItFoodAt — bounds-checked food predicate
+- RECOVERED `is_it_food_at` (`_IsItFoodAt`, seg5:5F7E, args plane=[bp+6],
+  x=[bp+8], y=[bp+10], FAR return) — validates `(x, y)` against
+  plane-dependent bounds (plane<=1: yard, `x` 0..0x7F; plane>1: nest,
+  `x` 0..0x3F; both `y` 0..0x3F) and `plane` against `0..3`, returns 0
+  immediately (no tile read at all) if either is out of range, otherwise
+  reads the map tile and tail-calls the ALREADY-recovered `is_this_food`.
+  Turned out to be a genuinely small wrapper once traced fully: grepped
+  for the far-call target (`395E:2D1A`) before assuming it needed its own
+  port, and found `_IsItFoodAt`'s entire tail (from the tile read onward)
+  is exactly `is_this_food`'s existing logic — composing it instead of
+  re-deriving it.
+- 10 cases (both plane bands, the food/non-food boundaries on each,
+  an out-of-range plane, and each out-of-range coordinate case) — ALL
+  GREEN ON THE FIRST RUN.
+- Suite: simant 1441 (+10), full suite green.
+
 ## 2026-07-14 (cont.136) — /goal grind: _AddBlackAnts/_AddRedAnts — scenario-init yard population
 - RECOVERED `add_black_ants`/`add_red_ants` (`_AddBlackAnts`/`_AddRedAnts`,
   seg7:6C5A/6CFE, arg count=[bp+6], FAR return) via a shared `_add_ants`

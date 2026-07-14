@@ -675,6 +675,38 @@ def test_addredants_state_diff_matches_asm(count, seed_val, alist_count):
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _IsItFoodAt (seg5:5F7E) — bounds-checked (plane,x,y) food predicate --
+@pytest.mark.parametrize("plane,x,y,tile,inside", [
+    (0, 10, 20, 0x18, True),     # nest food range via is_it_food
+    (0, 10, 20, 0x48, False),    # yard food range
+    (0, 10, 20, 0x00, True),     # not food
+    (2, 10, 20, 0x10, True),     # yard-plane band, left edge
+    (2, 10, 20, 0x13, False),    # yard-plane band, right edge
+    (2, 10, 20, 0x14, True),     # just outside the band
+    (5, 10, 20, 0x18, True),     # plane out of range -> 0, no tile read
+    (0, 0x80, 20, 0x18, True),   # x out of range for plane<=1 (max 0x7F)
+    (2, 0x40, 20, 0x10, True),   # x out of range for plane>1 (max 0x3F)
+    (0, 10, 0x40, 0x18, True),   # y out of range
+])
+def test_isitfoodat_matches_asm(plane, x, y, tile, inside):
+    from simant.recovered.gameplay import is_it_food_at, MAP_PLANE_BASE
+
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        if 0 <= plane <= 3 and 0 <= x <= 0x7F and 0 <= y <= 0x3F:
+            m.mem.wb(dg, MAP_PLANE_BASE[plane] + (x << 6) + y, tile)
+
+    ax, m = _run_and_get_ax(5, 0x5F7E, (plane, x, y), seed_fn=seed)
+    dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+    dgroup_view = ByteBackend(m.mem.block(dg, 0, 0x10000), 0)
+    pack_view = ByteBackend(m.mem.block(pack, 0, 0x10000), 0)
+    expect = is_it_food_at(dgroup_view, pack_view, plane, x, y)
+    assert ax == (expect & 0xFFFF), (
+        f"plane={plane} x={x} y={y} tile={tile:#x} inside={inside}: "
+        f"asm={ax:#06x} rec={expect:#06x}")
+
+
 # ---- _MakeNewHoleB (seg5:1B06) — search + carve a new above-ground hole ---
 _MAKENEWHOLEB_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed

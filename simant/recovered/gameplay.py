@@ -146,6 +146,29 @@ def is_this_food(plane: int, tile: int, inside: bool) -> int:
     return 1 if 0x10 <= tile <= 0x13 else 0
 
 
+def is_it_food_at(dgroup, pack, plane: int, x: int, y: int) -> int:
+    """Whether the map tile at `(plane, x, y)` denotes food, after
+    validating the coordinates and plane are in range.
+
+    Recovered from `_IsItFoodAt` (SIMANTW.SYM seg5:5F7E, args plane=[bp+6],
+    x=[bp+8], y=[bp+10]; FAR return).  Coordinate bounds depend on plane:
+    plane<=1 (yard) allows `x` 0..0x7F, `y` 0..0x3F; plane>1 (nest) allows
+    `x` 0..0x3F, `y` 0..0x3F.  Out-of-range coordinates OR a plane outside
+    0..3 return 0 immediately (no tile read at all).  Otherwise reads the
+    map tile at `MAP_PLANE_BASE[plane]` and tail-calls the already-
+    recovered `is_this_food` (which composes `is_it_food`'s own
+    world-state inside-nest flag read, here `pack[0x9B6E]`).
+    """
+    if plane <= 1:
+        valid = 0 <= x <= 0x7F and 0 <= y <= 0x3F
+    else:
+        valid = 0 <= x <= 0x3F and 0 <= y <= 0x3F
+    if not valid or not (0 <= plane <= 3):
+        return 0
+    tile = dgroup.rb(MAP_PLANE_BASE[plane] + (x << 6) + y)
+    return is_this_food(plane, tile, pack.rw(0x9B6E) != 0)
+
+
 def is_valid_a(x: int, y: int) -> int:
     """Whether (x, y) is a valid cell on the wide (yard/overworld) grid.
 
