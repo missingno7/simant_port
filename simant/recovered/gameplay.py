@@ -4380,6 +4380,51 @@ def go_in_nest(dgroup, simant_data_group, pack, x: int, y: int, slot: int) -> No
     dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
 
 
+def do_rest_ant(dgroup, simant_data_group, pack, slot: int) -> None:
+    """A yard ant standing on a "rest spot" tile heads into the nest;
+    otherwise it has a 1-in-4 chance of getting stuck ("resting" in
+    place, marked via `field_c`).
+
+    Recovered from `_DoRestAnt` (SIMANTW.SYM seg6:0B76, arg slot=[bp+4];
+    NEAR return).  Composes the already-recovered `is_valid_a` and
+    `go_in_nest`.
+
+    Reads the yard A-list slot's own `(x, y)` (`simant_data_group[0x23A4
+    +slot]`/`[0x278E+slot]`). If `(x, y)` is valid, checks the yard map
+    tile there: `pack[0x9B6E] == 0` (outside) requires it to be exactly
+    `0x50`; otherwise (inside) requires it in `0x80..0x8F`. Either match
+    calls `go_in_nest(x, y, slot)` and returns.
+
+    Otherwise: rolls `_SRand4()`. A `0` (1-in-4) sets the slot's
+    `field_c` (`simant_data_group[0x2B78+slot]`) to `2` — a "resting"
+    marker. A nonzero roll (3-in-4) is a presentation-only path in the
+    original binary (a speech-balloon UI call, `ANTEDIT!_RestBalloons`,
+    gated on `simant_data_group[0x85FC]==1`) — deliberately NOT ported,
+    same core/presentation split as `_FightBalloons` in `do_fight_a`.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    x = simant_data_group.rb(0x23A4 + slot)
+    y = simant_data_group.rb(0x278E + slot)
+
+    found_rest_spot = False
+    if is_valid_a(x, y):
+        tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+        if pack.rw(0x9B6E) == 0:
+            found_rest_spot = tile == 0x50
+        else:
+            found_rest_spot = 0x80 <= tile <= 0x8F
+
+    if found_rest_spot:
+        go_in_nest(dgroup, simant_data_group, pack, x, y, slot)
+        return
+
+    seed, roll4 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 3)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll4 == 0:
+        simant_data_group.wb(0x2B78 + slot, 2)
+
+
 def rand_turn(dgroup, simant_data_group, caste_low3: int) -> int:
     """Pick a purely random direction from the caste-mode table — no
     yard-edge handling, no gradient, just a fresh `_SRand8()` roll.

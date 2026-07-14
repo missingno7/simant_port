@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.150) — /goal grind: _DoRestAnt — a top-level _Do*Ant* orchestrator
+- Dispatched a 6th research survey. Confirmed `_IsThisFood` was already
+  a false lead (it's already `is_this_food`, recovered in cont.60) —
+  caught before wasting effort. Re-verified all of round 5's larger
+  deferred candidates (`_PlaceBlackQueen`, `_GetMyNextRandDirs`,
+  `_GetMyDis`, `_GetMyBestDir`, `_DoReturnFoodAnt`, `_DoNestingB`/`R`)
+  are still accurate and zero-blocker. Found a fresh
+  `_Do*Ant*`-orchestrator-tier lead worth prioritizing.
+- RECOVERED `do_rest_ant` (`_DoRestAnt`, seg6:0B76, arg slot=[bp+4],
+  NEAR return) — a genuinely TOP-LEVEL `_Do*Ant*` behavior (a yard ant
+  on a "rest spot" heads into the nest via the already-recovered
+  `go_in_nest`; otherwise a `_SRand4()` roll of `0` (1-in-4) marks it
+  "resting" via `field_c=2`). The 3-in-4 no-roll path's presentation-
+  only speech-balloon UI call (`ANTEDIT!_RestBalloons`) was deliberately
+  NOT ported — same core/presentation split as `_FightBalloons` in
+  `do_fight_a`.
+- A test-infra gap, not a logic bug: `_GOINNEST_REGIONS`'s own PACK
+  upper bound (`0x9A00`) didn't reach `pack[0x9B6E]` (the new "inside"
+  flag read this routine needs) — widened the LOCAL region copy to
+  `0x9C00` rather than touching the shared constant (this routine's own
+  test doesn't need `_GOINNEST_REGIONS` itself, just a region with the
+  same shape plus headroom).
+- 5 cases (outside rest-spot exact tile, inside rest-band range, no
+  rest spot with both SRand4 outcomes, and an out-of-range position) —
+  ALL GREEN on the second run (first run caught the PACK-bound gap
+  immediately, fixed in one edit).
+- Suite: simant 1569 (+5), full suite green.
+
 ## 2026-07-14 (cont.149) — /goal grind: _StayInR — idle-in-nest: nibble food or wander
 - RECOVERED `stay_in_r` (`_StayInR`, seg6:5C16, args x=[bp+6], y=[bp+8],
   direction=[bp+10], FAR return) — the last item in this session's

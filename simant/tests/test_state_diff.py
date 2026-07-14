@@ -2248,6 +2248,56 @@ def test_goinnest_state_diff_matches_asm(x, y, slot, count_off, caste,
             f"x={x} y={y} full={full} {label}: {_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _DoRestAnt (seg6:0B76) — a yard ant on a rest spot heads into the ----
+# nest, or has a 1-in-4 chance of getting stuck resting.  Composes
+# is_valid_a + go_in_nest; widens _GOINNEST_REGIONS's DGROUP bound to also
+# cover the yard map tile read and the SRand seed.
+_DORESTANT_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),
+    (_SDG, 0x2300, 0x8400),
+    (_PACK, 0x7200, 0x9C00),
+]
+
+
+def _dorestant_seed(x, y, slot, inside, tile, seed_val, count_off):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4 + slot, x)
+        m.mem.wb(sdg, 0x278E + slot, y)
+        m.mem.wb(sdg, 0x2F62 + slot, 0x81)
+        m.mem.wb(sdg, 0x2B78 + slot, 3)
+        m.mem.wb(sdg, 0x334C + slot, 7)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        if 0 <= x <= 0x7F and 0 <= y <= 0x3F:
+            m.mem.wb(dg, 0x28E8 + (x << 6) + y, tile)
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(sdg, 0x85FC, 0)   # keep the omitted UI-balloon path a clean no-op
+        m.mem.ww(pack, count_off, 5)
+        m.mem.wb(sdg, 0x82D2 + y, 0)
+        m.mem.wb(sdg, 0x8312 + y, 0)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,slot,inside,tile,seed_val,count_off,label", [
+    (0x10, 20, 0x10, False, 0x50, 0x1234, 0x99D4, "outside-rest-spot-go-in-nest"),
+    (0x50, 20, 0x10, True, 0x85, 0x1234, 0x72CC, "inside-rest-band-go-in-nest"),
+    (0x10, 20, 0x10, False, 0x40, 0x0000, 0x99D4, "no-rest-spot-roll4-zero-rest"),
+    (0x10, 20, 0x10, False, 0x40, 0x0001, 0x99D4, "no-rest-spot-roll4-nonzero-noop"),
+    (0x90, 20, 0x10, False, 0x40, 0x0001, 0x99D4, "x-out-of-range-invalid"),
+])
+def test_dorestant_state_diff_matches_asm(x, y, slot, inside, tile, seed_val,
+                                          count_off, label):
+    from simant.recovered.gameplay import do_rest_ant
+    results = _run_and_diff_segs(
+        6, 0xB76, (slot,),
+        lambda d, s, p: do_rest_ant(d, s, p, slot),
+        _DORESTANT_REGIONS, near=True,
+        seed_fn=_dorestant_seed(x, y, slot, inside, tile, seed_val, count_off))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, _DORESTANT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.
