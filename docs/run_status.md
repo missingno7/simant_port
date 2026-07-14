@@ -1,5 +1,22 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.142) — /goal grind: _SGIRand/_SGRand/_SGSRand — two-roll RNG combinators
+- RECOVERED `sg_i_rand`/`sg_rand`/`sg_s_rand` (`_SGIRand`/`_SGRand`/
+  `_SGSRand`, seg5:147C/14A4/14CC, arg n=[bp+6], FAR return) — three
+  two-roll RNG combinators built on `_SRand1(n)`: `sg_i_rand` returns
+  `max` of two rolls (bias high), `sg_rand` returns `min` (bias low),
+  and `sg_s_rand` returns `min` again but negates it half the time via
+  a `_SRand2()` coin flip (a signed, symmetric-around-zero variant).
+  All three thread the shared LFSR seed through 2-3 sequential rolls.
+- Reused the established "pure aside from the SRand seed" test pattern
+  from `_Bounce`'s own test verbatim (a fresh `bytearray(0x10000)` view
+  seeded with just the PRE-state seed word, not `_run_and_get_ax`'s own
+  post-execution machine) — confirms this pattern generalizes cleanly
+  to a THIRD family of routines beyond `_Bounce`/`_GetForageDir`.
+- 18 cases (3 routines x 6 seed/n combinations) — ALL GREEN ON THE
+  FIRST RUN.
+- Suite: simant 1521 (+18), full suite green.
+
 ## 2026-07-14 (cont.141) — /goal grind: _GetAntIndex/_FindLifeIndex — list-search siblings
 - Dispatched a 5th research survey. It flagged `_SetAntIndex` and
   `_BlockMove` as candidates; both turned out to be non-issues once

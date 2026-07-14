@@ -2503,6 +2503,36 @@ def test_bounce_matches_asm(x, y, seed_val):
         f"x={x:#x} y={y:#x} seed={seed_val:#x}: seed mismatch")
 
 
+# ---- _SGIRand/_SGRand/_SGSRand (seg5:147C/14A4/14CC) — two-roll RNG -------
+# combinators.  Pure aside from the SRand seed, same pattern as `_Bounce`.
+@pytest.mark.parametrize("routine,off,fn_name", [
+    ("_SGIRand", 0x147C, "sg_i_rand"),
+    ("_SGRand", 0x14A4, "sg_rand"),
+    ("_SGSRand", 0x14CC, "sg_s_rand"),
+])
+@pytest.mark.parametrize("n,seed_val", [
+    (4, 0x1234), (8, 0x0001), (10, 0xBEEF), (1, 0x5555), (16, 0x7ACE), (3, 0x0000),
+])
+def test_sgrand_family_matches_asm(routine, off, fn_name, n, seed_val):
+    import simant.recovered.gameplay as G
+    fn = getattr(G, fn_name)
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+
+    ax, m = _run_and_get_ax(5, off, (n,), seed_fn=seed)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+
+    buf = bytearray(0x10000)
+    buf[0xCBF2] = seed_val & 0xFF
+    buf[0xCBF3] = (seed_val >> 8) & 0xFF
+    view = ByteBackend(buf, 0)
+    rec_ax = fn(view, n)
+
+    assert ax == (rec_ax & 0xFFFF), f"{routine}: n={n} seed={seed_val:#x} asm={ax:#06x} rec={rec_ax & 0xFFFF:#06x}"
+    assert view.rw(0xCBF2) == asm_seed_after, f"{routine}: n={n} seed={seed_val:#x}: seed mismatch"
+
+
 # ---- _GetForageDir (seg7:0AB0) — TRAIL-scent gradient direction -----------
 # Like `_Bounce`: pure aside from the SRand seed, so the recovered call needs
 # a fresh view seeded with the PRE-state seed, not `_run_and_get_ax`'s own

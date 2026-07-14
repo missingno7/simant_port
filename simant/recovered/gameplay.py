@@ -169,6 +169,56 @@ def is_it_food_at(dgroup, pack, plane: int, x: int, y: int) -> int:
     return is_this_food(plane, tile, pack.rw(0x9B6E) != 0)
 
 
+def sg_i_rand(dgroup, n: int) -> int:
+    """Return the LARGER of two independent `_SRand1(n)` rolls — a bias
+    toward higher values.
+
+    Recovered from `_SGIRand` (SIMANTW.SYM seg5:147C, arg n=[bp+6]; FAR
+    return).  Rolls `_SRand1(n)` twice, threading the shared LFSR seed
+    through both calls in order, and returns `max(roll1, roll2)`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll1 = srand1(seed, n)
+    seed, roll2 = srand1(seed, n)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    return max(roll1, roll2)
+
+
+def sg_rand(dgroup, n: int) -> int:
+    """Return the SMALLER of two independent `_SRand1(n)` rolls — the
+    complementary bias to `sg_i_rand`.
+
+    Recovered from `_SGRand` (SIMANTW.SYM seg5:14A4, arg n=[bp+6]; FAR
+    return).  Same two-roll shape as `sg_i_rand`, `min` instead of `max`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll1 = srand1(seed, n)
+    seed, roll2 = srand1(seed, n)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    return min(roll1, roll2)
+
+
+def sg_s_rand(dgroup, n: int) -> int:
+    """Return the SMALLER of two independent `_SRand1(n)` rolls (same as
+    `sg_rand`), then negate it half the time via a `_SRand2()` coin flip
+    — a signed, symmetric-around-zero variant.
+
+    Recovered from `_SGSRand` (SIMANTW.SYM seg5:14CC, arg n=[bp+6]; FAR
+    return).  Consumes the shared LFSR seed 3 times in order: `_SRand1(n)`
+    twice (for the min), then `_SRand2()` once (the sign roll).
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll1 = srand1(seed, n)
+    seed, roll2 = srand1(seed, n)
+    smaller = min(roll1, roll2)
+    seed, sign_roll = srand_pow2(seed, 1)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    return -smaller if sign_roll != 0 else smaller
+
+
 def is_valid_a(x: int, y: int) -> int:
     """Whether (x, y) is a valid cell on the wide (yard/overworld) grid.
 
