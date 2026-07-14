@@ -5669,3 +5669,48 @@ def test_donestingr_state_diff_matches_asm(x, y, slot, sub, mode, field_e,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _DONESTFIGHT_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _GetMyDir (seg6:8ECA) — target-select + the get_my_best_dir probe ----
+# Composes check_my_best_dirs, get_my_best_dirs, get_my_rand_dirs, get_dir --
+# all already recovered. Reuses _getmybestdir_seed's base (candidate-site
+# PACK fields, out1/out2, sentinel) plus the four alternate-destination
+# SDG table slots this routine additionally reads.
+def _getmydir_seed(plane, cur_x, cur_y, sub, tgt_x, tgt_y, tiles, sentinel_72e4,
+                   out1_init=0, out2_init=3):
+    base = _getmybestdir_seed(plane, cur_x, cur_y, tgt_x, tgt_y, tiles,
+                              sentinel_72e4, out1_init=out1_init,
+                              out2_init=out2_init)
+
+    def seed(m):
+        base(m)
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(sdg, 0x835A, 15); m.mem.ww(sdg, 0x835C, 20)
+        m.mem.ww(sdg, 0x835E, 16); m.mem.ww(sdg, 0x8360, 21)
+        m.mem.ww(sdg, 0x8352, 17); m.mem.ww(sdg, 0x8354, 22)
+        m.mem.ww(sdg, 0x8356, 18); m.mem.ww(sdg, 0x8358, 23)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "plane,cur_x,cur_y,sub,tgt_x,tgt_y,tiles,sentinel_72e4,label", [
+    (0, 20, 20, 0, 25, 25, {}, 0, "yard-sub0-owntarget-normal-fail"),
+    (0, 20, 20, 1, 25, 25, {3: 0x05}, 0xFFFF, "yard-sub1-owntarget-stuck-retry"),
+    (1, 20, 20, 2, 25, 25, {}, 0, "yard-sub2-alttable-835A"),
+    (1, 20, 20, 3, 25, 25, {}, 0xFFFE, "yard-sub3-alttable-835E-double-stuck"),
+    (2, 20, 20, 2, 25, 25, {}, 0, "nest-plane2-subEqPlane-owntarget"),
+    (2, 20, 20, 0, 25, 25, {}, 0xFFFF, "nest-plane2-subNe-alttable-8352"),
+    (3, 20, 20, 0, 25, 25, {}, 0xFFFE, "nest-plane3-subNe-alttable-8356"),
+])
+def test_getmydir_state_diff_matches_asm(plane, cur_x, cur_y, sub, tgt_x,
+                                         tgt_y, tiles, sentinel_72e4, label):
+    from simant.recovered.gameplay import get_my_dir
+    results = _run_and_diff_segs(
+        6, 0x8ECA, (plane, cur_x, cur_y, sub, tgt_x, tgt_y),
+        lambda d, s, p: get_my_dir(d, s, p, plane, cur_x, cur_y, sub, tgt_x, tgt_y),
+        _GETMYNEXTRANDDIRS_REGIONS,
+        seed_fn=_getmydir_seed(plane, cur_x, cur_y, sub, tgt_x, tgt_y, tiles,
+                               sentinel_72e4))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _GETMYNEXTRANDDIRS_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

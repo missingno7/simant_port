@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-14 (cont.161) — /goal grind: _GetMyDir — target-select + probe
+- Resumed cont.160's deferred `_GetMyDir` and finished the map: the
+  "SDG-resident far-pointer dispatch table" flagged in cont.160 was a
+  MISREAD on first pass — re-disassembling the exact bytes at
+  `8F76`-`8F8D` showed the earlier "jge -> 90A1" transcription was
+  backwards (it's `jge -> 8F8C`, falling to `90A1` only when NOT
+  taken); once corrected, the SDG table entries at `0x835A/0x835C`,
+  `0x835E/0x8360`, `0x8352/0x8354`, `0x8356/0x8358` turned out to be
+  plain (x, y) COORDINATE pairs (an "alternate destination" table), not
+  code pointers — no new dispatch mechanism after all, just more
+  branches over already-recovered composables.
+- RECOVERED `get_my_dir` (`_GetMyDir`, SIMANTW.SYM seg6:8ECA, args
+  plane=[bp+6], cur_x=[bp+8], cur_y=[bp+10], sub=[bp+12], tgt_x=[bp+14],
+  tgt_y=[bp+16]; FAR return, 0x314 bytes). Composes `check_my_best_dirs`,
+  `get_my_best_dirs`, `get_my_rand_dirs`, and `get_dir` — no new
+  primitives. Picks a target: the caller's own `(tgt_x, tgt_y)` when
+  `plane <= 1` (yard) and `sub <= 1`, or when `plane > 1` (nest) and
+  `sub == plane`; otherwise one of the four SDG coordinate-table slots
+  above. Then runs the SAME `pack[0x72E4]`-gated probe `get_my_best_dir`
+  (cont.157) already established (non-negative sentinel: try
+  `check_my_best_dirs`, falling back to `get_my_rand_dirs` on total
+  failure; negative sentinel: a single fresh `get_my_best_dirs`,
+  escalating to a freshly-seeded `get_my_rand_dirs` only once the
+  sentinel is ALREADY exactly `-2` from a prior tick) — independently
+  re-verified byte-for-byte against `_GetMyDir`'s own disassembly
+  rather than assumed identical to the sibling, and genuinely found ONE
+  divergence: this routine's "sentinel >= 0, `check_my_best_dirs`
+  succeeds" tail does an EXTRA `pack[0x72E4] -= 1` after resetting it to
+  `-1` that `_GetMyNextRandDirs` (the closest sibling) does not do —
+  confirmed present via a byte-level re-check, not assumed from
+  symmetry.
+- 7 cases spanning both `plane` tiers, all four alt-target table slots,
+  and both stuck-sentinel polarities — ALL GREEN ON THE FIRST REAL-ASM
+  RUN.
+- Suite: simant 1647 (+7), full suite green.
+
 ## 2026-07-14 (cont.160) — /goal grind: _GetMyDir deferred (partial map)
 - Picked `_GetMyDir` (SIMANTW.SYM seg6:8ECA, 0x314 bytes, SIX args
   `[bp+6..16]`) back up after cont.159 deferred it. Confirmed all of

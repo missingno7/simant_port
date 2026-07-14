@@ -6672,3 +6672,106 @@ def do_nesting_r(dgroup, simant_data_group, pack, x: int, y: int, mode: int,
     slot = pack.rw(0x9B6A)
     simant_data_group.wb(0x44F0 + slot, field_c & 0xFF)
     return finish(mode7)
+
+
+def get_my_dir(dgroup, simant_data_group, pack, plane: int, cur_x: int,
+               cur_y: int, sub: int, tgt_x: int, tgt_y: int) -> int:
+    """Resolve the player-controlled ("my") ant's next compass direction —
+    picking, per `sub`, EITHER the caller-supplied `(tgt_x, tgt_y)` or one
+    of four fixed SIMANT_DATA_GROUP "alternate destination" table entries,
+    then running the SAME `pack[0x72E4]`-gated probe `get_my_best_dir`
+    (cont.157) already established: while the stuck-sentinel is
+    non-negative, try `check_my_best_dirs`; once it goes negative, try a
+    single fresh `get_my_best_dirs`, escalating to `get_my_rand_dirs` on
+    repeated total failure.
+
+    Recovered from `_GetMyDir` (SIMANTW.SYM seg6:8ECA, args plane=[bp+6],
+    cur_x=[bp+8], cur_y=[bp+10], sub=[bp+12], tgt_x=[bp+14], tgt_y=[bp+16];
+    FAR return). Composes `check_my_best_dirs`, `get_my_best_dirs`,
+    `get_my_rand_dirs`, and `get_dir` — all already recovered; no new
+    primitives. `inside` is (as with every routine in this cluster) not a
+    real stack argument — computed here the same way every other caller
+    does: `pack[0x9B6E] != 0`.
+
+    Target selection: `plane <= 1` (yard) with `sub <= 1` uses the
+    caller's own `(tgt_x, tgt_y)`; `sub == 2` reads
+    `simant_data_group[0x835A]`/`[0x835C]`; any other `sub` reads
+    `[0x835E]`/`[0x8360]`. `plane > 1` (nest) with `sub == plane` uses the
+    caller's own target; otherwise reads `[0x8352]`/`[0x8354]` when the
+    ant's OWN `plane == 2`, else `[0x8356]`/`[0x8358]` — four genuinely
+    distinct fixed-destination table slots (independently confirmed via
+    disassembly, not assumed to be aliases of each other).
+
+    The probe itself, given a resolved `(tx, ty)`:
+      - `pack[0x72E4] >= 0` (signed): calls `check_my_best_dirs`. A total
+        failure (`-2`) falls back to `get_my_rand_dirs`, reading its two
+        far-pointer outputs from WHATEVER `pack[0x78A4]`/`[0xA0D8]`
+        already hold (no reseed) and writing them back, then decrements
+        `pack[0x72E4]`. Anything else: stamps `pack[0x72E4] = -1`, calls
+        `get_my_best_dirs` fresh from `(cur_x, cur_y)`, decrements
+        `pack[0x72E4]` again (landing on `-2`), and returns THAT fresh
+        result directly (the `check_my_best_dirs` result itself is
+        discarded either way — only its `-2`-vs-other verdict matters).
+      - `pack[0x72E4] < 0`: calls `get_my_best_dirs` once; a non-`-2`
+        result returns directly, no sentinel bookkeeping at all. A `-2`
+        result checks whether `pack[0x72E4]` was ALREADY exactly `-2`
+        (i.e. this is not the first tick to fail this way): if so, seeds
+        a fresh `_GetDir(cur, target) - 1` compass direction into
+        `get_my_rand_dirs`'s `out2` with `out1 = 0` (fresh commit),
+        resets `pack[0x72E4] = 0x10` (a 16-step retry budget), and
+        returns `get_my_rand_dirs`'s result; otherwise just returns the
+        plain `-2`.
+    """
+    inside = pack.rw(0x9B6E) != 0
+
+    def probe(tx, ty):
+        if _sx16(pack.rw(0x72E4)) >= 0:
+            out = [0]
+            result = check_my_best_dirs(dgroup, pack, out, inside, plane,
+                                        cur_x, cur_y, tx, ty)
+            if result == -2:
+                out1 = [pack.rw(0x78A4)]
+                out2 = [pack.rw(0xA0D8)]
+                r = get_my_rand_dirs(dgroup, pack, out1, out2, inside, plane,
+                                     cur_x, cur_y, tx, ty)
+                pack.ww(0x78A4, out1[0] & 0xFFFF)
+                pack.ww(0xA0D8, out2[0] & 0xFFFF)
+                pack.ww(0x72E4, (pack.rw(0x72E4) - 1) & 0xFFFF)
+                return r
+            pack.ww(0x72E4, 0xFFFF)
+            r = get_my_best_dirs(dgroup, pack, inside, plane, cur_x, cur_y, tx, ty)
+            pack.ww(0x72E4, (pack.rw(0x72E4) - 1) & 0xFFFF)
+            return r
+
+        r = get_my_best_dirs(dgroup, pack, inside, plane, cur_x, cur_y, tx, ty)
+        if r != -2:
+            return r
+        if _sx16(pack.rw(0x72E4)) == -2:
+            direction = (get_dir(cur_x, cur_y, tx, ty) - 1) & 0xFFFF
+            pack.ww(0xA0D8, direction)
+            pack.ww(0x72E4, 0x10)
+            pack.ww(0x78A4, 0)
+            out1, out2 = [0], [direction]
+            r2 = get_my_rand_dirs(dgroup, pack, out1, out2, inside, plane,
+                                  cur_x, cur_y, tx, ty)
+            pack.ww(0x78A4, out1[0] & 0xFFFF)
+            pack.ww(0xA0D8, out2[0] & 0xFFFF)
+            return r2
+        return r
+
+    if plane <= 1:
+        if sub <= 1:
+            return probe(tgt_x, tgt_y)
+        if sub == 2:
+            atx, aty = simant_data_group.rw(0x835A), simant_data_group.rw(0x835C)
+        else:
+            atx, aty = simant_data_group.rw(0x835E), simant_data_group.rw(0x8360)
+        return probe(atx, aty)
+
+    if sub == plane:
+        return probe(tgt_x, tgt_y)
+    if plane == 2:
+        atx, aty = simant_data_group.rw(0x8352), simant_data_group.rw(0x8354)
+    else:
+        atx, aty = simant_data_group.rw(0x8356), simant_data_group.rw(0x8358)
+    return probe(atx, aty)
