@@ -1,5 +1,20 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.171) — /goal grind: _MaintainSwarm — swarm-size decay
+- RECOVERED `maintain_swarm` (`_MaintainSwarm`, SIMANTW.SYM seg7:3580,
+  NO args; FAR return, 120 bytes) — self-contained, no dependencies.
+  Not a genuine B/R pair despite touching both colonies: one routine
+  applies the SAME decay formula to `pack[0x807A]` (black) and
+  `pack[0x9C26]` (red) back to back. Each: `<= 0` stays put; `< 4`
+  decrements by `1`; otherwise decays ~25% (`value -= value // 4`, an
+  arithmetic-shift-right-by-2 in the real ASM), then floors at
+  `dgroup[0xAC8C]`/`[0xAC8E]` (each colony's own configured minimum,
+  read directly — no pointer-global indirection) and caps at `0x32`
+  (50).
+- 5 cases (no-op, small-value decrement, quarter-decay, floor-clamp,
+  cap-clamp) — ALL GREEN ON THE FIRST REAL-ASM RUN.
+- Suite: simant 1730 (+5), full suite green.
+
 ## 2026-07-15 (cont.170) — /goal grind: _ForceModeA/B — force mode-transition state
 - RECOVERED `force_mode_a`/`force_mode_b` (`_ForceModeA`/`_ForceModeB`,
   SIMANTW.SYM seg7:0550/0622, args slot=[bp+6], mode=[bp+8], arg3=

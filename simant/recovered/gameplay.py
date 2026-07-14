@@ -7541,3 +7541,37 @@ def force_mode_b(dgroup, simant_data_group, slot: int, mode: int,
         cx = _sx16(dgroup.rw(0xCD88)) >> 3
         al |= cx & 0xFF
         simant_data_group.wb(0x3F0E + slot, al & 0xFF)
+
+
+def maintain_swarm(dgroup, pack) -> None:
+    """Decay two swarm-size counters (one per colony) once per tick,
+    each clamped to its own configured floor and a shared hard cap.
+
+    Recovered from `_MaintainSwarm` (SIMANTW.SYM seg7:3580, NO args;
+    FAR return, 120 bytes). Applies the SAME formula to `pack[0x807A]`
+    (black) and `pack[0x9C26]` (red) in sequence — not a genuine B/R
+    pair, just one self-contained routine touching both colonies'
+    counters back to back: a value `<= 0` stays put; `< 4` decrements
+    by `1`; otherwise decays by ~25% (`value -= value // 4`, an
+    arithmetic-shift-right-by-2 in the real ASM). The result is then
+    floored at `dgroup[0xAC8C]`/`[0xAC8E]` respectively (each colony's
+    own configured minimum, read directly — no pointer-global
+    indirection) and capped at `0x32` (50).
+    """
+    def decay(value):
+        if value <= 0:
+            return value
+        if value < 4:
+            return value - 1
+        return value - (value // 4)
+
+    def clamp(value, floor):
+        if floor > value:
+            value = floor
+        return min(value, 0x32)
+
+    b_val = clamp(decay(_sx16(pack.rw(0x807A))), _sx16(dgroup.rw(0xAC8C)))
+    pack.ww(0x807A, b_val & 0xFFFF)
+
+    r_val = clamp(decay(_sx16(pack.rw(0x9C26))), _sx16(dgroup.rw(0xAC8E)))
+    pack.ww(0x9C26, r_val & 0xFFFF)

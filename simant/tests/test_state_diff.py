@@ -6225,3 +6225,39 @@ def test_forcemodeb_state_diff_matches_asm(mode, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _FORCEMODE_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _MaintainSwarm (seg7:3580) — decay two swarm-size counters ----------
+_MAINTAINSWARM_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC8C, 0xAC90),
+    (_PACK, 0x8000, 0x9D00),
+]
+
+
+def _maintainswarm_seed(b_val, r_val, b_floor, r_floor):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x807A, b_val & 0xFFFF)
+        m.mem.ww(pack, 0x9C26, r_val & 0xFFFF)
+        m.mem.ww(dg, 0xAC8C, b_floor & 0xFFFF)
+        m.mem.ww(dg, 0xAC8E, r_floor & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize("b_val,r_val,b_floor,r_floor,label", [
+    (0, 0, 0, 0, "both-zero-noop"),
+    (2, 3, 0, 0, "both-small-decrement"),
+    (40, 60, 0, 0, "both-decay-quarter"),
+    (5, 5, 10, 10, "floor-clamps-up"),
+    (100, 200, 0, 0, "cap-clamps-down-to-50"),
+])
+def test_maintainswarm_state_diff_matches_asm(b_val, r_val, b_floor, r_floor,
+                                              label):
+    from simant.recovered.gameplay import maintain_swarm
+    results = _run_and_diff_segs(
+        7, 0x3580, (), lambda d, p: maintain_swarm(d, p),
+        _MAINTAINSWARM_REGIONS,
+        seed_fn=_maintainswarm_seed(b_val, r_val, b_floor, r_floor))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _MAINTAINSWARM_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
