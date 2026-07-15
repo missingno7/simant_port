@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.213) — /goal grind: _DoToNestAnt (A-list "_DoAntSimA" dependency batch, 3/8)
+- RECOVERED `do_to_nest_ant` (`_DoToNestAnt`, seg6:0x1676, NEAR return, 916
+  bytes) — a yard ant heading toward its own nest. Same overall shape as
+  `do_rand_ant_a` (entrance/pickup/crowd-check/move/fight tail, including
+  the SAME "pickup-tile-but-caste_sub-wrong skips the crowd check" wrinkle
+  the previous slice caught), but direction comes from the already-
+  recovered `get_nest_dir` instead of `get_rand_dir`. Composed entirely
+  from already-recovered leaves — no new seg5/seg7 primitives needed.
+- Two more genuine, independently-confirmed asymmetries vs. `do_rand_ant_a`
+  (neither assumed from that precedent — both checked against this
+  routine's own raw disassembly and its own resolved call-target list):
+  (1) the empty-cell move tail has NO `dec_t_smell` call and NO post-move
+  `_SRand8` field_c-refresh roll — a zero `field_e` returns immediately
+  with no jam-scent attempt at all; (2) the same-colony-not-yellow branch
+  is a PLAIN `_forage_jitter` with no `get_new_mode`/`field_c` change
+  (`do_rand_ant_a`'s own equivalent branch DOES call `get_new_mode`).
+- Since `get_nest_dir`'s "own cell has scent" branch is a deterministic
+  scent-gradient argmax (not RNG-driven), the state-diff seeds fix the
+  NEST scent grid directly instead of hunting for a magic `_SRand` seed —
+  a cleaner oracle-seeding technique than the RNG-driven routines needed.
+- Tests: 13 new cases in `test_state_diff.py` (parametrized table +
+  dedicated field_e-jam, fight-found, yellowfight-gate, dotroph-gate
+  tests) — all passed on the FIRST run (no oracle mismatch this time,
+  unlike the prior slice's pickup/crowd-check bug). Full suite: 2155
+  passed (was 2142).
+- Commit: (pending).
+- Still missing (5/8): `_DoRecruitAnt`, `_DoAttackAnt`, `_DoToAlarm`,
+  `_DoRepoExit` (composes `_DoToNestAnt`+`_DoRandAntAA`, both now done —
+  unblocked), `_DoRedInitiator`.
+
 ## 2026-07-15 (cont.212) — /goal grind: _DoRandAntA + _DoRandAntAA (A-list "_DoAntSimA" dependency batch, 2/8)
 - Task: recover the 8 still-unrecovered dependencies `_DoAntSimA` (seg6:0x4D8,
   1348 bytes — NOT itself attempted this session, a deliberate follow-up)
@@ -63,7 +93,7 @@
   plus dedicated `fight_found` (forces a `find_in_a_list` hit),
   `yellowfight_gate_raises`, and (for `_DoRandAntA` only) `dotroph_gate_
   raises` tests. Full suite: 2142 passed (was 2121).
-- Commit: (pending — see `_DoRandAntA`/`_DoRandAntAA` commit).
+- Commit: `aff2652`.
 - Still missing (6/8): `_DoRecruitAnt`, `_DoAttackAnt`, `_DoToAlarm`,
   `_DoToNestAnt`, `_DoRepoExit` (composes `_DoToNestAnt`+`_DoRandAntAA`,
   so ordered after them), `_DoRedInitiator` (a genuinely different shape —
