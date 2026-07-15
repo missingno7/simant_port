@@ -7577,7 +7577,7 @@ def maintain_swarm(dgroup, pack) -> None:
     pack.ww(0x9C26, r_val & 0xFFFF)
 
 
-def feed_ants(dgroup, simant_data_group, pack) -> None:
+def feed_ants(dgroup, simant_data_group, pack, table_view, table_off) -> None:
     """Age both colonies' hunger-decay food supplies by one tick (the
     SAME `dgroup[0xAC86]`/`[0xAC88]` counters `dec_eat_b`/`dec_eat_r`
     drain, floored at `0`; the black side's decrement is skipped
@@ -7588,14 +7588,21 @@ def feed_ants(dgroup, simant_data_group, pack) -> None:
 
     Recovered from `_FeedAnts` (SIMANTW.SYM seg6:0474, NO args; NEAR
     return, 100 bytes). `pack[0x80B4] == 3` skips the food-drop check
-    entirely. Otherwise: while `pack[0x9E84]` (the SAME per-drop
-    counter `food_fall`/`drop_food_a` bump) is still below
-    `simant_data_group[0x8A62]` (a rolling threshold), calls the
-    UNRECOVERED `_AddFood(1, 0x96)` — per this project's fail-loud
-    rule, raises `NotImplementedError` rather than a silently-wrong
-    guess, since `_AddFood`'s own internal `_SRand*` consumption (if
-    any) would make the REAL ASM's subsequent `_SRand1(50)`-based
-    threshold reseed unpredictable without first recovering it.
+    entirely. Otherwise: if `pack[0x9E84]` (the SAME per-drop counter
+    `food_fall`/`drop_food_a` bump) is still below
+    `simant_data_group[0x8A62]` (a rolling threshold — a single `if`,
+    not a loop, confirmed via a fresh disassembly now that `_AddFood`
+    is recovered), composes `add_food(0x96, 1)` — `count=0x96` (150,
+    so up to 150 random placements) and `flag=1` (fires the
+    presentation-only `GR!_myBeginSound`, stubbed in the oracle test
+    rather than modeled). The push order (`push 1` then `push 0x96`)
+    initially misled a first-draft reading into swapping `count`/
+    `flag` — corrected after the real ASM's `pack[0x9E84]` landed at
+    75, not the `1` a `count=1` reading would predict — then rerolls
+    the threshold to `_SRand1(50) + 1` (`simant_data_group[0x8A62]`,
+    the SAME field, confirmed via the raw disassembly to be written
+    through the identical selector the read used — no PACK/SDG
+    asymmetry despite the surrounding fields' mix).
     """
     if simant_data_group.rw(0x8A60) == 0:
         val = (dgroup.rw(0xAC86) - 1) & 0xFFFF
@@ -7615,8 +7622,13 @@ def feed_ants(dgroup, simant_data_group, pack) -> None:
     if _sx16(pack.rw(0x9E84)) >= _sx16(threshold):
         return
 
-    raise NotImplementedError(
-        "feed_ants: _AddFood branch reached (not recovered)")
+    add_food(dgroup, pack, simant_data_group, table_view, table_off, 0x96, 1)
+
+    from .simone import SRAND_SEED_OFF, srand1
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll = srand1(seed, 50)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    simant_data_group.ww(0x8A62, (roll + 1) & 0xFFFF)
 
 
 def set_caste_prod(dgroup, simant_data_group) -> None:
@@ -9323,3 +9335,129 @@ def get_strategy(dgroup, simant_data_group, pack) -> None:
 
     set_caste_prod(dgroup, simant_data_group)
     set_mode_prod(simant_data_group, pack)
+
+
+def add_food(dgroup, pack, simant_data_group, table_view, table_off,
+             count: int, flag: int) -> None:
+    """Scatter up to `count` food/rock piles in a roughly circular
+    pattern around a center point, using fixed-point trig
+    (`frac_sin`/`frac_cos`) to pick each candidate's offset.
+
+    Recovered from `_AddFood` (SIMANTW.SYM seg7:6A58, args count=
+    [bp+6], flag=[bp+8]; FAR return, 514 bytes; calls `_SRand1`/`8`/
+    `48`/`64`/`128`/`256`, composes `frac_sin`/`frac_cos`/`a_f_ldiv`,
+    far-calls `GR!_myBeginSound` when `flag == 1` — presentation-only,
+    stubbed rather than modeled, matching `_StartAttack`'s own
+    precedent).
+
+    If `count >= 0`: the center is `(x=_SRand128(), y=_SRand64())` and
+    the loop runs `count` times (the caller-supplied count IS the real
+    loop bound here — `feed_ants` calls `add_food(0x96, 1)`, i.e. up
+    to 150 placements at a fully random position each, independently
+    confirmed against the real ASM after an inverted first-draft read
+    of this branch pair). If `count < 0`: the center is FIXED at
+    `(x=0x40, y=_SRand1(48)+8)` and the loop runs exactly `200` times
+    regardless of the actual negative value (a large initial-scatter
+    batch, centered on the yard's horizontal middle) — but the
+    `_SRand128`/`_SRand64` draws for the `count >= 0` branch's OWN
+    center still happen even when they'll be discarded... no: each
+    branch computes ONLY its own center (never both), so there is no
+    discarded work here — the "dead but LFSR-observable" pattern
+    `get_strategy` showed does NOT apply to this pair. The resolved
+    center is always mirrored into `simant_data_group[0x836A]`/
+    `[0x836C]` (NOT `pack` — independently confirmed via a direct
+    machine memory read of the pointer-global, not assumed from the
+    surrounding PACK-heavy fields).
+
+    Each iteration: rolls an angle (`_SRand256()`) and, using a radius
+    cap rolled ONCE before the loop (`_SRand8() + 5`), a fresh radius
+    magnitude (`_SRand1(radius_cap)`); the candidate offset is
+    `frac_cos(angle) * radius // 0x7FFF` (composing `a_f_ldiv`, whose
+    32-bit result is truncated to its low word — only `AX`, never
+    `DX`, feeds the addition below, confirmed via the raw
+    disassembly) for x, `frac_sin(angle) * radius // 0x7FFF` for y,
+    added to the center.
+    Out-of-yard-bounds or already-occupied (life != 0) candidates are
+    skipped. Otherwise the existing yard map tile picks a branch by
+    range, split by `pack[0x9B6E]` ("inside the nest"):
+    inside — `>= 0x28`: skip; `[0x18, 0x28)`: skip if `tile % 4 == 3`
+    else increment; `[4, 0x18)`: stamp `(((tile - 8) & 0xFC) + 0x18) &
+    0xFF`; `< 4`: stamp `((tile + 6) & 0xFF) << 2 & 0xFF` (this pair
+    was swapped in a first-draft reading — independently re-confirmed
+    against the raw `cmp bx,4; jge` branch target, not just patched to
+    fit the failing test).
+    outside — `[0x18, 0x48)` or `>= 0x4B`: skip (note: NOT `> 0x4B` —
+    `0x4B` itself is excluded, independently confirmed via the raw
+    disassembly, a narrower range than `is_it_food`'s own `<= 0x4B`
+    outside-food test); `[0x48, 0x4B)`: increment; `< 0x18`: stamp the
+    fixed food tile `0x48`. Any successful stamp/increment bumps
+    `pack[0x9E84]` (the SAME per-drop counter `food_fall`/
+    `drop_food_a` already bump).
+    """
+    from .crt_math import a_f_ldiv
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+
+    if count >= 0:
+        seed, center_x = srand_pow2(seed, 127)
+        seed, center_y = srand_pow2(seed, 63)
+        loop_count = count
+    else:
+        center_x = 0x40
+        seed, r = srand1(seed, 48)
+        center_y = (r + 8) & 0xFFFF
+        loop_count = 200
+
+    simant_data_group.ww(0x836A, center_x & 0xFFFF)
+    simant_data_group.ww(0x836C, center_y & 0xFFFF)
+
+    seed, radius_cap = srand1(seed, 8)
+    radius_cap += 5
+
+    if loop_count > 0:
+        inside = pack.rw(0x9B6E) != 0
+        for _ in range(loop_count):
+            seed, angle = srand1(seed, 256)
+            seed, radius = srand1(seed, radius_cap)
+
+            x_trig = frac_cos(table_view, table_off, angle)
+            x_delta = _sx16(a_f_ldiv(x_trig * radius, 0x7FFF) & 0xFFFF)
+            cand_x = _sx16(center_x) + x_delta
+
+            y_trig = frac_sin(table_view, table_off, angle)
+            y_delta = _sx16(a_f_ldiv(y_trig * radius, 0x7FFF) & 0xFFFF)
+            cand_y = _sx16(center_y) + y_delta
+
+            if not (0 <= cand_x <= 0x7F):
+                continue
+            if not (0 <= cand_y <= 0x3F):
+                continue
+            cell = (cand_x << 6) + cand_y
+            if dgroup.rb(LIFE_PLANE_BASE[0] + cell) != 0:
+                continue
+            map_cell = MAP_PLANE_BASE[0] + cell
+            tile = dgroup.rb(map_cell)
+
+            if inside:
+                if tile >= 0x18:
+                    if tile >= 0x28:
+                        continue
+                    if tile % 4 == 3:
+                        continue
+                    dgroup.wb(map_cell, (tile + 1) & 0xFF)
+                elif tile >= 4:
+                    dgroup.wb(map_cell, (((tile - 8) & 0xFC) + 0x18) & 0xFF)
+                else:
+                    dgroup.wb(map_cell, (((tile + 6) & 0xFF) << 2) & 0xFF)
+            else:
+                if tile >= 0x18:
+                    if tile < 0x48 or tile >= 0x4B:
+                        continue
+                    dgroup.wb(map_cell, (tile + 1) & 0xFF)
+                else:
+                    dgroup.wb(map_cell, 0x48)
+
+            pack.ww(0x9E84, (pack.rw(0x9E84) + 1) & 0xFFFF)
+
+    dgroup.ww(SRAND_SEED_OFF, seed)

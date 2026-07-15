@@ -6310,10 +6310,14 @@ def test_maintainswarm_state_diff_matches_asm(b_val, r_val, b_floor, r_floor,
 
 
 # ---- _FeedAnts (seg6:0474) — hunger-decay food-supply tick ---------------
+# _FEEDANTS_TABLE_OFF/_FEEDANTS_TRIG_TABLE match _ADDFOOD's own fixture,
+# since feed_ants composes add_food once the food-drop gate is reached.
+_FEEDANTS_TABLE_OFF = 0x9000
+_FEEDANTS_TRIG_TABLE = [int(0x7FFF * (i / 64) ** 0.9) for i in range(64)]
 _FEEDANTS_REGIONS = [
-    (hooks.DG_SEG_INDEX, 0xAC86, 0xAC8A),
-    (_SDG, 0x8A00, 0x8A70),
-    (_PACK, 0x80B0, 0x9E90),
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_SDG, 0x8000, 0x8A70),
+    (_PACK, 0x80B0, 0xA000),
 ]
 
 
@@ -6321,6 +6325,15 @@ def _feedants_seed(no_starve, ac86, ac88, pack_80b4, food_count, threshold):
     def seed(m):
         dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
                         m.seg_bases[_PACK])
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(pack, 0x9FCA, _FEEDANTS_TABLE_OFF)
+        m.mem.ww(pack, 0x9FCC, dg)
+        for i, w in enumerate(_FEEDANTS_TRIG_TABLE):
+            m.mem.ww(dg, _FEEDANTS_TABLE_OFF + i * 2, w & 0xFFFF)
+        m.mem.ww(pack, 0x9B6E, 1)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes(span))
+        m.mem.load(dg, 0x68E8, bytes(span))
         m.mem.ww(sdg, 0x8A60, no_starve)
         m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
         m.mem.ww(dg, 0xAC88, ac88 & 0xFFFF)
@@ -6336,32 +6349,21 @@ def _feedants_seed(no_starve, ac86, ac88, pack_80b4, food_count, threshold):
     (1, 5, 5, 0, 100, 5, "no-starve-skips-black-decrement"),
     (0, 0, 0, 0, 100, 5, "already-zero-clamps"),
     (0, 5, 5, 3, 0, 100, "pack80b4-3-skips-food-check"),
+    (0, 5, 5, 0, 0, 100, "food-below-threshold-composes-add-food"),
 ])
 def test_feedants_state_diff_matches_asm(no_starve, ac86, ac88, pack_80b4,
                                          food_count, threshold, label):
     from simant.recovered.gameplay import feed_ants
     results = _run_and_diff_segs(
-        6, 0x474, (), lambda d, s, p: feed_ants(d, s, p), _FEEDANTS_REGIONS,
-        near=True,
+        6, 0x474, (),
+        lambda d, s, p: feed_ants(d, s, p, d, _FEEDANTS_TABLE_OFF),
+        _FEEDANTS_REGIONS, near=True,
         seed_fn=_feedants_seed(no_starve, ac86, ac88, pack_80b4, food_count,
-                               threshold))
+                               threshold),
+        stubs=[(2, 0x98B0)])   # GR!_myBeginSound, fired by add_food(flag=1)
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _FEEDANTS_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
-
-
-def test_feedants_addfood_gate_raises():
-    from simant.recovered.gameplay import feed_ants
-    dg = bytearray(0x10000)
-    sdg = bytearray(0x10000)
-    pack = bytearray(0x10000)
-    dgv, sdgv, packv = ByteBackend(dg, 0), ByteBackend(sdg, 0), ByteBackend(pack, 0)
-    sdgv.ww(0x8A60, 1)
-    packv.ww(0x80B4, 0)
-    packv.ww(0x9E84, 0)
-    sdgv.ww(0x8A62, 100)
-    with pytest.raises(NotImplementedError):
-        feed_ants(dgv, sdgv, packv)
 
 
 # ---- _SetCasteProd (seg7:026E) — pick the next hatch mode -----------------
@@ -7651,4 +7653,70 @@ def test_getstrategy_state_diff_matches_asm(ce80, bd2, ac7c, ac7e, cd88, ce7e,
         stubs=_GETSTRATEGY_STUBS)
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _GETSTRATEGY_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _AddFood (seg7:6A58) — scatter food/rock piles around a center ------
+# count >= 0 -> center = (SRand128(), SRand64()), loop runs `count` times
+# (feed_ants calls add_food(1, 0x96): exactly one pile, fully random center).
+# count < 0 -> center FIXED at (0x40, SRand1(48)+8), loop runs 200 times
+# regardless of the actual negative value (an initial big scatter). This is
+# the OPPOSITE of a first-draft reading that had the two branches swapped --
+# caught via a real-ASM run showing simant_data_group[0x836A]/[0x836C] (the
+# mirrored center -- also independently on SDG, not PACK as first assumed)
+# staying at their pre-seeded stale values, which only makes sense if count=1
+# took the SRand128/64 branch, not the 200-iteration one.
+# Single-iteration candidates precomputed offline (via the already-verified
+# srand1/srand_pow2/frac_sin/frac_cos/a_f_ldiv): seed 0x1234, count=1 ->
+# center (104, 16), candidate (104, 13); seed 0x5555, count=1 -> center
+# (42, 33), candidate exactly AT the center (a zero net trig offset).
+_ADDFOOD_TABLE_OFF = 0x9000
+_ADDFOOD_TRIG_TABLE = [int(0x7FFF * (i / 64) ** 0.9) for i in range(64)]
+_ADDFOOD_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_PACK, 0x8000, 0xA000),
+    (_SDG, 0x8300, 0x8400),
+]
+_ADDFOOD_STUBS = [(2, 0x98B0)]   # GR!_myBeginSound
+
+
+def _addfood_seed(seed_val, inside, all_clear):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9FCA, _ADDFOOD_TABLE_OFF)
+        m.mem.ww(pack, 0x9FCC, dg)
+        for i, w in enumerate(_ADDFOOD_TRIG_TABLE):
+            m.mem.ww(dg, _ADDFOOD_TABLE_OFF + i * 2, w & 0xFFFF)
+        m.mem.ww(pack, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(sdg, 0x836A, 0x99)
+        m.mem.ww(sdg, 0x836C, 0x99)
+        m.mem.ww(pack, 0x9E84, 0)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes(span) if all_clear else bytes([5]) * span)
+        m.mem.load(dg, 0x68E8, bytes(span))
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,count,flag,inside,all_clear,label", [
+    (0x1234, 1, 0x96, True, True, "count1-single-pile-inside-clear-map"),
+    (0x1234, 1, 0x96, True, False, "count1-single-pile-inside-nonzero-tile"),
+    (0x5555, 1, 0x96, False, True, "count1-candidate-lands-exactly-on-center"),
+    (0xABCD, -1, 0x96, True, True, "negative-count-200-iterations-fixed-center"),
+    (0x1234, 1, 1, True, True, "flag-one-fires-sound-stubbed"),
+])
+def test_addfood_state_diff_matches_asm(seed_val, count, flag, inside, all_clear, label):
+    from simant.recovered.gameplay import add_food
+
+    def apply_recovered(dgroup, pack, sdg):
+        add_food(dgroup, pack, sdg, dgroup, _ADDFOOD_TABLE_OFF, count, flag)
+
+    results = _run_and_diff_segs(
+        7, 0x6A58, (count, flag), apply_recovered,
+        _ADDFOOD_REGIONS, seed_fn=_addfood_seed(seed_val, inside, all_clear),
+        stubs=_ADDFOOD_STUBS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _ADDFOOD_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

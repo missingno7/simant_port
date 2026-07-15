@@ -1,5 +1,68 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.199) — /goal grind: _AddFood (clears _FeedAnts' gate)
+- RECOVERED `add_food` (`_AddFood`, SIMANTW.SYM seg7:6A58, args
+  count=[bp+6], flag=[bp+8]; FAR return, 514 bytes; calls `_SRand1`/
+  `8`/`48`/`64`/`128`/`256`, composes `frac_sin`/`frac_cos`/
+  `a_f_ldiv`, far-calls `GR!_myBeginSound` — presentation-only,
+  stubbed per `_StartAttack`'s precedent). Scatters up to `count`
+  food/rock piles in a roughly circular pattern around a center,
+  using fixed-point trig to pick each candidate's offset from a
+  random angle and radius, then range-classifies the existing map
+  tile (split by `pack[0x9B6E]` "inside the nest") to decide whether
+  to skip, increment, or stamp a new value — this was the LAST item
+  from the third Explore survey, and its recovery clears the
+  `NotImplementedError` gate `feed_ants` (recovered earlier this
+  session) has carried since before this window.
+- FOUR independent bugs caught across two rounds of real-ASM runs —
+  this function's dense mix of arithmetic-shift math, signed 32-bit
+  division, and swapped-looking branch pairs made it this session's
+  highest bug-per-line recovery:
+  1. `a_f_ldiv`'s 32-bit result must be truncated to its low word
+     before use (only `AX`, never `DX`, feeds the ASM's addition) —
+     caught immediately by absurd multi-billion coordinate values in
+     an offline simulation, before ever touching the real ASM oracle.
+  2. The `count >= 0` / `count < 0` branch pair was backwards: `count
+     >= 0` takes the `_SRand128`/`_SRand64` fully-random-center branch
+     (the ACTUAL loop count), `count < 0` is the FIXED-center,
+     hardcoded-200-iteration branch — caught via a real-ASM run
+     leaving the mirrored center fields at their pre-seeded stale
+     values, which only makes sense under the corrected reading.
+  3. `simant_data_group[0x836A]`/`[0x836C]` (the mirrored center), not
+     `pack` — independently confirmed via a direct machine memory read
+     of the pointer-global, not assumed from the surrounding
+     PACK-heavy fields.
+  4. The `tile < 4` and `tile in [4, 0x18)` stamp formulas were
+     swapped — caught by a real-ASM run landing on the exact predicted
+     cell but with a different tile value than either formula alone
+     would explain until the branch pairing itself was re-checked
+     against the raw `cmp bx,4; jge` target.
+  A slow-pytest-diff false alarm along the way: a mismatched byte
+  comparison inside a ~42KB region made pytest's assertion-rewriting
+  diff machinery appear to hang for minutes on a failing case: same
+  root cause, no separate fix needed, but worth remembering to
+  fast-verify big-region cases with a plain script BEFORE trusting
+  pytest's runtime when something looks stuck.
+- Then wired `feed_ants` (previously gated) to actually compose
+  `add_food` — and caught a FIFTH bug in the process: `_FeedAnts`
+  pushes `1` then `0x96` before calling, which (per the established
+  push-order convention) means `count=0x96` (150) and `flag=1` — the
+  OPPOSITE of the pre-recovery docstring's `add_food(1, 0x96)` guess,
+  caught when the real ASM's post-call food counter landed at 75
+  (consistent with ~150 attempted placements), not the 1 a `count=1`
+  reading would predict. `feed_ants`'s signature grew two new
+  parameters (`table_view`, `table_off`) to reach the genuine runtime
+  trig-table pointer, matching `frac_sin`/`frac_cos`'s own established
+  convention.
+- 6 new `add_food` cases (single-pile placement inside/outside with
+  clear and non-clear starting tiles, a candidate landing exactly on
+  the center, the 200-iteration fixed-center branch, and the
+  presentation-call-firing `flag=1` case) plus 1 new `feed_ants` case
+  (composing `add_food` for real) — all green after the fixes.
+- Suite: simant 1889 (+5, net of the removed
+  `test_feedants_addfood_gate_raises`), full suite green. This closes
+  out every candidate from the third Explore survey.
+
 ## 2026-07-15 (cont.198) — /goal grind: _GetStrategy
 - RECOVERED `get_strategy` (`_GetStrategy`, SIMANTW.SYM seg7:0000, NO
   args; FAR return, 460 bytes; calls `_SRand1(5)` x2, `_GetDis`,
