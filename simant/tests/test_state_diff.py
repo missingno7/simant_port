@@ -3416,6 +3416,253 @@ def test_simqueenb_0d_food_roll_blocks_matches_asm():
     _simqueenb_assert(results, "0d-food-roll-blocks")
 
 
+# ---- _DoFoodInB (seg6:492A) — black nest ant carry-food-in tick ----------
+# Composes get_enter_dir_b, get_out_b, is_yellow_ant, find_in_b_list,
+# get_winner, get_new_mode_b, and the private _eat_food shared body. THREE
+# args only (x, y, mode) -- no caste_sub fourth arg, unlike _DoDigInB/
+# _SimQueenB. One gated branch deliberately not recovered (_YellowFight),
+# kept out of every seeded scenario below except its own dedicated test.
+_DOFOODINB_STUBS = []   # no presentation-only far calls in this routine
+_DOFOODINB_REGIONS = _DODIGINB_REGIONS
+
+
+def _dofoodinb_seed(x, y, mode, srand, *, own_dist=0, dir2_dist=0,
+                    dest_tile=0x05, occupant=0x00, ce98=0, ac86=50,
+                    own_tile=0x05, caste_bit3=0, b_list_match_at=None):
+    """Common ground for _DoFoodInB scenarios. Leaves get_enter_dir_b's
+    exit-distance array (`simant_data_group[0x3A4..]`) ALL-ZERO by default
+    (a fresh machine's own SIMANT_DATA_GROUP starts that way) so
+    `get_enter_dir_b` deterministically returns -1 (no direction, no RNG
+    consumed) -- the alt-branch. Pass `own_dist`/`dir2_dist` (both nonzero,
+    `dir2_dist <= own_dist`, no tie) to make it deterministically pick
+    direction 2 (east, `GET_BEST_DIR_DX[2]=1`/`DY[2]=0`) instead, for the
+    main (move) branch scenarios.
+    """
+    from simant.recovered.gameplay import GET_BEST_DIR_DX, GET_BEST_DIR_DY
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, 0)
+        m.mem.wb(sdg, 0x3D18, mode | (0x08 if caste_bit3 else 0))
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)     # pin get_winner's C-runtime rand state
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+        m.mem.wb(sdg, 0x8A5C, 0)            # get_winner: no cheat gate
+        m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
+        m.mem.wb(dg, 0xCE98, ce98)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        m.mem.wb(sdg, 0x3A4 + (x << 6) + y, own_dist)
+        m.mem.wb(sdg, 0x3A4 + ((x + 1) << 6) + y, dir2_dist)
+        m.mem.wb(dg, 0x48E8 + (x << 6) + y, own_tile)
+        m.mem.wb(dg, 0x48E8 + ((x + 1) << 6) + y, dest_tile)
+        m.mem.wb(dg, 0x88E8 + ((x + 1) << 6) + y, occupant)
+        m.mem.ww(pack, 0x99D4, 0)
+        m.mem.ww(pack, 0x9EA4, 3)
+        m.mem.ww(pack, 0x7402, 5)
+        m.mem.ww(dg, 0xAC82, 20)
+        m.mem.ww(dg, 0xAC98, 10)
+        if b_list_match_at is not None:
+            bx, by = b_list_match_at
+            m.mem.ww(pack, 0x99D4, 2)
+            m.mem.wb(sdg, 0x3736 + 1, bx & 0xFF)
+            m.mem.wb(sdg, 0x392C + 1, by & 0xFF)
+            m.mem.wb(sdg, 0x3D18 + 1, occupant)
+    return seed
+
+
+def _dofoodinb_run(x, y, mode, seed_fn):
+    from simant.recovered.gameplay import do_food_in_b
+    return _run_and_diff_segs(
+        6, 0x492A, (x, y, mode),
+        lambda d, s, p: do_food_in_b(d, s, p, x, y, mode),
+        _DOFOODINB_REGIONS, seed_fn=seed_fn, stubs=_DOFOODINB_STUBS)
+
+
+def _dofoodinb_assert(results, label):
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOFOODINB_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dofoodinb_no_direction_alt_branch_matches_asm():
+    # get_enter_dir_b returns -1 (all-zero exit-distance array, the
+    # default) -> alt-branch: own tile < 0x10 -> forced to 0x10;
+    # roll100(seed 0x1234 -> 20) <= food(50) -> the _eat_food tail is
+    # SKIPPED; field_c still re-picked via get_new_mode_b.
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12, _dofoodinb_seed(x, y, 0x12, 0x1234, own_tile=0x05, ac86=50))
+    _dofoodinb_assert(results, "no-direction-alt-branch")
+
+
+def test_dofoodinb_no_direction_eat_food_tail_matches_asm():
+    # Same alt-branch, but roll100(seed 0xABCD -> 67) > food(50) -> the
+    # _eat_food tail DOES run (tile reroll/decrement + food-count
+    # decrement + growth-trigger).
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12, _dofoodinb_seed(x, y, 0x12, 0xABCD, own_tile=0x10, ac86=50))
+    _dofoodinb_assert(results, "no-direction-eat-food-tail")
+
+
+@pytest.mark.parametrize("own_tile,label", [
+    (0x05, "below-0x10-forced-to-0x10"),
+    (0x11, "mid-range-incremented"),
+    (0x15, "at-or-above-0x13-unchanged"),
+])
+def test_dofoodinb_tile_growth_matches_asm(own_tile, label):
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12, _dofoodinb_seed(x, y, 0x12, 0x1234, own_tile=own_tile))
+    _dofoodinb_assert(results, f"tile-growth-{label}")
+
+
+def test_dofoodinb_caste_bit3_cleared_matches_asm():
+    # Alt-branch; the acting ant's caste field has bit 0x08 set -> cleared
+    # (caste -= 8) before the field_c re-pick.
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12, _dofoodinb_seed(x, y, 0x12, 0x1234, caste_bit3=1))
+    _dofoodinb_assert(results, "caste-bit3-cleared")
+
+
+def test_dofoodinb_1in16_override_matches_asm():
+    # A valid direction (2, east) IS found, but SRand16() rolls 0 (seed 0)
+    # -> the 1-in-16 override still takes the alt-branch instead of moving.
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12,
+        _dofoodinb_seed(x, y, 0x12, 0x0000, own_dist=5, dir2_dist=3))
+    _dofoodinb_assert(results, "1in16-override")
+
+
+def test_dofoodinb_move_into_empty_matches_asm():
+    # Direction 2 (east) found (own_dist=5 > dir2_dist=3, no tie); SRand16()
+    # rolls nonzero (seed 0x1234 -> 8) -> no override -> moves into the
+    # empty (bit 0x80 clear) destination cell.
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12,
+        _dofoodinb_seed(x, y, 0x12, 0x1234, own_dist=5, dir2_dist=3))
+    _dofoodinb_assert(results, "move-into-empty")
+
+
+def test_dofoodinb_out_of_bounds_matches_asm():
+    # x=0x3F -> direction 2 (east, dx=+1) pushes new_x to 0x40, out of
+    # 0..0x3F -> silent no-op return.
+    x, y = 0x3F, 20
+    results = _dofoodinb_run(
+        x, y, 0x12,
+        _dofoodinb_seed(x, y, 0x12, 0x1234, own_dist=5, dir2_dist=3))
+    _dofoodinb_assert(results, "out-of-bounds")
+
+
+def test_dofoodinb_new_y_lt_1_get_out_b_matches_asm():
+    # y=1, direction 0 (north, dx=0/dy=-1) chosen -> new_y = 1 + (-1) = 0,
+    # which is < 1 -> calls get_out_b(x) and returns, discarding its
+    # result -- the SAME precedent _DoDigInB's own "new_y < 1" gate
+    # established. mode=0x12 -> caste_low3=2 -> gate = 2^4 = 6, so
+    # direction 0 is never the excluded neighbor.
+    from simant.recovered.gameplay import GET_BEST_DIR_DX, GET_BEST_DIR_DY
+    x, y = 20, 1
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, 0)
+        m.mem.wb(sdg, 0x3D18, 0x12)
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(dg, 0xAC86, 50)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        m.mem.wb(sdg, 0x3A4 + (x << 6) + y, 5)         # own cell exit-dist
+        m.mem.wb(sdg, 0x3A4 + (x << 6) + (y - 1), 3)   # north neighbor (y=0), lower -> wins
+        m.mem.ww(pack, 0x99D4, 0)
+
+    results = _dofoodinb_run(x, y, 0x12, seed)
+    _dofoodinb_assert(results, "new-y-lt-1-get-out-b")
+
+
+def test_dofoodinb_blocked_tile_ge_0x30_matches_asm():
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12,
+        _dofoodinb_seed(x, y, 0x12, 0x1234, own_dist=5, dir2_dist=3,
+                        dest_tile=0x40))
+    _dofoodinb_assert(results, "blocked-tile-ge-0x30")
+
+
+def test_dofoodinb_yellow_ce98_zero_treated_empty_matches_asm():
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12,
+        _dofoodinb_seed(x, y, 0x12, 0x1234, own_dist=5, dir2_dist=3,
+                        occupant=0xFE, ce98=0))
+    _dofoodinb_assert(results, "yellow-ce98-zero")
+
+
+def test_dofoodinb_invader_out_of_blist_move_matches_asm():
+    # Occupant in 0x88..0xE7, not yellow, but NOT present in the B-list at
+    # (new_x, new_y) -> falls through to the move (same as empty).
+    x, y = 20, 20
+    results = _dofoodinb_run(
+        x, y, 0x12,
+        _dofoodinb_seed(x, y, 0x12, 0x1234, own_dist=5, dir2_dist=3,
+                        occupant=0x90))
+    _dofoodinb_assert(results, "invader-out-of-blist-move")
+
+
+def test_dofoodinb_fight_found_matches_asm():
+    x, y = 20, 20
+    occupant = 0x90
+    new_x, new_y = x + 1, y
+    results = _dofoodinb_run(
+        x, y, 0x12,
+        _dofoodinb_seed(x, y, 0x12, 0x1234, own_dist=5, dir2_dist=3,
+                        occupant=occupant, b_list_match_at=(new_x, new_y)))
+    _dofoodinb_assert(results, "fight-found")
+
+
+def test_dofoodinb_yellowfight_gate_raises():
+    # Occupied destination is the player's yellow ant AND dgroup[0xCE98] !=
+    # 0 -> the UNRECOVERED _YellowFight(2, slot) branch WOULD fire
+    # (independently confirmed against the real ASM: it reaches
+    # SIMANT1!_YellowFight, seg6:823E, the SAME call/argument pair
+    # _DoDigInB/_DoForageAnt already established for this exact call).
+    # Direct recovered-function call (no ASM oracle) -- same pattern as
+    # _DoDigInB's own yellowfight-gate test, since the real ASM would
+    # crash deeper in _YellowFight's own unrecovered dependency chain
+    # rather than raise a Python exception.
+    from simant.recovered.gameplay import (do_food_in_b, GET_BEST_DIR_DX,
+                                            GET_BEST_DIR_DY)
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, mode = 20, 20, 0x12
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    dg_view.ww(0xCBF2, 0x1234)
+    pack_view.ww(0x9B6A, 0)
+    sdg_view.wb(0x3D18, mode)
+    sdg_view.wb(0x3A4 + (x << 6) + y, 5)
+    sdg_view.wb(0x3A4 + ((x + 1) << 6) + y, 3)   # direction 2 (east) deterministic
+    dg_view.wb(0x48E8 + ((x + 1) << 6) + y, 0x05)   # passable, not a hole
+    dg_view.wb(0x88E8 + ((x + 1) << 6) + y, 0xFE)   # yellow ant occupant
+    dg_view.wb(0xCE98, 1)          # nonzero -> _YellowFight gate fires
+    with pytest.raises(NotImplementedError):
+        do_food_in_b(dg_view, sdg_view, pack_view, x, y, mode)
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.

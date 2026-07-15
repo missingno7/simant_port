@@ -1,5 +1,66 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.209) — /goal grind: _DoFoodInB (seg6 behavior tier, _DoNestAntB dependency 2/3)
+- RECOVERED `do_food_in_b` (`_DoFoodInB`, SIMANTW.SYM seg6:492A, FAR
+  return, 678 bytes) — the black nest ant's carry-food-in per-tick
+  behavior: head toward a chosen direction and move in (fighting/
+  deferring on an occupied destination, same shape as `_DoDigInB`'s own
+  move tail), or — no good direction, or a 1-in-16 override — drop/grow a
+  food pile at her CURRENT position and re-pick her mode instead. Second
+  of the three `_DoNestAntB` dispatch-arm dependencies from this
+  session's brief (`_SimQueenB` done in cont.208, `_DoDigOutB` next).
+- Only THREE args (`x=[bp+6]`, `y=[bp+8]`, `mode=[bp+10]`) — confirmed via
+  the raw `enter 001Ch,0` frame never referencing `[bp+14]` anywhere —
+  NOT the caller-precomputed `caste_sub` fourth arg `_DoDigInB`/
+  `_SimQueenB` both take. A genuine signature asymmetry among the three
+  `_DoNestAntB` dispatch arms, not a porting oversight.
+- Composes `get_enter_dir_b`, `get_out_b`, `is_yellow_ant`,
+  `find_in_b_list`, `get_winner`, `get_new_mode_b`, and — a genuine
+  simplification this session found — the PRIVATE shared body
+  `_eat_food` (not the public `try_eat_food_b`/`eat_food_b` wrappers)
+  reused VERBATIM for the alt-branch's own food-supply tail: its
+  disassembled `(MAP_PLANE_BASE[2], 0x9EA4, 0xAC82, 0xAC98, 0x7402,
+  0xAC86)` field-access set matches `_eat_food`'s own byte for byte
+  (reached via a different outer gate here — an `_SRand1(100)` roll vs
+  food supply — than `_EatFoodB`'s own unconditional call site), again
+  confirming both independently rather than re-deriving a near-duplicate.
+- One raise-loudly gate, matching the established `_YellowFight(2, slot)`
+  precedent exactly (same call/argument pair, same seg6:823E target). The
+  real ASM reaches it through a second, textually-redundant
+  `is_yellow_ant` re-call plus a second `dgroup[0xCE98]` re-check on the
+  SAME unchanged occupant byte (confirmed via the raw disassembly that
+  nothing writes to that byte in between the two checks) — collapses to
+  the same single-check gate `_DoDigInB`/`_DoForageAnt` already use,
+  without loss of byte-exactness.
+- **A real bug caught before trusting the ASM oracle, the SAME polarity-
+  mistake class `_SimQueenB` caught last session**: an early reading had
+  `_SRand16()` rolled unconditionally before deciding between the main
+  branch and the "grow food at current position" alt-branch. The real
+  ASM's own `jge`/`jmp` pair actually skips the `_SRand16()` call site
+  ENTIRELY when `get_enter_dir_b` returns negative (no valid direction),
+  going straight to the alt-branch with zero extra RNG consumed — `_SRand16()`
+  is only ever rolled when a direction WAS found, and only THEN can a
+  1-in-16 roll of `0` override it back to the alt-branch anyway. Caught
+  immediately by the first real-ASM state-diff run on a divergent `_SRand*`
+  LFSR seed value (the tell-tale signature this bug class leaves,
+  independently confirmed twice now).
+- A second, smaller bug caught the same way: `get_winner`'s C-runtime
+  `_RRand` state (`RAND_STATE_OFF`) needed explicit pinning in the new
+  seed helper (the "fight found" scenario's own life-grid byte mismatched
+  by exactly the `0x80` colony bit until pinned) — the exact same
+  drift-unless-pinned trap `_DoForageAnt`'s own session already
+  documented, re-encountered and fixed here rather than re-discovered as
+  a surprise.
+- 15 new state-diff/gate tests, all green on real ASM (alt-branch no-
+  direction with/without the `_eat_food` tail, 3-way tile-growth
+  threshold, caste-bit3-clear, 1-in-16 override, move-into-empty, out-of-
+  bounds, `new_y<1`-get_out_b, blocked-tile, yellow-CE98-zero, invader-
+  out-of-blist-move, fight-found, and a dedicated yellowfight-gate-raises
+  test using the direct-call pattern `_DoDigInB`'s own equivalent test
+  established). Suite: simant 2072 (+15), full suite green.
+- `_DoDigOutB` (the last of the three `_DoNestAntB` dependencies from
+  this session's brief) not yet attempted — next up.
+
 ## 2026-07-15 (cont.208) — /goal grind: _SimQueenB (seg6 behavior tier, _DoNestAntB dependency 1/3)
 - RECOVERED `sim_queen_b` (`_SimQueenB`, SIMANTW.SYM seg6:3DC2, FAR return,
   668 bytes) — the black queen's own `_DoNestAntB` dispatch arm: try to

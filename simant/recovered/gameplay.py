@@ -6131,6 +6131,204 @@ def do_forage_ant(dgroup, simant_data_group, pack, slot: int) -> None:
     _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
 
 
+def do_food_in_b(dgroup, simant_data_group, pack, x: int, y: int, mode: int) -> None:
+    """A black nest ("B"-list) ant carrying food back into the nest: head
+    toward a chosen direction and move in (fighting/deferring on an
+    occupied destination like `_DoDigInB`'s own move tail), OR — when no
+    good direction exists, or a 1-in-16 roll overrides a found one — drop/
+    grow a food pile at her CURRENT position instead and re-pick her mode.
+
+    Recovered from `_DoFoodInB` (SIMANTW.SYM seg6:492A, FAR return, 678
+    bytes). Only THREE args — `x=[bp+6]`, `y=[bp+8]`, `mode=[bp+10]` — NOT
+    the caller-precomputed `caste_sub` fourth arg `_DoDigInB`/`_SimQueenB`
+    both take (confirmed: the real ASM's own `enter 001Ch,0` frame never
+    references `[bp+14]` anywhere in the routine). Composes the already-
+    recovered `get_enter_dir_b`, `get_out_b`, `is_yellow_ant`,
+    `find_in_b_list`, `get_winner`, `get_new_mode_b`, and — a genuine
+    simplification this session found — the PRIVATE shared body
+    `_eat_food` (not the public `try_eat_food_b`/`eat_food_b` wrappers)
+    reused VERBATIM for the alt-branch's own food-supply tail: its own
+    `(MAP_PLANE_BASE[2], 0x9EA4, 0xAC82, 0xAC98, 0x7402, 0xAC86)` argument
+    set matches this routine's own disassembled field accesses byte for
+    byte (the SAME reroll-tile / decrement-food-count / growth-trigger
+    sequence `eat_food_b` composes, just reached via a different outer
+    gate — an `_SRand1(100)` roll here, vs `_EatFoodB`'s own unconditional
+    call site elsewhere), confirming both independently rather than
+    re-deriving a near-duplicate.
+
+    Calls `get_enter_dir_b(x, y, mode & 7)`. A NEGATIVE result skips
+    `_SRand16()` entirely and goes straight to the alt-branch below
+    (confirmed via the raw disassembly: the `jge`/`jmp` pair branches PAST
+    the `_SRand16()` call site on a negative direction, not just past the
+    starvation-style check — the two readings consume a different number
+    of `_SRand*` calls, the same class of polarity mistake `_SimQueenB`'s
+    own mode-0x0C control flow caught this session). A non-negative
+    direction then rolls `_SRand16()`; on an exact `0` (1-in-16) it ALSO
+    takes the alt-branch — a probabilistic override even though a valid
+    direction exists.
+
+    Main branch (direction found, no 1-in-16 override): `dir_caste =
+    (mode & 0xF8) | direction` is stamped onto BOTH the slot's caste field
+    and the CURRENT (not yet moved) nest life-grid cell `(x, y)` — the
+    SAME unconditional "turn to face" stamp `_DoDigInB` makes, made
+    BEFORE any of the bounds/occupant logic below (and, like there, this
+    exact value — not a later re-read — is what `get_winner`'s second
+    argument uses in the fight case). `(new_x, new_y)` come from
+    `simant_data_group[direction]`/`[8 + direction]` (the SAME live
+    compass dx/dy table `_DoDigInB`/`_SimQueenB`/`_DoForageAnt` all read).
+    Either coordinate out of `0..0x3F` is a silent no-op return. `new_y <
+    1` instead calls `get_out_b(x)` and returns UNCONDITIONALLY,
+    discarding its result — identical to `_DoDigInB`'s own precedent.
+    Otherwise: the nest map tile at `(new_x, new_y)` `>= 0x30` is a silent
+    no-op return. The CURRENT `(x, y)` nest life-grid cell is then
+    unconditionally cleared to `0` (no dig step here at all — this
+    routine never digs, unlike `_DoDigInB`).
+
+    The `(new_x, new_y)` occupant is then read; bit `0x80` CLEAR falls
+    straight through to the move below. Bit `0x80` SET:
+
+    - `is_yellow_ant(occupant)` and `dgroup[0xCE98] == 0`: falls through
+      to the move (treated as empty) — same as `_DoDigInB`'s own gate.
+    - `is_yellow_ant(occupant)` and `dgroup[0xCE98] != 0`: calls the
+      UNRECOVERED `SIMANT1!_YellowFight(2, pack[0x9B6A])` (seg6:823E, the
+      SAME call/argument pair already established) and returns — raises
+      `NotImplementedError` per this project's fail-loud rule. (The real
+      ASM reaches this through a second, redundant `is_yellow_ant`
+      re-call plus a second `dgroup[0xCE98]` re-check on the SAME
+      unchanged occupant byte — confirmed via the raw disassembly that
+      nothing writes to that byte in between — so it collapses to this
+      same single-check gate without loss of byte-exactness.)
+    - Not yellow, occupant in `0x88..0xE7`: looked up via
+      `find_in_b_list(new_x, new_y, occupant)` (the established
+      coordinate-role-swap convention). A miss falls through to the move.
+      A hit resolves `get_winner(occupant, dir_caste)`: stamps the winner
+      onto the found occupant's `field_e`, recomputes its caste as
+      `(winner & 0x80) + 0x70` onto both its own caste field and the new-
+      position life-grid cell, sets its `field_c = 0x0A`, and returns —
+      no move, no field_c re-pick for the acting ant.
+    - Not yellow, occupant outside `0x88..0xE7`: falls through to the
+      move (same as a miss).
+
+    The move: re-reads the slot's CURRENT caste field (always numerically
+    equal to `dir_caste` here — nothing in this routine's own occupant-
+    check paths writes to it first, unlike `_DoDigInB`'s dig-success bump
+    — but ported as a fresh read to match the real ASM's own instruction,
+    not the cached local), keeps its high bits, ORs in `direction`, stamps
+    that at the new position AND the slot's caste field, and updates the
+    slot's `x`/`y` fields (`[0x3736+slot]`/`[0x392C+slot]`). NO field_c
+    re-pick happens on this path at all.
+
+    Alt-branch (no direction, or the 1-in-16 override): re-reads `(x, y)`
+    (the ORIGINAL position — no move at all on this path) and grows a
+    food pile there: a tile `< 0x10` is forced to exactly `0x10`; a tile
+    in `0x10..0x12` is incremented by one; `>= 0x13` is left unchanged.
+    Unconditionally increments `pack[0x9EA4]` (the SAME food-nibble
+    counter `_eat_food`'s own `food_count_off` decrements elsewhere) and
+    clears the slot's caste field's `0x08` bit if set (`caste -= 8`).
+    Rolls `_SRand1(100)`; only when the roll EXCEEDS `dgroup[0xAC86]`
+    (the colony's food supply) does it run the `_eat_food`-equivalent
+    tail at `(x, y)` (see above) — an inverted-looking gate (a HIGH roll,
+    not a low one, triggers the food-supply nibble), ported exactly as
+    disassembled, not "corrected" to feel more intuitive. Either way,
+    finally re-picks the slot's `field_c` via
+    `get_new_mode_b(sub=(mode & 0x78) >> 3)` and returns — this is the
+    ONLY path in the whole routine that ever touches the acting ant's own
+    `field_c`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    caste_low3 = mode & 7
+    direction = get_enter_dir_b(dgroup, simant_data_group, x, y, caste_low3)
+
+    take_alt = direction < 0
+    if not take_alt:
+        seed, roll16 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 15)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        take_alt = (roll16 == 0)
+
+    if take_alt:
+        own_idx = MAP_PLANE_BASE[2] + (x << 6) + y
+        tile = dgroup.rb(own_idx)
+        if tile < 0x10:
+            dgroup.wb(own_idx, 0x10)
+        elif tile < 0x13:
+            dgroup.wb(own_idx, (tile + 1) & 0xFF)
+
+        pack.ww(0x9EA4, (pack.rw(0x9EA4) + 1) & 0xFFFF)
+
+        slot = pack.rw(0x9B6A)
+        caste_field = simant_data_group.rb(0x3D18 + slot)
+        if caste_field & 0x08:
+            simant_data_group.wb(0x3D18 + slot, (caste_field - 8) & 0xFF)
+
+        seed, roll100 = srand1(dgroup.rw(SRAND_SEED_OFF), 100)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        if roll100 > _sx16(dgroup.rw(0xAC86)):
+            _eat_food(dgroup, pack, MAP_PLANE_BASE[2], 0x9EA4, 0xAC82, 0xAC98,
+                     0x7402, 0xAC86, x, y)
+
+        sub = ((mode & 0x78) >> 3) & 0xFFFF
+        new_mode = get_new_mode_b(dgroup, simant_data_group, pack, sub) & 0xFF
+        slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x3B22 + slot, new_mode)
+        return
+
+    high_bits = mode & 0xF8
+    dir_caste = (high_bits | direction) & 0xFF
+    dgroup.wb(LIFE_PLANE_BASE[2] + (x << 6) + y, dir_caste)
+    slot = pack.rw(0x9B6A)
+    simant_data_group.wb(0x3D18 + slot, dir_caste)
+
+    new_x = (x + sx8(simant_data_group.rb(direction))) & 0xFFFF
+    new_y = (y + sx8(simant_data_group.rb(8 + direction))) & 0xFFFF
+    if not (0 <= new_x <= 0x3F):
+        return
+    if not (0 <= new_y <= 0x3F):
+        return
+    if new_y < 1:
+        get_out_b(dgroup, simant_data_group, pack, x)
+        return
+
+    idx = (new_x << 6) + new_y
+    tile = dgroup.rb(MAP_PLANE_BASE[2] + idx)
+    if tile >= 0x30:
+        return
+
+    dgroup.wb(LIFE_PLANE_BASE[2] + (x << 6) + y, 0)
+
+    occupant = dgroup.rb(LIFE_PLANE_BASE[2] + idx)
+    if occupant & 0x80:
+        if is_yellow_ant(occupant):
+            if dgroup.rb(0xCE98) != 0:
+                raise NotImplementedError(
+                    "do_food_in_b: _YellowFight branch reached (not recovered) "
+                    "-- x={!r} y={!r}".format(x, y))
+            # else falls through to the move, below
+        elif 0x88 <= occupant <= 0xE7:
+            found = find_in_b_list(pack, simant_data_group, new_x, new_y, occupant)
+            if found != 0xFFFF:
+                winner = get_winner(dgroup, simant_data_group, pack, occupant,
+                                    dir_caste) & 0xFF
+                simant_data_group.wb(0x3F0E + found, winner)
+                new_caste_occ = ((winner & 0x80) + 0x70) & 0xFF
+                simant_data_group.wb(0x3D18 + found, new_caste_occ)
+                dgroup.wb(LIFE_PLANE_BASE[2] + idx, new_caste_occ)
+                simant_data_group.wb(0x3B22 + found, 0x0A)
+                return
+
+    slot = pack.rw(0x9B6A)
+    cur_caste = simant_data_group.rb(0x3D18 + slot)
+    new_caste = ((cur_caste & 0xF8) | direction) & 0xFF
+    simant_data_group.wb(0x3D18 + slot, new_caste)
+    dgroup.wb(LIFE_PLANE_BASE[2] + idx, new_caste)
+    simant_data_group.wb(0x3736 + slot, new_x & 0xFF)
+    simant_data_group.wb(0x392C + slot, new_y & 0xFF)
+
+
 def _dig_in_b_mode_refresh(dgroup, simant_data_group, pack, caste_sub: int) -> None:
     """Shared early-exit tail `do_dig_in_b` reuses at THREE distinct exit
     points (mode-sub shortcut, edge-of-nest `y == 0x3F`, and a rejected
