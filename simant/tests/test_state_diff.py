@@ -1182,6 +1182,209 @@ def test_makenewholer_state_diff_matches_asm(col, seed_val, inside, row_tiles,
             f"{_first_diff(asm_after, rec_after, lo)}")
 
 
+# ---- _CreateNewHole (seg5:171A) — stamp a hole marker + dig the tunnel ----
+# Composes dig_tile_b/r (with a SWAPPED (y, 1) argument, not this routine's own
+# (x, y) -- see the docstring), so reuses _MAKENEWHOLEB_REGIONS (a superset
+# covering the "last hole" scratch tables and _FillHolesBN/RN arrays this
+# routine also writes directly).
+def _createnewhole_seed(x, y, inside, tile_black_y1, tile_red_y1, seed_val):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        # the swapped-arg dig_tile_b/dig_tile_r call always targets (y, 1)
+        # on the black/red nest map respectively
+        if 0 <= y <= 0x3F:
+            m.mem.wb(dg, 0x48E8 + (y << 6) + 1, tile_black_y1)
+            m.mem.wb(dg, 0x58E8 + (y << 6) + 1, tile_red_y1)
+        m.mem.ww(pack, 0x8104, 100)
+        m.mem.ww(pack, 0x8106, 0)
+        m.mem.ww(pack, 0x811A, 200)
+        m.mem.ww(pack, 0x811C, 0)
+        m.mem.ww(pack, 0x72C8, 3)
+        m.mem.ww(pack, 0x9DDC, 50)
+        m.mem.ww(pack, 0x9DDE, 0)
+        m.mem.ww(pack, 0x9DE2, 75)
+        m.mem.ww(pack, 0x9DE4, 0)
+        m.mem.ww(pack, 0x7A56, 2)
+        if not inside:
+            # blank-clear the 3x3 neighbourhood around (x, y) so the
+            # outside-branch's edge carve (`tile < 0x50` gate) is exercised
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                        m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, 0x10)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,inside,tile_black_y1,tile_red_y1,seed_val", [
+    (10, 20, True, 0x40, 0x40, 0x1234),    # black, inside, dig target not dirt
+    (10, 20, True, 0x25, 0x40, 0x1234),    # black, inside, dig target dirt -> reroll+track
+    (0x50, 20, True, 0x40, 0x40, 0x1234),  # red, inside, not dirt
+    (0x50, 20, True, 0x40, 0x25, 0x1234),  # red, inside, dirt -> reroll+track
+    (10, 20, False, 0x40, 0x40, 0x1234),   # black, outside -> 0x50 stamp + edge carve
+    (0x50, 20, False, 0x40, 0x40, 0x1234), # red, outside -> 0x50 stamp + edge carve
+    (0x3F, 20, True, 0x40, 0x40, 0x1234),  # x boundary: black side (x < 0x40)
+    (0x40, 20, True, 0x40, 0x40, 0x1234),  # x boundary: red side (x >= 0x40)
+    (1, 1, True, 0x40, 0x40, 0x1234),      # tight lower bound (x=1, y=1) still valid
+    (0x7E, 0x3E, True, 0x40, 0x40, 0x1234),# tight upper bound still valid
+])
+def test_createnewhole_state_diff_matches_asm(x, y, inside, tile_black_y1,
+                                              tile_red_y1, seed_val):
+    from simant.recovered.gameplay import create_new_hole
+    results = _run_and_diff_segs(
+        5, 0x171A, (x, y),
+        lambda d, s, p: create_new_hole(d, s, p, x, y),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_createnewhole_seed(x, y, inside, tile_black_y1, tile_red_y1,
+                                    seed_val))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} inside={inside} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+@pytest.mark.parametrize("x,y", [
+    (0, 20), (0x7F, 20),     # x out of [1, 0x7E]
+    (20, 0), (20, 0x3F),     # y out of [1, 0x3E]
+])
+def test_createnewhole_out_of_bounds_is_noop_state_diff_matches_asm(x, y):
+    from simant.recovered.gameplay import create_new_hole
+    results = _run_and_diff_segs(
+        5, 0x171A, (x, y),
+        lambda d, s, p: create_new_hole(d, s, p, x, y),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_createnewhole_seed(max(1, min(x, 0x7E)), max(1, min(y, 0x3E)),
+                                    True, 0x40, 0x40, 0x1234))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, f"x={x} y={y} {label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _DigMyNewHole (seg5:16AE) — gate + create_new_hole --------------------
+def _digmynewhole_seed(x, y, inside, tile_xy, seed_val):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        if inside:
+            if 0 <= x <= 0x7F and 0 <= y <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (x << 6) + y, tile_xy)
+        else:
+            # blank-clear the 3x3 neighbourhood so `_IsClear3x3` is
+            # deterministic, then poke the centre tile per `tile_xy`
+            for dx in range(-1, 2):
+                for dy in range(-1, 2):
+                    nx, ny = x + dx, y + dy
+                    if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                        m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, 0x00)
+                        m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, 0x00)
+            if 0 <= x <= 0x7F and 0 <= y <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (x << 6) + y, tile_xy)
+        m.mem.ww(pack, 0x8104, 100)
+        m.mem.ww(pack, 0x8106, 0)
+        m.mem.ww(pack, 0x811A, 200)
+        m.mem.ww(pack, 0x811C, 0)
+        m.mem.ww(pack, 0x72C8, 3)
+        m.mem.ww(pack, 0x9DDC, 50)
+        m.mem.ww(pack, 0x9DDE, 0)
+        m.mem.ww(pack, 0x9DE2, 75)
+        m.mem.ww(pack, 0x9DE4, 0)
+        m.mem.ww(pack, 0x7A56, 2)
+        if 0 <= y <= 0x3F:
+            m.mem.wb(dg, 0x48E8 + (y << 6) + 1, 0x40)
+            m.mem.wb(dg, 0x58E8 + (y << 6) + 1, 0x40)
+    return seed
+
+
+@pytest.mark.parametrize("x,y,inside,tile_xy,seed_val", [
+    (0, 20, True, 0x00, 0x1234),        # x out of [1, 0x7F] -> 0, no-op
+    (20, 0, True, 0x00, 0x1234),        # y out of [1, 0x3F] -> 0, no-op
+    (10, 20, True, 0x40, 0x1234),       # inside, tile < 0xC8 -> clear -> digs (black)
+    (10, 20, True, 0xC8, 0x1234),       # inside, tile >= 0xC8 -> blocked, no dig
+    (0x50, 20, True, 0x10, 0x1234),     # inside, clear (red side)
+    (10, 20, False, 0x00, 0x1234),      # outside, whole 3x3 clear
+    (10, 20, False, 0x40, 0x1234),      # outside, centre tile blocks the 3x3
+])
+def test_digmynewhole_state_diff_matches_asm(x, y, inside, tile_xy, seed_val):
+    from simant.recovered.gameplay import dig_my_new_hole
+    (asm_ax, rec_ax), results = _run_and_diff_segs_with_ax(
+        5, 0x16AE, (x, y),
+        lambda d, s, p: dig_my_new_hole(d, s, p, x, y),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_digmynewhole_seed(x, y, inside, tile_xy, seed_val))
+    assert asm_ax == rec_ax, f"x={x} y={y} inside={inside}: ax asm={asm_ax:#x} rec={rec_ax:#x}"
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, (
+            f"x={x} y={y} inside={inside} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
+# ---- _DigMyTile (seg5:1914) — dig the nest tile ahead, colony-dispatched --
+def _digmytile_make_new_hole_inert(m, x, black):
+    """Keep the composed make_new_hole_b/r's own internal search inert but
+    immediately successful at its first candidate row (mirroring
+    _makenewholeb_seed/_makenewholer_seed's own "roll=0" fixture), since
+    the search itself is already covered by those routines' own dedicated
+    tests -- this routine only cares that it gets CALLED with the right
+    argument, not how it resolves internally."""
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    rows = range(2, 34) if black else range(93, 128)
+    for row in rows:
+        for c in (x - 1, x, x + 1):
+            if 0 <= c <= 0x3F:
+                m.mem.wb(dg, 0x28E8 + (row << 6) + c, 0x00)
+                m.mem.wb(dg, 0x68E8 + (row << 6) + c, 0x00)
+
+
+def _digmytile_seed(plane, x, y, tile, seed_val):
+    def seed(m):
+        dg, pack = m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.wb(pack, 0x9B6E, 1)
+        base = {2: 0x48E8, 3: 0x58E8}.get(plane)
+        if base is not None and 0 <= x <= 0x3F and 0 <= y <= 0x3F:
+            m.mem.wb(dg, base + (x << 6) + y, tile)
+        m.mem.ww(pack, 0x8104, 100)
+        m.mem.ww(pack, 0x8106, 0)
+        m.mem.ww(pack, 0x811A, 200)
+        m.mem.ww(pack, 0x811C, 0)
+        m.mem.ww(pack, 0x72C8, 3)
+        m.mem.ww(pack, 0x9DDC, 50)
+        m.mem.ww(pack, 0x9DDE, 0)
+        m.mem.ww(pack, 0x9DE2, 75)
+        m.mem.ww(pack, 0x9DE4, 0)
+        m.mem.ww(pack, 0x7A56, 2)
+        _digmytile_make_new_hole_inert(m, x, black=True)
+        _digmytile_make_new_hole_inert(m, x, black=False)
+        m.mem.wb(dg, 0x58E8 + (x << 6) + 1, 0x40)   # make_new_hole_r's closing (col,1) cell
+    return seed
+
+
+@pytest.mark.parametrize("plane,x,y,tile,seed_val", [
+    (0, 10, 20, 0x25, 0x1234),         # plane < 2 -> not digable, no-op
+    (2, 10, 20, 0xFF, 0x1234),         # plane 2, tile neither dirt nor grass -> no-op
+    (2, 10, 0, 0x25, 0x1234),          # plane 2, y=0 -> row0 stamp + make_new_hole_b only
+    (2, 10, 1, 0x25, 0x1234),          # plane 2, y=1 -> row0 stamp + make_new_hole_b + dig_tile_b
+    (2, 10, 20, 0x25, 0x1234),         # plane 2, y>1 -> direct dig_tile_b, no prelude
+    (2, 10, 20, 0x1D, 0x1234),         # plane 2, y>1, grass tile (digable, not dirt)
+    (3, 10, 0, 0x25, 0x1234),          # plane 3, y=0 -> row0 stamp + make_new_hole_r only
+    (3, 10, 1, 0x25, 0x1234),          # plane 3, y=1 -> row0 stamp + make_new_hole_r + dig_tile_r
+    (3, 10, 20, 0x25, 0x1234),         # plane 3, y>1 -> direct dig_tile_r, no prelude
+])
+def test_digmytile_state_diff_matches_asm(plane, x, y, tile, seed_val):
+    from simant.recovered.gameplay import dig_my_tile
+    results = _run_and_diff_segs(
+        5, 0x1914, (plane, x, y),
+        lambda d, s, p: dig_my_tile(d, s, p, plane, x, y),
+        _MAKENEWHOLEB_REGIONS,
+        seed_fn=_digmytile_seed(plane, x, y, tile, seed_val))
+    for (label, asm_after, rec_after), (_si, lo, _hi) in zip(results, _MAKENEWHOLEB_REGIONS):
+        assert asm_after == rec_after, (
+            f"plane={plane} x={x} y={y} tile={tile:#x} {label}: "
+            f"{_first_diff(asm_after, rec_after, lo)}")
+
+
 # ---- _DigTileThemB (seg5:22D4) — open a new tile given diggable neighbours -
 _DIGTILETHEMB_REGIONS = [
     (hooks.DG_SEG_INDEX, 0x28E8, 0xCBF4),   # yard map through both nest planes + SRand seed

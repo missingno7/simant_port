@@ -3616,6 +3616,233 @@ def make_new_hole_r(dgroup, simant_data_group, pack, col: int) -> None:
     fix_exit_map_r(dgroup, simant_data_group, col, 1)
 
 
+def create_new_hole(dgroup, simant_data_group, pack, x: int, y: int) -> None:
+    """Stamp a fresh hole marker on the shared yard map at (x, y) and dig
+    the connecting nest tunnel — the low-level primitive both
+    `make_new_hole_b`/`make_new_hole_r`'s own callers ultimately reach
+    for, and `_DigMyNewHole`'s own composed tail.
+
+    Recovered from `_CreateNewHole` (SIMANTW.SYM seg5:171A, args x=[bp+6],
+    y=[bp+8]; FAR return, 506 bytes).  No-ops entirely unless `1 <= x <=
+    0x7E` and `1 <= y <= 0x3E` (independently confirmed via the raw
+    `jge`/`jl` pairs, NOT the ostensibly-symmetric `1 <= x/y <= 0x7F/0x3F`
+    that `_DigMyNewHole`'s OWN, looser gate uses — the two gates are
+    genuinely different by one, and `_DigMyNewHole` still calls this
+    routine even when its own tighter check would reject the coordinate,
+    relying on `_CreateNewHole`'s own gate to silently no-op).
+
+    - `pack[0x9B6E]` ("inside the nest") NONZERO: stamps the yard map cell
+      to `0x59`.
+    - ZERO (outside): stamps it to `0x50` instead, then carves the SAME
+      `HOLE_EDGE_TILES` 8-neighbour edge pattern `make_new_hole_b`/`r` use
+      (compass deltas read from the SAME fixed SIMANT_DATA_GROUP table
+      those routines' own `sbyte(0/8 + di)` reads reach — independently
+      confirmed here via a THIRD access path, through DGROUP
+      pointer-globals rather than a literal segment override, all
+      resolving to the identical SIMANT_DATA_GROUP selector) into any
+      in-bounds neighbour whose CURRENT tile is `< 0x50`.  Either way,
+      execution then reconverges onto the SAME dispatch below (a genuine
+      `jmp` back into the "inside" branch's own code) — the inside/outside
+      split only changes what gets stamped/carved above; the colony
+      dispatch is common to both.
+
+    - `x < 0x40` ("black" territory): records `simant_data_group[0x82D2 +
+      y] = x` (the SAME `_FillHolesBN` per-column array `make_new_hole_b`
+      writes), composes `dig_tile_b(x=y, y=1)` — note the coordinate
+      SWAP, independently re-derived from scratch: the near call at
+      seg5:176F-1774 pushes `(1, y)` in the established last-pushed-first
+      convention, so `_CreateNewHole`'s own `y` argument becomes
+      `dig_tile_b`'s `x`, and the literal `1` becomes its `y`; this is
+      genuinely NOT a call on `_CreateNewHole`'s own `(x, y)` pair — then
+      records `(x, y)` into the SAME "last black hole" 4-word scratch
+      `make_new_hole_b` uses (`[0x835A]`=x, `[0x835C]`=y, `[0x8352]`=y
+      again, `[0x8354]`=0), and returns immediately (this branch never
+      reaches the `x >= 0x40` code below).
+    - `x >= 0x40` ("red" territory): records `simant_data_group[0x8312 +
+      y] = x` (`_FillHolesRN`'s array), then runs a block that is
+      BYTE-IDENTICAL to `dig_tile_r`'s own entire body called as
+      `dig_tile_r(x=y, y=1)` (the SAME coordinate swap as the black
+      branch above, independently confirmed field-by-field: the reroll
+      gate's `_IsItDirt`/`_SRand8` calls, the `_acc_add32`-style
+      accumulators at `pack[0x9DDC]`/`[0x9DE2]`, the counter at
+      `pack[0x7A56]`, the two `__aFldiv` averages into `pack[0x9FBA]`/
+      `[0x9FD2]`, and all four `_SmoothEdgesR` + one `_FixExitMapR` call
+      at the SAME `(y, 1)` neighbourhood the reroll targeted — composed
+      here as `dig_tile_r(dgroup, simant_data_group, pack, y, 1)` rather
+      than re-derived), then records `(x, y)` into the "last red hole"
+      4-word scratch (`[0x835E]`=x, `[0x8360]`=y, `[0x8356]`=y again,
+      `[0x8358]`=0) and returns.
+    """
+    if not (1 <= x <= 0x7E):
+        return
+    if not (1 <= y <= 0x3E):
+        return
+
+    inside = pack.rw(0x9B6E) != 0
+    idx = (x << 6) + y
+
+    if inside:
+        dgroup.wb(MAP_PLANE_BASE[0] + idx, 0x59)
+    else:
+        dgroup.wb(MAP_PLANE_BASE[0] + idx, 0x50)
+
+        def sbyte(off):
+            v = simant_data_group.rb(off)
+            return v - 0x100 if v & 0x80 else v
+
+        for di in range(8):
+            nx = sbyte(0 + di) + x
+            ny = sbyte(8 + di) + y
+            if not (0 <= nx <= 0x7F and 0 <= ny <= 0x3F):
+                continue
+            off = MAP_PLANE_BASE[0] + (nx << 6) + ny
+            if dgroup.rb(off) < 0x50:
+                dgroup.wb(off, HOLE_EDGE_TILES[di])
+
+    if x < 0x40:
+        simant_data_group.wb(0x82D2 + y, x & 0xFF)
+        dig_tile_b(dgroup, simant_data_group, pack, y, 1)
+        simant_data_group.ww(0x835A, x)
+        simant_data_group.ww(0x835C, y)
+        simant_data_group.ww(0x8352, y)
+        simant_data_group.ww(0x8354, 0)
+    else:
+        simant_data_group.wb(0x8312 + y, x & 0xFF)
+        dig_tile_r(dgroup, simant_data_group, pack, y, 1)
+        simant_data_group.ww(0x835E, x)
+        simant_data_group.ww(0x8360, y)
+        simant_data_group.ww(0x8356, y)
+        simant_data_group.ww(0x8358, 0)
+
+
+def dig_my_new_hole(dgroup, simant_data_group, pack, x: int, y: int) -> int:
+    """Whether (x, y) is a clear enough spot for a new above-ground hole —
+    and, if so, actually creates one via `create_new_hole`.
+
+    Recovered from `_DigMyNewHole` (SIMANTW.SYM seg5:16AE, args x=[bp+6],
+    y=[bp+8]; FAR return, 108 bytes).  No-ops (returns 0) unless `1 <= x
+    <= 0x7F` and `1 <= y <= 0x3F` — a looser gate than `create_new_hole`'s
+    own `0x7E`/`0x3E` upper bounds, confirmed genuinely asymmetric rather
+    than assumed; a coordinate that passes THIS gate but fails
+    `create_new_hole`'s own can still result in a silent no-op there.
+
+    `pack[0x9B6E]` ("inside the nest") NONZERO: clear iff the yard map
+    tile at (x, y) is `< 0xC8`.  ZERO (outside): clear iff the real
+    `_IsClear3x3` predicate holds for the whole 3x3 block on plane 1 —
+    composed here via the already-recovered `_clear_3x3(dgroup, 1, x,
+    y)` helper (independently confirmed via the near-call's push order:
+    `push y; push x; push 1`, i.e. `plane=1` is the LAST-pushed / first
+    formal argument, matching `_IsClear3x3`'s own established `(plane, x,
+    y)` signature).  Not clear: returns 0 immediately.  Clear: composes
+    `create_new_hole(x, y)` and returns 1.
+    """
+    if not (1 <= x <= 0x7F):
+        return 0
+    if not (1 <= y <= 0x3F):
+        return 0
+
+    inside = pack.rw(0x9B6E) != 0
+    if inside:
+        tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+        clear = 1 if tile < 0xC8 else 0
+    else:
+        clear = _clear_3x3(dgroup, 1, x, y)
+
+    if clear != 1:
+        return 0
+
+    create_new_hole(dgroup, simant_data_group, pack, x, y)
+    return clear
+
+
+def _is_it_digable_at(dgroup, plane: int, x: int, y: int) -> int:
+    """Read-the-map wrapper around the pure `is_it_digable(plane, tile)`
+    predicate — the VM-touching counterpart, matching `_clear_3x3`'s own
+    precedent.  `plane < 2` short-circuits to 0 with no map read at all
+    (confirmed via `_IsItDigable`'s own island residue notes in
+    `hooks.py`); an out-of-range `(plane, x, y)` (including any `plane >
+    3`, since `map_cell_offset` has no base for those) also reads as 0.
+    """
+    if plane < 2:
+        return 0
+    off = map_cell_offset(plane, x, y)
+    if off is None:
+        return 0
+    return is_it_digable(plane, dgroup.rb(off))
+
+
+def dig_my_tile(dgroup, simant_data_group, pack, plane: int, x: int, y: int) -> None:
+    """Dig the nest tile in front of the current ant, gated by
+    `_IsItDigable` — the colony-dispatching orchestrator that composes
+    `make_new_hole_b`/`make_new_hole_r` (row 0/1 only) and `dig_tile_b`/
+    `dig_tile_r` (the actual reroll), plus one genuinely surprising extra
+    call.
+
+    Recovered from `_DigMyTile` (SIMANTW.SYM seg5:1914, args plane=[bp+6],
+    x=[bp+8], y=[bp+10]; FAR return, 498 bytes).  Calls exactly 9 distinct
+    routines (independently re-confirmed via `symbols.nearest_symbol` on
+    every call site, not assumed from an earlier survey): `_IsItDigable`,
+    `_MakeNewHoleB`, `_DigTileB`, `_MakeNewHoleR`, `_IsItDirt`, `_SRand8`
+    (now composed via `srand_pow2(seed, 7)` inside `dig_tile_r`'s own
+    `_dig_tile_reroll_and_track` helper — the LAST of the 9 to gain
+    coverage this session), `__aFldiv`, `_SmoothEdgesR`, `_FixExitMapR`.
+
+    Gated by `_is_it_digable_at(plane, x, y)`; not digable is a silent
+    no-op (no state changes at all).
+
+    - `plane == 2` ("black"): if `y <= 1`, unconditionally stamps
+      `MAP_PLANE_BASE[2] + (x << 6)` (row 0 of column x — NOT `(x, y)`,
+      confirmed via the raw address arithmetic: no `y` term is ever added)
+      to `0x18`, and composes `make_new_hole_b(col=x)`; if `y != 1`
+      (i.e. `y == 0`), returns immediately without digging anything
+      further. Otherwise (`y == 1`, or the original `y > 1` skipping the
+      row-0 prelude entirely): composes `dig_tile_b(x, y)` — a direct,
+      UNSWAPPED pass-through of this routine's own `(x, y)`, confirmed
+      genuinely different from `create_new_hole`'s own swapped
+      `dig_tile_b(y, 1)` call — then returns immediately via a `jmp` that
+      lands EXACTLY on `_FixExitMapR`'s own call site's return address
+      (seg5:1961 -> 1AFF, the byte right after the `call near 2914`
+      instruction at 1AFC) — i.e. it deliberately SKIPS the entire
+      `_SmoothEdgesR`x4 + `_FixExitMapR` closing sequence below, not an
+      extra call on top of `dig_tile_b`.  A first pass misread this jump
+      target as landing BEFORE the call (composing a spurious extra
+      `fix_exit_map_r`); re-disassembling the exact byte range
+      (seg5:1AF8-1B05) and comparing the jump target against the call's
+      own `ret=` annotation caught it immediately via a real-ASM state
+      diff (one stray SDG byte at `_FixExitMapR`'s own target address
+      that the real ASM never touched).
+    - `plane != 2` ("red" / anything else that passed the digability
+      gate): the SAME `y <= 1` row-0 prelude, but on `MAP_PLANE_BASE[3]`
+      and composing `make_new_hole_r(col=x)` instead; same `y == 0`
+      early-return.  The remainder — reached for `y == 1` after the
+      prelude, OR directly for any `y > 1` — is BYTE-IDENTICAL to
+      `dig_tile_r`'s own entire body (independently confirmed field by
+      field: same reroll/`_IsItDirt`/`_SRand8` gate, same accumulator and
+      average-position fields, same 4x `_SmoothEdgesR` + one
+      `_FixExitMapR` closing sequence, at this routine's own unswapped
+      `(x, y)`), so it composes `dig_tile_r(x, y)` directly rather than
+      re-deriving the reroll/track/smooth logic a second time.
+    """
+    if not _is_it_digable_at(dgroup, plane, x, y):
+        return
+
+    if plane == 2:
+        if y <= 1:
+            dgroup.wb(MAP_PLANE_BASE[2] + (x << 6), 0x18)
+            make_new_hole_b(dgroup, simant_data_group, pack, x)
+            if y != 1:
+                return
+        dig_tile_b(dgroup, simant_data_group, pack, x, y)
+        return
+
+    if y <= 1:
+        dgroup.wb(MAP_PLANE_BASE[3] + (x << 6), 0x18)
+        make_new_hole_r(dgroup, simant_data_group, pack, x)
+        if y != 1:
+            return
+    dig_tile_r(dgroup, simant_data_group, pack, x, y)
+
+
 def dig_tile_them_b(dgroup, simant_data_group, pack, x: int, y: int) -> int:
     """Open a new black-colony nest tile at (x, y), PROVIDED its existing
     dirt neighbours already look diggable — the routine that actually

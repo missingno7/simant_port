@@ -1,5 +1,99 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.204) — /goal grind: _CreateNewHole/_DigMyNewHole/_DigMyTile
+- RECOVERED `create_new_hole` (`_CreateNewHole`, SIMANTW.SYM seg5:171A, args
+  x=[bp+6], y=[bp+8]; FAR return, 506 bytes) — the low-level "stamp a hole
+  marker on the yard map + dig the connecting nest tunnel" primitive.
+  No-ops unless `1 <= x <= 0x7E` and `1 <= y <= 0x3E` (independently
+  re-derived from the raw `jge`/`jl` pairs, not trusted from a prior
+  partial trace). `pack[0x9B6E]` ("inside") nonzero stamps the yard cell
+  `0x59`; zero stamps `0x50` and ALSO carves the same `HOLE_EDGE_TILES`
+  8-neighbour edge pattern `make_new_hole_b`/`r` use (confirmed via a
+  THIRD independent access path — DGROUP pointer-globals `0xC3FE`/`0xC400`
+  both resolving to the SIMANT_DATA_GROUP selector, reached through
+  `es:[bx+8]`/`es:[bx+0]`, landing on the exact same fixed compass table
+  those routines' own `sbyte(0/8+di)` literal reads use) before
+  reconverging onto the SAME dispatch the "inside" branch uses (a genuine
+  `jmp` back into shared code, not two independent tails). Dispatches on
+  `x < 0x40` (black) vs `x >= 0x40` (red), recording into the SAME
+  `_FillHolesBN`/`_FillHolesRN` per-column arrays and "last hole" 4-word
+  scratch tables `make_new_hole_b`/`r` already established.
+  - Re-verified the branch-polarity question from the prior session's
+    partial trace from scratch, independently: `jz` at seg5:1750 jumps to
+    the `0x50`/OUTSIDE branch when `pack[0x9B6E] == 0`, confirming the
+    prior session's own correction (fallthrough = INSIDE) was right.
+  - Resolved the `dig_tile_b` argument-mapping question definitively: the
+    near call at seg5:1774 (`push 1; push si; call 1FE4`) really is
+    `dig_tile_b(x=y, y=1)` — a genuine coordinate SWAP using this
+    routine's own `y` argument as `dig_tile_b`'s `x`, confirmed by fully
+    decoding the `x >= 0x40` sibling branch (seg5:1806-18EF) and finding
+    it BYTE-IDENTICAL to `dig_tile_r`'s entire body (same
+    `_dig_tile_reroll_and_track` fields `0x9DDC`/`0x9DE2`/`0x7A56`/
+    `0x9FBA`/`0x9FD2`, same 4x `_SmoothEdgesR` + `_FixExitMapR` closing
+    sequence) called as `dig_tile_r(x=y, y=1)` — the SAME swap, on the red
+    twin, independently confirming the pattern rather than assuming
+    symmetry. Composed `dig_tile_b(y, 1)`/`dig_tile_r(y, 1)` directly
+    instead of re-deriving either reroll/track/smooth chain a second time
+    — the single biggest composition win of this slice, exactly as
+    flagged. The `0x58E9` address noted in the handoff (`MAP_PLANE_BASE[3]
+    + 1`) resolved to option (a): a genuine, deliberate off-by-one that's
+    really `map_cell_offset(3, y, 1)` in disguise (`(y<<6)+base+1 ==
+    base+(y<<6)+1`), not a stray field or a transcription slip.
+- RECOVERED `dig_my_new_hole` (`_DigMyNewHole`, SIMANTW.SYM seg5:16AE, args
+  x=[bp+6], y=[bp+8]; FAR return, 108 bytes) — the gate + trigger for
+  `create_new_hole`. Its own bounds gate (`1 <= x <= 0x7F`, `1 <= y <=
+  0x3F`) is genuinely LOOSER than `create_new_hole`'s own (`0x7E`/`0x3E`),
+  confirmed by direct comparison of both raw bound checks — a coordinate
+  that clears this gate can still be silently rejected one level down.
+  `pack[0x9B6E]` inside: clear iff the yard tile is `< 0xC8`; outside:
+  composes the already-recovered `_clear_3x3(dgroup, plane=1, x, y)`
+  helper (confirmed via the near call's `push y; push x; push 1` order —
+  `plane=1` is the last-pushed/first-formal argument, matching
+  `_IsClear3x3`'s established `(plane, x, y)` signature). Clear: composes
+  `create_new_hole(x, y)` and returns 1; not clear: returns 0.
+- RECOVERED `dig_my_tile` (`_DigMyTile`, SIMANTW.SYM seg5:1914, args
+  plane=[bp+6], x=[bp+8], y=[bp+10]; FAR return, 498 bytes) — gated by a
+  new private helper `_is_it_digable_at` (the VM-touching wrapper around
+  the already-pure `is_it_digable(plane, tile)`, matching `_clear_3x3`'s
+  own precedent: `plane < 2` short-circuits with no map read at all,
+  matching the ASM's own residue notes in `hooks.py`). Confirmed exactly
+  9 distinct call targets via `symbols.nearest_symbol` on every call site
+  (matching the pre-session survey's count precisely): `_IsItDigable`,
+  `_MakeNewHoleB`, `_DigTileB`, `_MakeNewHoleR`, `_IsItDirt`, `_SRand8`
+  (the survey's one unresolved dependency — now composed via
+  `srand_pow2(seed, 7)` inside `dig_tile_r`'s own reroll helper),
+  `__aFldiv`, `_SmoothEdgesR`, `_FixExitMapR`.
+  - `plane == 2`: if `y <= 1`, unconditionally stamps row 0 of column `x`
+    on the black nest map (`MAP_PLANE_BASE[2] + (x << 6)` — no `y` term at
+    all, confirmed via the raw address arithmetic) to `0x18` and composes
+    `make_new_hole_b(x)`; `y == 0` then returns immediately. Otherwise
+    (`y == 1`, or the original `y > 1` skipping the prelude): composes
+    `dig_tile_b(x, y)` — a direct, UNSWAPPED pass-through, genuinely
+    different from `create_new_hole`'s own swapped call — then returns.
+  - `plane != 2`: the same `y <= 1` prelude on the red map, composing
+    `make_new_hole_r(x)` instead; the remainder (reached for `y == 1`
+    after the prelude, or directly for `y > 1`) is BYTE-IDENTICAL to
+    `dig_tile_r`'s own entire body at this routine's own unswapped `(x,
+    y)`, so it composes `dig_tile_r(x, y)` rather than re-deriving it.
+  - Caught a genuine bug on the FIRST real-ASM run, not a region-window
+    one this time: a first draft additionally composed `fix_exit_map_r(x,
+    y)` after `dig_tile_b` in the `plane == 2` branch, misreading the
+    `jmp near -> 2F99:1AFF` at seg5:1961 as landing BEFORE the
+    `_FixExitMapR` call at seg5:1AFC. It actually lands EXACTLY on that
+    call's own `ret=1AFF` return address (the byte immediately after the
+    3-byte `call near` instruction) — i.e. the jump SKIPS the entire
+    `_SmoothEdgesR`x4 + `_FixExitMapR` closing block below it, landing on
+    a stray (harmless, `leave`-discarded) `add sp,4`. Caught by one stray
+    SDG byte at `_FixExitMapR`'s own target address that the real ASM
+    never touched; fixed by dropping the spurious extra call.
+- 30 new cases (10 `create_new_hole` branch/boundary cases + 4 dedicated
+  out-of-bounds no-ops, 7 `dig_my_new_hole` gate/clear cases, 9
+  `dig_my_tile` plane/row-boundary cases) — all green after the one
+  `_FixExitMapR` fix; every case validated first via a plain script
+  (mirroring `_run_and_diff_segs`) before being ported into pytest, per
+  this session's own standing practice.
+- Suite: simant 1980 (+30), full suite green.
+
 ## 2026-07-15 (cont.203) — /goal grind: _AddWater
 - RECOVERED `add_water` (`_AddWater`, SIMANTW.SYM seg5:0B8A, arg
   col=[bp+6]; FAR return, 202 bytes; composes the already-recovered
