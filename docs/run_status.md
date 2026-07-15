@@ -1,5 +1,71 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.205) — /goal grind: house/yard tile-decoration cluster (11-for-11)
+- RECOVERED the full Tier-1 house/yard tile-decoration cluster flagged by the
+  prior scoping survey — all 11 symbols, all seg5, all clean/deterministic
+  yard-map tile stampers with NO RNG/ant-list involvement, all byte-exact on
+  the FIRST real-ASM run (no bugs caught this session):
+  - `fill_map` (`_FillMap`, seg5:3F54, args x1/x2/y1/y2/value=[bp+6..14];
+    FAR, 86 bytes) — fills yard-map columns `x1..x2`, rows `y1..y2`
+    (inclusive) with a fixed byte; no-ops if `x1>x2` or `y2<y1` (the ASM's
+    own per-column re-check of `y2<y1` is loop-invariant across columns, so
+    it collapses to one whole-rectangle gate rather than needing to be
+    modeled per-column).
+  - `tile_frame1`/`tile_frame2` (`_TileFrame1`/`_TileFrame2`, seg5:3944/3AA2,
+    same x1/x2/y1/y2 signature; FAR, 350 bytes each) — draw a rectangular
+    border (top/bottom rows gated on `x1<=x2`, left/right columns gated on
+    `y1<=y2`, but the 4 corner tiles are written LAST and UNCONDITIONALLY,
+    always overwriting any edge tile underneath — confirmed via the raw
+    disassembly, not assumed). `_TileFrame2` is instruction-for-instruction
+    identical to `_TileFrame1` with a different (self-consistent) 8-tile
+    palette — extracted a shared `_tile_frame` helper.
+  - `make_plug_v`/`make_plug_h`/`make_knob`/`make_penny`/`make_clip`
+    (`_MakePlugV`/`_MakePlugH`/`_MakeKnob`/`_MakePenny`/`_MakeClip`,
+    seg5:3D02/3E46/3E88/3ECA/3F0C, args x/y=[bp+6/8]; FAR, 66/66/66/66/72
+    bytes) — each blits a small fixed-size glyph raster (5x4, 4x5, 5x5,
+    3x3, 3x3) read from a contiguous run of DGROUP static data
+    (`0x2314..0x2368`) onto the yard map at `(x,y)`. `_MakeClip` is the ONE
+    asymmetric case: a `0` table byte is a transparent "skip this cell"
+    marker (confirmed real — the live table's own `0x2360`/`0x2368` bytes
+    ARE `0`), whereas `_MakePenny`'s otherwise-identical 3x3 shape copies
+    every byte unconditionally. Extracted a shared `_stamp_glyph(table_base,
+    dest_base, width, height, sparse)` helper reused by all five, plus
+    `make_outlet_v`/`make_outlet_h` below.
+  - `make_outlet_v`/`make_outlet_h` (`_MakeOutletV`/`_MakeOutletH`,
+    seg5:3C00/3D44, args x/y=[bp+6/8]; FAR, 258 bytes each) — a
+    `0x63`-filled background panel (9x13 / transposed 13x9) +
+    `tile_frame1` border (BOTH orientations use `_TileFrame1`, not
+    `_TileFrame2` — confirmed via the raw call target) + two copies of the
+    matching plug glyph (V reuses `make_plug_v`'s own `0x2314` table
+    stacked vertically 5 rows apart; H reuses `make_plug_h`'s `0x2328`
+    table side-by-side 5 columns apart) + one `0x65` "screw" tile. The
+    panel-size preamble is byte-for-byte `_FillMap`'s own inlined shape
+    with `x2`/`y2` hardcoded to `x+8`/`y+12` (V) or `x+12`/`y+8` (H) —
+    composed directly as `fill_map(dgroup, x, x+8, y, y+12, 0x63)` rather
+    than re-derived.
+  - `make_kitchen_wall` (`_MakeKitchenWall`, seg5:3698, NO args; FAR, 196
+    bytes) — repaints the ENTIRE yard-map plane (all 128 columns; shared
+    between the outdoor yard and indoor house-interior views) as a fixed
+    kitchen scene: floor band (`y=0..23`->`0x62`, `y=24..63`->`0`, both
+    composed as whole-plane `fill_map` calls), 3 full-width wall lines at
+    `y=0/8/16` (`0x68`), a stud-post grid at every 8th column checking the
+    CURRENT tile (`0x62`->`0x66`, else->`0x67`), a bottom border row `y=23`
+    with the same current-tile test (`0x62`->`0x68`, else->`0x69`), two
+    `make_outlet_v` panels at `(0x24,2)`/`(0x54,2)`, and a `pack[0x9C66]`
+    write (the SAME "current fall-direction table index" word `food_fall`
+    already reads) set to `2`. Resolved a NEW DGROUP pointer-global,
+    `0xC434`, fresh against `runtime.create_machine()`'s own `seg_bases` —
+    it lands on PACK, distinct from `create_new_hole`'s own `0xC3FE`/
+    `0xC400` pair (which resolve to SIMANT_DATA_GROUP).
+- 33 new state-diff cases (6 `fill_map`, 6 `tile_frame1`, 3 `tile_frame2`,
+  11 glyph-stamper mid/origin/near-max cases, 6 `make_outlet_v`/`h`, 1
+  `make_kitchen_wall`) — every one green on the FIRST real-ASM run; the
+  offline `python -c` prototype (validated before ever touching the VM,
+  per this project's own standing practice) caught zero bugs this time —
+  a genuinely clean cluster, unlike most sessions' `_FixExitMapR`/region-
+  window surprises.
+- Suite: simant 2013 (+33), full suite green.
+
 ## 2026-07-15 (cont.204) — /goal grind: _CreateNewHole/_DigMyNewHole/_DigMyTile
 - RECOVERED `create_new_hole` (`_CreateNewHole`, SIMANTW.SYM seg5:171A, args
   x=[bp+6], y=[bp+8]; FAR return, 506 bytes) — the low-level "stamp a hole

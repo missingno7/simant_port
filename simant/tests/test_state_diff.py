@@ -8137,3 +8137,117 @@ def test_addwater_state_diff_matches_asm(col, tile2_at, tile3_at, b_slots,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _ADDWATER_REGIONS):
         assert asm_after == rec_after, f"col={col} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- house/yard tile-decoration cluster (seg5) -----------------------------
+# _FillMap/_TileFrame1/_TileFrame2/_MakePlugV/_MakePlugH/_MakeKnob/_MakePenny/
+# _MakeClip/_MakeOutletV/_MakeOutletH/_MakeKitchenWall — all pure yard-map
+# tile stampers, no RNG/ant-list state involved. The DGROUP window covers
+# both the static glyph tables (0x2314-0x2368) and the whole yard-map plane
+# (0x28E8-0x48E7, MAP_PLANE_BASE[0]'s own 0x2000-byte span) that every one of
+# these routines writes into.
+_STAMPER_REGIONS = [(hooks.DG_SEG_INDEX, 0x2300, 0x48E8)]
+_KITCHENWALL_REGIONS = [(hooks.DG_SEG_INDEX, 0x2300, 0x48E8),
+                         (_PACK, 0x9C00, 0x9D00)]
+
+
+@pytest.mark.parametrize("x1,x2,y1,y2,value,label", [
+    (10, 15, 5, 20, 0x62, "normal-rect"),
+    (10, 10, 5, 20, 0x77, "single-column"),
+    (20, 10, 5, 20, 0x99, "noop-x1-gt-x2"),
+    (10, 15, 20, 5, 0x99, "noop-y2-lt-y1"),
+    (0, 127, 0, 23, 0x62, "full-width-band"),
+    (100, 127, 40, 63, 0x11, "edge-max-corner"),
+])
+def test_fillmap_state_diff_matches_asm(x1, x2, y1, y2, value, label):
+    from simant.recovered.gameplay import fill_map
+    results = _run_and_diff_segs(
+        5, 0x3F54, (x1, x2, y1, y2, value),
+        lambda d: fill_map(d, x1, x2, y1, y2, value), _STAMPER_REGIONS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _STAMPER_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("x1,x2,y1,y2,label", [
+    (10, 18, 5, 17, "normal-rect"),
+    (10, 10, 5, 17, "single-column"),
+    (10, 18, 5, 5, "single-row"),
+    (20, 10, 5, 17, "noop-x1-gt-x2"),
+    (10, 18, 20, 5, "noop-y2-lt-y1"),
+    (10, 10, 5, 5, "single-point"),
+])
+def test_tileframe1_state_diff_matches_asm(x1, x2, y1, y2, label):
+    from simant.recovered.gameplay import tile_frame1
+    results = _run_and_diff_segs(
+        5, 0x3944, (x1, x2, y1, y2),
+        lambda d: tile_frame1(d, x1, x2, y1, y2), _STAMPER_REGIONS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _STAMPER_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("x1,x2,y1,y2,label", [
+    (30, 38, 25, 37, "normal-rect"),
+    (40, 30, 25, 37, "noop-x1-gt-x2"),
+    (30, 38, 40, 25, "noop-y2-lt-y1"),
+])
+def test_tileframe2_state_diff_matches_asm(x1, x2, y1, y2, label):
+    from simant.recovered.gameplay import tile_frame2
+    results = _run_and_diff_segs(
+        5, 0x3AA2, (x1, x2, y1, y2),
+        lambda d: tile_frame2(d, x1, x2, y1, y2), _STAMPER_REGIONS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _STAMPER_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("fn_name,off,x,y,label", [
+    ("make_plug_v", 0x3D02, 20, 15, "mid"),
+    ("make_plug_v", 0x3D02, 0, 0, "origin"),
+    ("make_plug_v", 0x3D02, 120, 55, "near-max"),
+    ("make_plug_h", 0x3E46, 20, 15, "mid"),
+    ("make_plug_h", 0x3E46, 0, 0, "origin"),
+    ("make_knob", 0x3E88, 20, 15, "mid"),
+    ("make_knob", 0x3E88, 0, 0, "origin"),
+    ("make_penny", 0x3ECA, 20, 15, "mid"),
+    ("make_penny", 0x3ECA, 0, 0, "origin"),
+    ("make_clip", 0x3F0C, 20, 15, "mid"),
+    ("make_clip", 0x3F0C, 0, 0, "origin"),
+])
+def test_glyph_stamper_state_diff_matches_asm(fn_name, off, x, y, label):
+    import simant.recovered.gameplay as gp
+    fn = getattr(gp, fn_name)
+    results = _run_and_diff_segs(
+        5, off, (x, y), lambda d: fn(d, x, y), _STAMPER_REGIONS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _STAMPER_REGIONS):
+        assert asm_after == rec_after, f"{fn_name}-{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("fn_name,off,x,y,label", [
+    ("make_outlet_v", 0x3C00, 20, 15, "mid"),
+    ("make_outlet_v", 0x3C00, 0, 0, "origin"),
+    ("make_outlet_v", 0x3C00, 100, 40, "near-max"),
+    ("make_outlet_h", 0x3D44, 20, 15, "mid"),
+    ("make_outlet_h", 0x3D44, 0, 0, "origin"),
+    ("make_outlet_h", 0x3D44, 100, 40, "near-max"),
+])
+def test_make_outlet_state_diff_matches_asm(fn_name, off, x, y, label):
+    import simant.recovered.gameplay as gp
+    fn = getattr(gp, fn_name)
+    results = _run_and_diff_segs(
+        5, off, (x, y), lambda d: fn(d, x, y), _STAMPER_REGIONS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _STAMPER_REGIONS):
+        assert asm_after == rec_after, f"{fn_name}-{label}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_makekitchenwall_state_diff_matches_asm():
+    from simant.recovered.gameplay import make_kitchen_wall
+    results = _run_and_diff_segs(
+        5, 0x3698, (), lambda d, p: make_kitchen_wall(d, p),
+        _KITCHENWALL_REGIONS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _KITCHENWALL_REGIONS):
+        assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"

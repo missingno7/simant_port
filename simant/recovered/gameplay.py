@@ -9842,3 +9842,279 @@ def add_water(dgroup, pack, simant_data_group, col: int) -> None:
             tile = dgroup.rb(cell)
             new_tile = 0x4E if tile < 0x20 else (tile + 0x2F) & 0xFF
             dgroup.wb(cell, new_tile)
+
+
+def fill_map(dgroup, x1: int, x2: int, y1: int, y2: int, value: int) -> None:
+    """Fill the yard map rectangle columns `x1..x2`, rows `y1..y2` (both
+    inclusive) with the fixed byte `value`.
+
+    Recovered from `_FillMap` (SIMANTW.SYM seg5:3F54, args x1=[bp+6],
+    x2=[bp+8], y1=[bp+10], y2=[bp+12], value=[bp+14]; FAR return, 86
+    bytes). No-ops entirely if `x1 > x2` (the ASM's own outer-loop guard,
+    a raw `jg` skip to the epilogue). Independently, EACH column
+    iteration re-checks `y2 < y1` and skips that column's fill if so —
+    since neither bound changes across columns this is loop-invariant
+    (either every column fills or none do), so it collapses to the same
+    single `x1 <= x2 and y1 <= y2` gate as a whole-rectangle no-op,
+    verified against the raw per-column re-check rather than assumed.
+    Each column's `y1..y2` run is written via a single contiguous
+    `rep stosb` (the map's `(x<<6)+y` layout makes one column's rows
+    contiguous in memory) — ported here as a plain nested loop, since
+    the effect on the DGROUP image is identical either way.
+    """
+    if x1 > x2 or y2 < y1:
+        return
+    for x in range(x1, x2 + 1):
+        base = MAP_PLANE_BASE[0] + (x << 6)
+        for y in range(y1, y2 + 1):
+            dgroup.wb(base + y, value & 0xFF)
+
+
+def _tile_frame(dgroup, x1: int, x2: int, y1: int, y2: int, *,
+                 top: int, bottom: int, left: int, right: int,
+                 tl: int, tr: int, bl: int, br: int) -> None:
+    """Shared body of `_TileFrame1`/`_TileFrame2` — draws a rectangular
+    border on the yard map from `(x1, y1)` to `(x2, y2)` (both inclusive):
+    a `top`-tile row at `y1` and a `bottom`-tile row at `y2` (each spanning
+    `x1..x2`, gated on `x1 <= x2` — a raw `jg` skip in the ASM, independent
+    of the y-gate below), a `left`-tile column at `x1` and a `right`-tile
+    column at `x2` (each spanning `y1..y2`, gated on `y1 <= y2`), and
+    finally the four corners `(x1,y1)=tl`, `(x2,y1)=tr`, `(x1,y2)=bl`,
+    `(x2,y2)=br` — written LAST and UNCONDITIONALLY (no `x1<=x2`/`y1<=y2`
+    gate at all on the corner writes, confirmed via the raw disassembly),
+    so they always land even when one or both edge-gates skip their pass,
+    and they always overwrite whatever an edge pass wrote underneath.
+    """
+    if x1 <= x2:
+        for x in range(x1, x2 + 1):
+            dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y1, top)
+        for x in range(x1, x2 + 1):
+            dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y2, bottom)
+    if y1 <= y2:
+        for y in range(y1, y2 + 1):
+            dgroup.wb(MAP_PLANE_BASE[0] + (x1 << 6) + y, left)
+        for y in range(y1, y2 + 1):
+            dgroup.wb(MAP_PLANE_BASE[0] + (x2 << 6) + y, right)
+    dgroup.wb(MAP_PLANE_BASE[0] + (x1 << 6) + y1, tl)
+    dgroup.wb(MAP_PLANE_BASE[0] + (x2 << 6) + y1, tr)
+    dgroup.wb(MAP_PLANE_BASE[0] + (x1 << 6) + y2, bl)
+    dgroup.wb(MAP_PLANE_BASE[0] + (x2 << 6) + y2, br)
+
+
+def tile_frame1(dgroup, x1: int, x2: int, y1: int, y2: int) -> None:
+    """Draw a `_TileFrame1`-style border: top=`0x54`, bottom=`0x51`,
+    left=`0x5A`, right=`0x5B`, corners top-left=`0x53`, top-right=`0x55`,
+    bottom-left=`0x50`, bottom-right=`0x52`.
+
+    Recovered from `_TileFrame1` (SIMANTW.SYM seg5:3944, args x1=[bp+6],
+    x2=[bp+8], y1=[bp+10], y2=[bp+12]; FAR return, 350 bytes). See
+    `_tile_frame` for the shared edge/corner/gating logic.
+    """
+    _tile_frame(dgroup, x1, x2, y1, y2, top=0x54, bottom=0x51, left=0x5A,
+                right=0x5B, tl=0x53, tr=0x55, bl=0x50, br=0x52)
+
+
+def tile_frame2(dgroup, x1: int, x2: int, y1: int, y2: int) -> None:
+    """Draw a `_TileFrame2`-style border — the SAME shape as `tile_frame1`
+    but a different (also self-consistent) tile palette: top=`0x51`,
+    bottom=`0x54`, left=`0x5B`, right=`0x5A`, corners top-left=`0x56`,
+    top-right=`0x58`, bottom-left=`0x57`, bottom-right=`0x59`.
+
+    Recovered from `_TileFrame2` (SIMANTW.SYM seg5:3AA2, args x1=[bp+6],
+    x2=[bp+8], y1=[bp+10], y2=[bp+12]; FAR return, 350 bytes;
+    instruction-for-instruction identical structure to `_TileFrame1`,
+    independently confirmed byte-for-byte against its own disassembly —
+    only the eight tile-id immediates differ).
+    """
+    _tile_frame(dgroup, x1, x2, y1, y2, top=0x51, bottom=0x54, left=0x5B,
+                right=0x5A, tl=0x56, tr=0x58, bl=0x57, br=0x59)
+
+
+def _stamp_glyph(dgroup, table_base: int, dest_base: int, width: int,
+                  height: int, sparse: bool = False) -> None:
+    """Blit a `width` x `height` tile-glyph raster read from DGROUP static
+    data at `table_base` onto the yard map at `dest_base` (already the
+    DGROUP offset of the glyph's own top-left destination cell): column
+    `c` (0..width-1), row `r` (0..height-1) of the glyph goes to
+    `dest_base + (c<<6) + r`, reading its source byte from
+    `table_base + r*width + c` — i.e. the table is stored row-major,
+    `width` bytes per row (confirmed from the raw disassembly: the
+    destination's OUTER loop is the column, the INNER loop is the row,
+    and the table pointer strides by `width` each inner step).
+
+    When `sparse`, a table byte of `0` is a transparent "skip this cell"
+    marker (`_MakeClip`'s own behaviour, vs. `_MakePenny`'s unconditional
+    copy of every byte including a literal `0` — a genuine, independently
+    confirmed asymmetry between the two otherwise-identical-shaped
+    routines).
+    """
+    for c in range(width):
+        for r in range(height):
+            val = dgroup.rb(table_base + r * width + c)
+            if sparse and val == 0:
+                continue
+            dgroup.wb(dest_base + (c << 6) + r, val)
+
+
+def make_plug_v(dgroup, x: int, y: int) -> None:
+    """Stamp the 5-wide x 4-tall "vertical plug" glyph at yard map `(x, y)`
+    (glyph raster read from DGROUP static data `0x2314..0x2327`).
+
+    Recovered from `_MakePlugV` (SIMANTW.SYM seg5:3D02, args x=[bp+6],
+    y=[bp+8]; FAR return, 66 bytes). Composes `_stamp_glyph`.
+    """
+    _stamp_glyph(dgroup, 0x2314, MAP_PLANE_BASE[0] + (x << 6) + y, 5, 4)
+
+
+def make_plug_h(dgroup, x: int, y: int) -> None:
+    """Stamp the 4-wide x 5-tall "horizontal plug" glyph at yard map
+    `(x, y)` (glyph raster read from DGROUP static data `0x2328..0x233B`
+    — the transposed twin of `make_plug_v`'s own `0x2314` table,
+    immediately contiguous with it).
+
+    Recovered from `_MakePlugH` (SIMANTW.SYM seg5:3E46, args x=[bp+6],
+    y=[bp+8]; FAR return, 66 bytes). Composes `_stamp_glyph`.
+    """
+    _stamp_glyph(dgroup, 0x2328, MAP_PLANE_BASE[0] + (x << 6) + y, 4, 5)
+
+
+def make_knob(dgroup, x: int, y: int) -> None:
+    """Stamp the 5-wide x 5-tall "knob" glyph at yard map `(x, y)` (glyph
+    raster read from DGROUP static data `0x233C..0x2354`, immediately
+    contiguous after `make_plug_h`'s own table).
+
+    Recovered from `_MakeKnob` (SIMANTW.SYM seg5:3E88, args x=[bp+6],
+    y=[bp+8]; FAR return, 66 bytes). Composes `_stamp_glyph`.
+    """
+    _stamp_glyph(dgroup, 0x233C, MAP_PLANE_BASE[0] + (x << 6) + y, 5, 5)
+
+
+def make_penny(dgroup, x: int, y: int) -> None:
+    """Stamp the 3-wide x 3-tall "penny" glyph at yard map `(x, y)` (glyph
+    raster read from DGROUP static data `0x2356..0x235E`) — every table
+    byte is written unconditionally, including a literal `0` (contrast
+    `make_clip`'s sparse copy of the SAME-shaped table just below it).
+
+    Recovered from `_MakePenny` (SIMANTW.SYM seg5:3ECA, args x=[bp+6],
+    y=[bp+8]; FAR return, 66 bytes). Composes `_stamp_glyph`.
+    """
+    _stamp_glyph(dgroup, 0x2356, MAP_PLANE_BASE[0] + (x << 6) + y, 3, 3)
+
+
+def make_clip(dgroup, x: int, y: int) -> None:
+    """Stamp the 3-wide x 3-tall "clip" glyph at yard map `(x, y)` (glyph
+    raster read from DGROUP static data `0x2360..0x2368`) — a `0` table
+    byte is a transparent "leave the existing map tile alone" marker,
+    independently confirmed via the raw disassembly's own `cmp ds:[si],0 /
+    jz <skip write>` (the ONE structural difference from the otherwise
+    textually-identical `make_penny`).
+
+    Recovered from `_MakeClip` (SIMANTW.SYM seg5:3F0C, args x=[bp+6],
+    y=[bp+8]; FAR return, 72 bytes). Composes `_stamp_glyph` (sparse).
+    """
+    _stamp_glyph(dgroup, 0x2360, MAP_PLANE_BASE[0] + (x << 6) + y, 3, 3,
+                 sparse=True)
+
+
+def make_outlet_v(dgroup, x: int, y: int) -> None:
+    """Paint a vertical double-outlet wall panel anchored at yard map
+    `(x, y)`: a `0x63`-filled 9-wide (`x..x+8`) x 13-tall (`y..y+12`)
+    background panel, a `tile_frame1` border around that SAME rectangle,
+    two `make_plug_v`-shaped glyphs (the SAME `0x2314` table `make_plug_v`
+    itself reads) stamped inset at `(x+2, y+2)` and `(x+2, y+7)` — i.e.
+    stacked vertically 5 rows apart — and a single `0x65` "screw" tile at
+    `(x+4, y+6)`.
+
+    Recovered from `_MakeOutletV` (SIMANTW.SYM seg5:3C00, args x=[bp+6],
+    y=[bp+8]; FAR return, 258 bytes). The panel-size/frame-range
+    computation is byte-for-byte the SAME inlined `_FillMap`-shaped
+    preamble as `_FillMap` itself (including its own dead
+    always-true/always-false redundant bound recheck), just with `x2`/`y2`
+    hardcoded to `x+8`/`y+12` rather than taken as arguments — composed
+    here directly as `fill_map(dgroup, x, x+8, y, y+12, 0x63)` rather than
+    re-derived. Composes `fill_map`, `tile_frame1`, `_stamp_glyph`.
+    """
+    fill_map(dgroup, x, x + 8, y, y + 12, 0x63)
+    tile_frame1(dgroup, x, x + 8, y, y + 12)
+    _stamp_glyph(dgroup, 0x2314, MAP_PLANE_BASE[0] + ((x + 2) << 6) + (y + 2), 5, 4)
+    _stamp_glyph(dgroup, 0x2314, MAP_PLANE_BASE[0] + ((x + 2) << 6) + (y + 7), 5, 4)
+    dgroup.wb(MAP_PLANE_BASE[0] + ((x + 4) << 6) + (y + 6), 0x65)
+
+
+def make_outlet_h(dgroup, x: int, y: int) -> None:
+    """Paint a horizontal double-outlet wall panel anchored at yard map
+    `(x, y)`: a `0x63`-filled 13-wide (`x..x+12`) x 9-tall (`y..y+8`)
+    background panel (the TRANSPOSED dimensions of `make_outlet_v`'s own
+    9x13 panel), a `tile_frame1` border around that SAME rectangle (still
+    `_TileFrame1`, NOT `_TileFrame2` — independently confirmed via the raw
+    call target, both outlet orientations share the same frame style), two
+    `make_plug_h`-shaped glyphs (the SAME `0x2328` table `make_plug_h`
+    itself reads) stamped inset at `(x+2, y+2)` and `(x+7, y+2)` — i.e.
+    side by side horizontally 5 columns apart, the transposed twin of
+    `make_outlet_v`'s vertical stacking — and a single `0x65` "screw" tile
+    at `(x+6, y+4)`.
+
+    Recovered from `_MakeOutletH` (SIMANTW.SYM seg5:3D44, args x=[bp+6],
+    y=[bp+8]; FAR return, 258 bytes; instruction-for-instruction the same
+    shape as `_MakeOutletV` with the x/y roles of every constant swapped).
+    Composes `fill_map`, `tile_frame1`, `_stamp_glyph`.
+    """
+    fill_map(dgroup, x, x + 12, y, y + 8, 0x63)
+    tile_frame1(dgroup, x, x + 12, y, y + 8)
+    _stamp_glyph(dgroup, 0x2328, MAP_PLANE_BASE[0] + ((x + 2) << 6) + (y + 2), 4, 5)
+    _stamp_glyph(dgroup, 0x2328, MAP_PLANE_BASE[0] + ((x + 7) << 6) + (y + 2), 4, 5)
+    dgroup.wb(MAP_PLANE_BASE[0] + ((x + 6) << 6) + (y + 4), 0x65)
+
+
+def make_kitchen_wall(dgroup, pack) -> None:
+    """Repaint the ENTIRE yard-map plane (`MAP_PLANE_BASE[0]`, all 128
+    columns) as the fixed "kitchen" house-interior scene: rows `0..23`
+    become the floor tile `0x62` and rows `24..63` become `0` (this plane
+    is shared between the outdoor yard and indoor house-interior views —
+    only one is ever active, so repainting the whole array is safe); three
+    full-width horizontal wall lines are stamped at `y=0`, `y=8`, `y=16`
+    (tile `0x68`); then a grid of "stud" posts at every 8th column
+    (`x=0,8,...,120`) for `y=0..23` is stamped `0x66` where the
+    underlying tile is STILL the floor tile `0x62`, or `0x67` where it
+    isn't (i.e. where it's one of the three horizontal wall-line rows
+    just painted — genuinely conditioned on the CURRENT map byte, not on
+    which `y` it is, independently re-derived from the raw `cmp
+    ds:[si],0x62` rather than assumed); the bottom border row `y=23` gets
+    the same floor-vs-not test, stamping `0x68` (still floor) or `0x69`
+    (a post) across the full width; finally two `make_outlet_v` panels are
+    painted at `(0x24, 2)` and `(0x54, 2)`, and `pack[0x9C66]` (the SAME
+    "current fall-direction table index" word `food_fall` reads) is set
+    to `2`.
+
+    Recovered from `_MakeKitchenWall` (SIMANTW.SYM seg5:3698, NO args;
+    FAR return, 196 bytes). The two clear passes are byte-for-byte the
+    SAME `rep stosw`-driven whole-plane fill `_FillMap` performs (just
+    inlined with `x1=0, x2=127` and `value` hardcoded per row-band) —
+    composed here as `fill_map(dgroup, 0, 127, 0, 23, 0x62)` /
+    `fill_map(dgroup, 0, 127, 24, 63, 0)` rather than re-derived. The
+    `pack[0x9C66]` write goes through DGROUP pointer-global `0xC434`
+    (independently resolved fresh against `runtime.create_machine()`'s
+    own `seg_bases` — it lands on the PACK selector, a NEW pointer-global
+    this session, distinct from `create_new_hole`'s own `0xC3FE`/`0xC400`
+    pair which resolve to SIMANT_DATA_GROUP instead). Composes `fill_map`,
+    `make_outlet_v`.
+    """
+    fill_map(dgroup, 0, 127, 0, 23, 0x62)
+    fill_map(dgroup, 0, 127, 24, 63, 0x00)
+
+    for y in (0, 8, 16):
+        for x in range(128):
+            dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, 0x68)
+
+    for x in range(0, 128, 8):
+        for y in range(24):
+            off = MAP_PLANE_BASE[0] + (x << 6) + y
+            dgroup.wb(off, 0x66 if dgroup.rb(off) == 0x62 else 0x67)
+
+    for x in range(128):
+        off = MAP_PLANE_BASE[0] + (x << 6) + 23
+        dgroup.wb(off, 0x68 if dgroup.rb(off) == 0x62 else 0x69)
+
+    make_outlet_v(dgroup, 0x24, 2)
+    make_outlet_v(dgroup, 0x54, 2)
+    pack.ww(0x9C66, 2)
