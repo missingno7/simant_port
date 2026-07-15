@@ -7202,3 +7202,22 @@ def test_clrarrays_state_diff_matches_asm():
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _CLRARRAYS_REGIONS):
         assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _InitSow (seg7:3EF8) — unconditional random rock placement -----------
+# Byte-identical placement loop to _InitPillar's own tail (no gate, no
+# reset) -- reuses the SAME regions/seed fixture and retry-target cells.
+@pytest.mark.parametrize("seed_val,all_clear,extra_clear_cells,label", [
+    (0x1234, True, (), "both-slots-succeed-immediately"),
+    (0x1234, False, (_IP_RETRY_TARGET1, _IP_RETRY_TARGET2),
+     "slot1-retries-twice-then-both-succeed"),
+])
+def test_initsow_state_diff_matches_asm(seed_val, all_clear, extra_clear_cells, label):
+    from simant.recovered.gameplay import init_sow
+    results = _run_and_diff_segs(
+        7, 0x3EF8, (), lambda d, p, s: init_sow(d, p, s),
+        _INITPILLAR_REGIONS,
+        seed_fn=_initpillar_seed(seed_val, False, all_clear, extra_clear_cells))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _INITPILLAR_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

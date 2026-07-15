@@ -8524,24 +8524,13 @@ def add_rand_ant_lion(dgroup, pack, simant_data_group) -> None:
         add_ant_lion(dgroup, pack, simant_data_group, x, y)
 
 
-def init_pillar(dgroup, pack, simant_data_group) -> None:
-    """Reset the tracked pillar's own state, then — only when outside the
-    nest (`pack[0x9B6E] == 0`) — randomly place up to 2 "rock" tiles at
-    valid (clear) yard cells.
+def _place_two_random_rocks(dgroup, pack, simant_data_group) -> None:
+    """Fill exactly 2 slots of a raw ASM loop counter stepping `4, 2` —
+    used directly as the byte offset into 4 small PACK arrays, so array
+    "slot 2" (`si=4`) is filled before slot 1 (`si=2`). Shared body of
+    `_InitPillar`/`_InitSow`'s own random-placement loops (byte-identical
+    in both disassemblies, down to the DGROUP pointer-globals used).
 
-    Recovered from `_InitPillar` (SIMANTW.SYM seg7:4BF8, NO args; FAR
-    return, 228 bytes). Always zeroes: the tracked pillar's own
-    position/state (`simant_data_group[0x8A8A]`/`[0x8A8C]`/`[0x8A8E]` —
-    the SAME `[0x8A8C]`/`[0x8A8E]` position pair `is_pill_dead` reads),
-    the `_pillar_cache_index` rule flag `pack[0x9B1E]`, a companion PACK
-    field `pack[0x78D4]`, and the already-recovered `store_pillar_map`/
-    `replace_pillar_map` 6-entry cache (`pack[0x7C0E..0x7C19]`).
-
-    When `pack[0x9B6E]` ("inside the nest", the SAME flag `is_it_food`/
-    `feed_ants`/etc. read) is nonzero, returns here without placing
-    anything. Otherwise fills exactly 2 slots of a raw ASM loop counter
-    stepping `4, 2` — used directly as the byte offset into 4 small PACK
-    arrays, so array "slot 2" (`si=4`) is filled before slot 1 (`si=2`).
     For each slot, rolls a candidate yard cell via `_SRand1(0x80)`/
     `_SRand1(0x40)` (always in-bounds, so no `is_valid_a` check is
     needed) and, if its yard map tile is `>= 0x10` (blocked), RETRIES —
@@ -8559,17 +8548,6 @@ def init_pillar(dgroup, pack, simant_data_group) -> None:
     lookup table), then advances to the next slot.
     """
     from .simone import SRAND_SEED_OFF, srand1
-
-    simant_data_group.ww(0x8A8A, 0)
-    simant_data_group.ww(0x8A8C, 0)
-    simant_data_group.ww(0x8A8E, 0)
-    pack.ww(0x78D4, 0)
-    pack.ww(0x9B1E, 0)
-    for i in range(6):
-        pack.ww(0x7C0E + (i << 1), 0)
-
-    if pack.rw(0x9B6E) != 0:
-        return
 
     seed = dgroup.rw(SRAND_SEED_OFF)
     for si in (4, 2):
@@ -8589,6 +8567,52 @@ def init_pillar(dgroup, pack, simant_data_group) -> None:
             dgroup.wb(off, new_tile)
             break
     dgroup.ww(SRAND_SEED_OFF, seed)
+
+
+def init_pillar(dgroup, pack, simant_data_group) -> None:
+    """Reset the tracked pillar's own state, then — only when outside the
+    nest (`pack[0x9B6E] == 0`) — randomly place up to 2 "rock" tiles at
+    valid (clear) yard cells (composing `_place_two_random_rocks`).
+
+    Recovered from `_InitPillar` (SIMANTW.SYM seg7:4BF8, NO args; FAR
+    return, 228 bytes). Always zeroes: the tracked pillar's own
+    position/state (`simant_data_group[0x8A8A]`/`[0x8A8C]`/`[0x8A8E]` —
+    the SAME `[0x8A8C]`/`[0x8A8E]` position pair `is_pill_dead` reads),
+    the `_pillar_cache_index` rule flag `pack[0x9B1E]`, a companion PACK
+    field `pack[0x78D4]`, and the already-recovered `store_pillar_map`/
+    `replace_pillar_map` 6-entry cache (`pack[0x7C0E..0x7C19]`).
+
+    When `pack[0x9B6E]` ("inside the nest", the SAME flag `is_it_food`/
+    `feed_ants`/etc. read) is nonzero, returns here without placing
+    anything.
+    """
+    simant_data_group.ww(0x8A8A, 0)
+    simant_data_group.ww(0x8A8C, 0)
+    simant_data_group.ww(0x8A8E, 0)
+    pack.ww(0x78D4, 0)
+    pack.ww(0x9B1E, 0)
+    for i in range(6):
+        pack.ww(0x7C0E + (i << 1), 0)
+
+    if pack.rw(0x9B6E) != 0:
+        return
+
+    _place_two_random_rocks(dgroup, pack, simant_data_group)
+
+
+def init_sow(dgroup, pack, simant_data_group) -> None:
+    """Unconditionally place 2 random "rock" tiles — the SAME
+    `_place_two_random_rocks` loop `init_pillar` uses for its own
+    placement tail, but with no state reset and no "outside the nest"
+    gate.
+
+    Recovered from `_InitSow` (SIMANTW.SYM seg7:3EF8, NO args; FAR
+    return, 146 bytes). The two disassemblies are byte-identical past
+    `_InitPillar`'s own gate/reset prologue — same DGROUP
+    pointer-globals, same PACK slot offsets, same SDG rock-tile lookup
+    table.
+    """
+    _place_two_random_rocks(dgroup, pack, simant_data_group)
 
 
 def start_attack(dgroup, pack) -> None:

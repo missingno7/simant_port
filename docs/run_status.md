@@ -1,5 +1,26 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.191) — /goal grind: _InitSow (+ refactor)
+- RECOVERED `init_sow` (`_InitSow`, SIMANTW.SYM seg7:3EF8, NO args; FAR
+  return, 146 bytes, calls `_SRand1`). Disassembly is byte-identical to
+  `_InitPillar`'s own placement tail — same DGROUP pointer-globals,
+  same PACK slot offsets, same SDG rock-tile lookup table — just
+  without `_InitPillar`'s state-reset prologue or its "outside the
+  nest" gate.
+- Extracted the shared body into a new private helper
+  `_place_two_random_rocks(dgroup, pack, simant_data_group)` and
+  refactored `init_pillar` to compose it (previously inlined directly
+  in `init_pillar`'s own body), rather than re-deriving the same
+  retry-until-clear loop a second time — matching this session's
+  standing "composition over re-derivation" discipline. `init_pillar`'s
+  own behavior is unchanged (its existing 3 tests still pass
+  unmodified after the refactor, confirmed before writing `init_sow`'s
+  own tests).
+- 2 cases (reusing `init_pillar`'s own precomputed retry-target
+  fixture, since the underlying loop is identical) — both green on the
+  first real-ASM run.
+- Suite: simant 1842 (+2), full suite green.
+
 ## 2026-07-15 (cont.190) — /goal grind: _InitSimYard + _ClrArrays
 - Ran a fresh Explore survey (previous candidate queue exhausted).
   It flagged a self-contained "pillar/sow" cluster (7 leaves + 1
