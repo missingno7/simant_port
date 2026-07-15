@@ -3663,6 +3663,229 @@ def test_dofoodinb_yellowfight_gate_raises():
         do_food_in_b(dg_view, sdg_view, pack_view, x, y, mode)
 
 
+# ---- _DoDigOutB (seg6:4EB0) — black nest ant dig-OUT (exit-seeking) tick --
+# Composes get_exit_dir_b, rand_turn, get_out_b, is_it_dirt, is_yellow_ant,
+# find_in_b_list, get_winner, and reuses the private _try_eat_food shared
+# body verbatim (the SAME gate/call _DoDigInB's own move tail uses). THREE
+# args only (x, y, mode) -- the same asymmetry _DoFoodInB has vs _DoDigInB/
+# _SimQueenB's caste_sub fourth arg.
+_DODIGOUTB_STUBS = []
+_DODIGOUTB_REGIONS = _DODIGINB_REGIONS
+
+
+def _dodigoutb_seed(x, y, mode, srand, *, own_dist=0, dir2_dist=0,
+                    dest_tile=0x05, occupant=0x00, ce98=0, ac86=50,
+                    b_list_match_at=None):
+    """Common ground for _DoDigOutB scenarios. Leaves get_exit_dir_b's
+    exit-distance array (`simant_data_group[0x3A4..]`) ALL-ZERO by default
+    (a fresh machine's own SIMANT_DATA_GROUP starts that way) so
+    `get_exit_dir_b` deterministically returns 0 ("no exit direction") ->
+    the `rand_turn` fallback. Pass `own_dist`/`dir2_dist` (`dir2_dist`
+    nonzero and strictly greater than `own_dist`) to make it
+    deterministically pick direction 2 (east) instead, for the move-branch
+    scenarios (mode=0x12 -> caste_low3=2 -> gate = 2^4 = 6, so direction 2
+    is never the excluded neighbor).
+    """
+    from simant.recovered.gameplay import GET_BEST_DIR_DX, GET_BEST_DIR_DY
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, 0)
+        m.mem.wb(sdg, 0x3D18, mode)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)     # pin get_winner's C-runtime rand state
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+        m.mem.wb(sdg, 0x8A5C, 0)            # get_winner: no cheat gate
+        m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
+        m.mem.wb(dg, 0xCE98, ce98)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        m.mem.wb(sdg, 0x3A4 + (x << 6) + y, own_dist)
+        m.mem.wb(sdg, 0x3A4 + ((x + 1) << 6) + y, dir2_dist)
+        m.mem.wb(dg, 0x48E8 + (x << 6) + y, 0x05)
+        m.mem.wb(dg, 0x48E8 + ((x + 1) << 6) + y, dest_tile)
+        m.mem.wb(dg, 0x88E8 + ((x + 1) << 6) + y, occupant)
+        m.mem.ww(pack, 0x99D4, 0)
+        m.mem.ww(pack, 0x9EA4, 3)
+        m.mem.ww(pack, 0x7402, 5)
+        m.mem.ww(dg, 0xAC82, 20)
+        m.mem.ww(dg, 0xAC98, 10)
+        if b_list_match_at is not None:
+            bx, by = b_list_match_at
+            m.mem.ww(pack, 0x99D4, 2)
+            m.mem.wb(sdg, 0x3736 + 1, bx & 0xFF)
+            m.mem.wb(sdg, 0x392C + 1, by & 0xFF)
+            m.mem.wb(sdg, 0x3D18 + 1, occupant)
+    return seed
+
+
+def _dodigoutb_run(x, y, mode, seed_fn):
+    from simant.recovered.gameplay import do_dig_out_b
+    return _run_and_diff_segs(
+        6, 0x4EB0, (x, y, mode),
+        lambda d, s, p: do_dig_out_b(d, s, p, x, y, mode),
+        _DODIGOUTB_REGIONS, seed_fn=seed_fn, stubs=_DODIGOUTB_STUBS)
+
+
+def _dodigoutb_assert(results, label):
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DODIGOUTB_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dodigoutb_no_exit_dir_randturn_fallback_matches_asm():
+    # get_exit_dir_b returns 0 (all-zero exit-distance array, the default,
+    # y != 1) -> falls back to rand_turn(mode & 7) for a purely random
+    # direction.
+    x, y = 20, 20
+    results = _dodigoutb_run(x, y, 0x12, _dodigoutb_seed(x, y, 0x12, 0x1234))
+    _dodigoutb_assert(results, "no-exit-dir-randturn-fallback")
+
+
+def test_dodigoutb_move_into_empty_matches_asm():
+    # Direction 2 (east) found (dir2_dist=3 > own_dist=0); destination tile
+    # 0x05 (clear, not dirt, < 0x30); empty destination -> moves in.
+    x, y = 20, 20
+    results = _dodigoutb_run(
+        x, y, 0x12, _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3))
+    _dodigoutb_assert(results, "move-into-empty")
+
+
+def test_dodigoutb_out_of_bounds_matches_asm():
+    x, y = 0x3F, 20
+    results = _dodigoutb_run(
+        x, y, 0x12, _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3))
+    _dodigoutb_assert(results, "out-of-bounds")
+
+
+def test_dodigoutb_new_y_lt_1_get_out_b_matches_asm():
+    # y=1, direction 0 (north) chosen via a nonzero exit-distance neighbor
+    # -> new_y = 1 + (-1) = 0 < 1 -> calls get_out_b(x) and returns.
+    from simant.recovered.gameplay import GET_BEST_DIR_DX, GET_BEST_DIR_DY
+    x, y = 20, 1
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, 0)
+        m.mem.wb(sdg, 0x3D18, 0x12)
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(dg, 0xAC86, 50)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        m.mem.wb(sdg, 0x3A4 + (x << 6) + (y - 1), 3)   # north neighbor (y=0), nonzero -> wins
+        m.mem.ww(pack, 0x99D4, 0)
+
+    results = _dodigoutb_run(x, y, 0x12, seed)
+    _dodigoutb_assert(results, "new-y-lt-1-get-out-b")
+
+
+@pytest.mark.parametrize("mode,label", [
+    (0x28, "sub-5-caste-minus-0x18-fieldc-4"),    # (0x28&0x78)>>3 = 5
+    (0x48, "sub-9-caste-minus-0x18-fieldc-4"),    # (0x48&0x78)>>3 = 9
+    (0x10, "sub-2-fieldc-4-only"),                # (0x10&0x78)>>3 = 2
+    (0x30, "sub-6-fieldc-4-only"),                # (0x30&0x78)>>3 = 6
+    (0x12, "sub-2-plus-low-bits-fieldc-4-only"),  # (0x12&0x78)>>3 = 2
+    (0x00, "sub-0-no-fieldc-change"),             # (0x00&0x78)>>3 = 0
+])
+def test_dodigoutb_blocked_tile_matches_asm(mode, label):
+    x, y = 20, 20
+    results = _dodigoutb_run(
+        x, y, mode,
+        _dodigoutb_seed(x, y, mode, 0x1234, dir2_dist=3, dest_tile=0x40))
+    _dodigoutb_assert(results, f"blocked-tile-{label}")
+
+
+def test_dodigoutb_dirt_tile_noop_matches_asm():
+    # Destination tile is dirt (0x20..0x2E) -> immediate no-op return, no
+    # dig attempt at all (unlike _DoDigInB).
+    x, y = 20, 20
+    results = _dodigoutb_run(
+        x, y, 0x12,
+        _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3, dest_tile=0x25))
+    _dodigoutb_assert(results, "dirt-tile-noop")
+
+
+def test_dodigoutb_yellow_ce98_zero_treated_empty_matches_asm():
+    x, y = 20, 20
+    results = _dodigoutb_run(
+        x, y, 0x12,
+        _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3, occupant=0xFE, ce98=0))
+    _dodigoutb_assert(results, "yellow-ce98-zero")
+
+
+def test_dodigoutb_invader_out_of_blist_move_matches_asm():
+    x, y = 20, 20
+    results = _dodigoutb_run(
+        x, y, 0x12,
+        _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3, occupant=0x90))
+    _dodigoutb_assert(results, "invader-out-of-blist-move")
+
+
+def test_dodigoutb_fight_found_matches_asm():
+    x, y = 20, 20
+    occupant = 0x90
+    new_x, new_y = x + 1, y
+    results = _dodigoutb_run(
+        x, y, 0x12,
+        _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3, occupant=occupant,
+                        b_list_match_at=(new_x, new_y)))
+    _dodigoutb_assert(results, "fight-found")
+
+
+def test_dodigoutb_eat_food_tail_triggered_matches_asm():
+    # After a successful move: SRand64()(seed 0x1234 -> 40) > food(30) ->
+    # the _try_eat_food tail DOES run at the new position.
+    x, y = 20, 20
+    results = _dodigoutb_run(
+        x, y, 0x12,
+        _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3, ac86=30))
+    _dodigoutb_assert(results, "eat-food-tail-triggered")
+
+
+def test_dodigoutb_eat_food_tail_skipped_matches_asm():
+    # SRand64()(seed 0x1234 -> 40) <= food(50) -> the _try_eat_food tail is
+    # SKIPPED.
+    x, y = 20, 20
+    results = _dodigoutb_run(
+        x, y, 0x12,
+        _dodigoutb_seed(x, y, 0x12, 0x1234, dir2_dist=3, ac86=50))
+    _dodigoutb_assert(results, "eat-food-tail-skipped")
+
+
+def test_dodigoutb_yellowfight_gate_raises():
+    # Occupied destination is the player's yellow ant AND dgroup[0xCE98] !=
+    # 0 -> the UNRECOVERED _YellowFight(2, slot) branch WOULD fire.
+    # Direct recovered-function call (no ASM oracle), same pattern as
+    # _DoFoodInB/_DoDigInB's own yellowfight-gate tests.
+    from simant.recovered.gameplay import (do_dig_out_b, GET_BEST_DIR_DX,
+                                            GET_BEST_DIR_DY)
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, mode = 20, 20, 0x12
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    dg_view.ww(0xCBF2, 0x1234)
+    pack_view.ww(0x9B6A, 0)
+    sdg_view.wb(0x3D18, mode)
+    sdg_view.wb(0x3A4 + ((x + 1) << 6) + y, 3)   # direction 2 (east) deterministic
+    dg_view.wb(0x48E8 + ((x + 1) << 6) + y, 0x05)   # passable, not a hole/dirt
+    dg_view.wb(0x88E8 + ((x + 1) << 6) + y, 0xFE)   # yellow ant occupant
+    dg_view.wb(0xCE98, 1)          # nonzero -> _YellowFight gate fires
+    with pytest.raises(NotImplementedError):
+        do_dig_out_b(dg_view, sdg_view, pack_view, x, y, mode)
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.

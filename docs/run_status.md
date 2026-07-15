@@ -1,5 +1,65 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.210) — /goal grind: _DoDigOutB (seg6 behavior tier, _DoNestAntB dependency 3/3 — COMPLETE)
+- RECOVERED `do_dig_out_b` (`_DoDigOutB`, SIMANTW.SYM seg6:4EB0, FAR
+  return, 686 bytes) — the black nest ant heading OUT of the nest through
+  already-clear passages: pick an exit-seeking direction and move into an
+  open destination (fighting/deferring on an occupant, same shape as
+  `_DoDigInB`/`_DoFoodInB`'s own move tails), bail with a small local
+  exit-appeal penalty if the destination is blocked, or do NOTHING at all
+  if it's still dirt (unlike `_DoDigInB`, this routine never digs). Third
+  and LAST of the three `_DoNestAntB` dispatch-arm dependencies flagged
+  by the original scoping survey — all three now recovered this session.
+- Same THREE-arg signature `_DoFoodInB` has (`x=[bp+6]`, `y=[bp+8]`,
+  `mode=[bp+10]`, no caste_sub — confirmed via the raw `enter 0014h,0`
+  frame never referencing `[bp+14]`).
+- Composes `get_exit_dir_b`, `rand_turn`, `get_out_b`, `is_it_dirt`,
+  `is_yellow_ant`, `find_in_b_list`, `get_winner`, and — reused VERBATIM,
+  byte-for-byte matching field set — `_try_eat_food` for the move tail's
+  trailing food-nibble/growth block: the SAME `(MAP_PLANE_BASE[2],
+  0x9EA4, 0xAC82, 0xAC98, 0x7402, 0xAC86)` arguments AND the SAME
+  `_SRand64() > dgroup[0xAC86]` outer gate `_DoDigInB`'s own analogous
+  tail already established — three-for-three now on this exact
+  composable block across the whole `_DoNestAntB` dispatch cluster.
+- A genuinely new mechanic this routine introduces: on a BLOCKED
+  destination (map tile `>= 0x30`), it decrements
+  `simant_data_group[0x3A4 + (x << 6) + y]` — the ant's own current-
+  position cell of the SAME exit-distance map `_GetExitDirB`/
+  `_GetEnterDirB` read — a "this route turned out blocked, lower my own
+  exit appeal" self-penalty, then (via `sub = (mode & 0x78) >> 3`) either
+  bumps the caste field down by `0x18` and sets `field_c = 4` (`sub in
+  (5, 9)`), sets `field_c = 4` alone (`sub in (2, 6)`), or leaves it
+  untouched — traced carefully via the raw disassembly's own fallthrough
+  structure (the `sub in (5, 9)` arm's `field_c=4` write and the `sub in
+  (2, 6)` arm's write are the SAME single instruction reused via
+  fallthrough, not two separate writes, confirmed rather than assumed).
+- One raise-loudly gate, the SAME established `_YellowFight(2, slot)`
+  precedent (seg6:823E), reached through the SAME textually-redundant
+  double `is_yellow_ant`/`CE98` re-check `_DoFoodInB` has on the exact
+  same unchanged occupant byte — collapses to the identical single-check
+  gate without loss of byte-exactness, confirmed independently for this
+  routine's own disassembly rather than assumed from the sibling.
+- No bugs caught this session — all 17 new tests passed on the FIRST
+  real-ASM run, unlike the two prior `_DoNestAntB`-dependency sessions
+  (both of which caught an `_SRand*`-call-count polarity mistake via the
+  oracle). Attributed to applying that exact lesson proactively this time:
+  every branch point was checked for "does this skip an RNG call
+  entirely, or just skip a downstream effect" before writing any Python,
+  rather than after a failing test forced the question.
+- 17 new state-diff/gate tests, all green on real ASM (rand_turn
+  fallback, move-into-empty, out-of-bounds, `new_y<1`-get_out_b, 6-way
+  parametrized blocked-tile sub-code coverage, dirt-tile no-op, yellow-
+  CE98-zero, invader-out-of-blist-move, fight-found, eat-food-tail
+  triggered/skipped, and a dedicated yellowfight-gate-raises test using
+  the direct-call pattern established by the other two). Suite: simant
+  2089 (+17), full suite green.
+- **All three `_DoNestAntB` dispatch-arm dependencies from this session's
+  original brief are now recovered** (`_SimQueenB` cont.208, `_DoFoodInB`
+  cont.209, `_DoDigOutB` this entry) — `_DoNestAntB` itself (the ~18-arm
+  jump-table dispatcher) and the trivial 96-byte `_DoAntSimB` wrapper
+  that calls it are the next natural target, not attempted this session
+  per the brief's own scope (dependencies only).
+
 ## 2026-07-15 (cont.209) — /goal grind: _DoFoodInB (seg6 behavior tier, _DoNestAntB dependency 2/3)
 - RECOVERED `do_food_in_b` (`_DoFoodInB`, SIMANTW.SYM seg6:492A, FAR
   return, 678 bytes) — the black nest ant's carry-food-in per-tick

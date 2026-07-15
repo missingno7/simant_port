@@ -178,7 +178,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}`/`_PickupFood{A,B,R}`/`_CanBeHouseHole`/`_HoleBorder`/`_GetFromAlist`/`_PlaceEgg{B,R}`/`_ScanForAnts`/`_BuildAntListA`/`_IsItFoodAt`/`_FindAntIndex`/`_SFoundAnt`/`_GetAntIndex`/`_FindLifeIndex`/`_SG{I,S,}Rand`/`_IsItYellow`/`_FindLifeAt`/`_FindEggAt`/`_FoodFall`/`_DropFoodA`/`_SRand{1,2,4,8,16,32,64,128,256}` (each now individually byte-tested against its own ASM instance)/`_IsLiftable`/`_PlaceDrop`/`_InitWater`/`_AddWater`/`_CreateNewHole`/`_DigMyNewHole`/`_DigMyTile`/`_FillMap`/`_TileFrame1`/`_TileFrame2`/`_MakePlugV`/`_MakePlugH`/`_MakeKnob`/`_MakePenny`/`_MakeClip`/`_MakeOutletV`/`_MakeOutletH`/`_MakeKitchenWall` done | 123 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_Sim{Egg,Queen}A`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_Raid{Out,In}B/R`/`_QueenMoveB/R`/`_MakeNewTailB/R`/`_GetMyInitialRandDir`/`_LeaveNestB`/`_DoDrown{B,R}`/`_GetNewRedTask`/`_DigOut{B,R}Nest`/`_StayInR`/`_DoRestAnt`/`_DoRepoFly`/`_GetMyNextRandDirs`/`_GetMyBestDir`/`_SimEgg{B,R}`/`_DoNestFight{B,R}`/`_DoReturnFoodAnt`/`_DoNesting{B,R}`/`_GetMyDir`/`_GetMyDis`/`_CheckNestFight{B,R}`/`_DoRest{B,R}`/`_DoRand{B,R}`/`_FeedAnts`/`_DoForageAnt`/`_DoDigInB`/`_SimQueenB`/`_DoFoodInB` done (two documented gaps shared by all: `_DoTroph`/`_YellowFight`, both raise loudly); `_DoDigOutB` still needed to unblock `_DoNestAntB`; `_DoNestAntB`/`_DoAntSim*` orchestration frontier | 96 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_Sim{Egg,Queen}A`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_Raid{Out,In}B/R`/`_QueenMoveB/R`/`_MakeNewTailB/R`/`_GetMyInitialRandDir`/`_LeaveNestB`/`_DoDrown{B,R}`/`_GetNewRedTask`/`_DigOut{B,R}Nest`/`_StayInR`/`_DoRestAnt`/`_DoRepoFly`/`_GetMyNextRandDirs`/`_GetMyBestDir`/`_SimEgg{B,R}`/`_DoNestFight{B,R}`/`_DoReturnFoodAnt`/`_DoNesting{B,R}`/`_GetMyDir`/`_GetMyDis`/`_CheckNestFight{B,R}`/`_DoRest{B,R}`/`_DoRand{B,R}`/`_FeedAnts`/`_DoForageAnt`/`_DoDigInB`/`_SimQueenB`/`_DoFoodInB`/`_DoDigOutB` done (two documented gaps shared by all: `_DoTroph`/`_YellowFight`, both raise loudly) — all three `_DoNestAntB` dispatch-arm dependencies now recovered; `_DoNestAntB`/`_DoAntSim*` orchestration frontier remains | 97 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family, `_Make{Blk,Red}Queen`/`_Place{Red,Black}Queen`/`_Add{Black,Red}Ants`/`_{Un}RecruitRed`/`_IsValidYard`/`_FindInLionList`/`_SetAntLion`/`_NotMowed`/`_ForceMode{A,B}`/`_MaintainSwarm`/`_SetCasteProd`/`_SetModeProd`/`_GstrB`/`_KillAntLion`/`_FollowCatDir`/`_GrabMap`/`_GetNearbyPatches`/`_StartMigrate`/`_EndMigrate`/`_fracSIN`/`_fracCOS`/`_PlacePillTile`/`_PillGetLife`/`_StorePillarMap`/`_ReplacePillarMap`/`_PillFoodTile`/`_IsPillDead`/`_InitGrassMap`/`_InitSimVars`/`_Recruit`/`_UnRecruit`/`_Reproduce`/`_AddAntLion`/`_AddRandAntLion`/`_InitPillar`/`_StartAttack`/`_InitSimYard`/`_ClrArrays`/`_InitSow`/`_DoSow`/`_InitAntLions`/`_MakePillFood`/`_MakeAPill`/`_DoPillar`/`_GstrR`/`_GetStrategy`/`_AddFood` done | 66 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -262,31 +262,44 @@ move and then actually move* is byte-exact, end to end:
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
   LFSR used for map generation).
-- **Two full per-ant behavior tier routines, complete: `_DoForageAnt` and
-  `_DoDigInB`.** `_DoForageAnt` (yard "A"-list foraging ant per-tick
-  decision — nest-entrance homing, scent-gradient-or-random forage
-  direction, pickup/move/jitter/fight resolution) composes `is_valid_a`/
-  `go_in_nest`/`get_new_mode`/`get_forage_dir`/`pickup_food_a`/
-  `is_yellow_ant`/`find_in_a_list`/`get_winner`/`jam_scent_bn`/`rn`/
-  `dec_t_smell`/`alarm_here2`. `_DoDigInB` (black nest "B"-list ant
-  dig-forward per-tick decision — face-or-dig a chosen direction, then
-  move/jitter/fight) composes `get_new_mode_b`/`get_enter_dir_b`/
-  `is_it_dirt`/`dig_tile_them_b`/`is_yellow_ant`/`find_in_b_list`/
-  `get_out_b`/`get_winner`/`fix_exit_map_b`, reusing `_try_eat_food`
-  verbatim for its own tile-nibble + colony-growth tail (a byte-for-byte
-  argument match confirming both independently). Between them, every
-  dependency either needs except two, which raise loudly by design (see
-  below).
+- **Five full per-ant behavior tier routines, complete: `_DoForageAnt`,
+  `_DoDigInB`, `_SimQueenB`, `_DoFoodInB`, and `_DoDigOutB`.**
+  `_DoForageAnt` (yard "A"-list foraging ant per-tick decision — nest-
+  entrance homing, scent-gradient-or-random forage direction, pickup/
+  move/jitter/fight resolution) composes `is_valid_a`/`go_in_nest`/
+  `get_new_mode`/`get_forage_dir`/`pickup_food_a`/`is_yellow_ant`/
+  `find_in_a_list`/`get_winner`/`jam_scent_bn`/`rn`/`dec_t_smell`/
+  `alarm_here2`. `_DoDigInB` (black nest "B"-list ant dig-forward
+  per-tick decision — face-or-dig a chosen direction, then move/jitter/
+  fight) composes `get_new_mode_b`/`get_enter_dir_b`/`is_it_dirt`/
+  `dig_tile_them_b`/`is_yellow_ant`/`find_in_b_list`/`get_out_b`/
+  `get_winner`/`fix_exit_map_b`, reusing `_try_eat_food` verbatim for its
+  own tile-nibble + colony-growth tail. `_SimQueenB` (the black queen's
+  own `_DoNestAntB` dispatch arm — move, then either expand the colony
+  via `place_egg_b` or die) composes `queen_move_b`/`find_in_b_list`/
+  `in_nest_bounds`/`place_egg_b`, reusing `dec_eat_b` verbatim for its
+  inline hunger tick. `_DoFoodInB` (black nest ant carry-food-in tick —
+  move toward the nest interior, or grow a food pile in place) and
+  `_DoDigOutB` (black nest ant dig-OUT tick — exit-seeking movement
+  through already-clear passages, never digging) are the other two
+  `_DoNestAntB` dispatch-arm dependencies, both composing
+  `get_enter_dir_b`/`get_exit_dir_b`/`get_out_b`/`is_yellow_ant`/
+  `find_in_b_list`/`get_winner`/`get_new_mode_b`, and both reusing the
+  private `_eat_food`/`_try_eat_food` shared bodies verbatim for their
+  own food-supply tails. Between all five, every dependency is met except
+  two, which raise loudly by design (see below).
 
-**Missing**: the rest of the per-ant **behavior tier** in `seg6`
-(`_DoNestAntB`, `_DoAntSim*`) that composes all of the above into an
-actual decision, `_DoTroph`'s own dependency chain (a real sound-engine
-routine plus a dialog/busy-wait UI routine — presentation/audio work, not
-core sim logic), and `_YellowFight` (seg6:823E — its own deep, so-far-
-unexplored dependency chain; both `_DoForageAnt`'s and `_DoDigInB`'s combat
-paths gate on it and raise loudly rather than guess — the SAME `(2, slot)`
-call signature at both sites). That's the next milestone toward the
-[VM-less native port](docs/vmless_port.md).
+**Missing**: `_DoNestAntB` itself (the ~18-arm jump-table dispatcher that
+composes all five behavior-tier routines above into an actual per-tick
+decision — its three previously-unrecovered dispatch-arm dependencies,
+`_DoFoodInB`/`_SimQueenB`/`_DoDigOutB`, are now done) and `_DoAntSim*`
+orchestration above it, `_DoTroph`'s own dependency chain (a real
+sound-engine routine plus a dialog/busy-wait UI routine — presentation/
+audio work, not core sim logic), and `_YellowFight` (seg6:823E — its own
+deep, so-far-unexplored dependency chain; every combat path across all
+five behavior-tier routines above gates on it and raises loudly rather
+than guess — the SAME `(2, slot)` call signature at every site). That's
+the next milestone toward the [VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 
