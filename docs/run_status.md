@@ -1,5 +1,59 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.218) — /goal grind: _DoRedInitiator (A-list "_DoAntSimA" dependency batch, 8/8 — BATCH COMPLETE)
+- RECOVERED `do_red_initiator` (`_DoRedInitiator`, seg6:0x96D4, arg
+  slot=[bp+6]; FAR return — the ONLY far-return routine in this whole
+  batch, independently confirmed via all three of its own raw `ret far`
+  epilogues, unlike its seven NEAR-return siblings). Composes the
+  already-recovered `get_new_red_task`.
+- Genuine, independently-verified finding: this routine's `pack[0x9D74]
+  == 0` branch is a ~150-byte INLINED DUPLICATE of the already-recovered
+  `get_new_red_task`'s own body — same `_UnRecruitRed` call, same
+  `dgroup[0xCE80]==1` raid-roll gate with identical thresholds/fields,
+  same fallback general-task sizing/clamp formula — confirmed field-by-
+  field against `get_new_red_task`'s own already-oracle-verified body
+  (not assumed from the similar name) and composed here as a direct call
+  rather than re-derived. A cross-check test runs both functions from an
+  identical starting state and compares the resulting `pack` fields.
+- Genuinely new blocker (NOT `_DoTroph`/`_YellowFight`, NOT listed in this
+  batch's own 8 targets): every code path — regardless of the
+  `pack[0x9D74]` task-state dispatch — converges UNCONDITIONALLY on a call
+  to `_GetRedBestDirs` (seg6:0x9A18), a substantial, previously-
+  unrecovered routine (its own disassembly was still going past ~450
+  bytes with multiple branches and a loop when this session stopped
+  reading it, though it does call the already-recovered `get_dis`).
+  Since the call is UNCONDITIONAL, `do_red_initiator` raises
+  `NotImplementedError` on EVERY real invocation — genuinely different
+  from this batch's other seven routines, where the two established gates
+  are narrow, data-dependent branches most seeded scenarios avoid
+  entirely. This is treated as the SAME fail-loud precedent as
+  `_YellowFight`/`_DoTroph` (a new dependency surfaced by this routine's
+  own from-scratch disassembly, exactly like `do_forage_ant`'s own session
+  found an undocumented `_YellowFight` call) — NOT an attempt to also
+  recover `_GetRedBestDirs`, which is out of this session's scope.
+- Tests: 5 new cases (raises for every `pack[0x9D74]` status value,
+  verifying the unconditional rally-point stamp — `pack[0x80A6]=x`,
+  `[0x80AC]=y`, `[0x7606]=1` — plus the `get_new_red_task` cross-check).
+  No full ASM state-diff oracle for this routine (it can never reach a
+  natural return without `_GetRedBestDirs`), matching the SAME precedent
+  `do_forage_ant`'s own gate tests already established. Full suite: 2198
+  passed (was 2193).
+- Commit: (pending).
+- **ALL 8 of `_DoAntSimA`'s scoped dependencies are now recovered**:
+  `_DoRandAntA`, `_DoRandAntAA`, `_DoRecruitAnt`, `_DoAttackAnt`,
+  `_DoToAlarm`, `_DoToNestAnt`, `_DoRepoExit`, `_DoRedInitiator`. Plus
+  the previously-recovered `_DoForageAnt`/`_DoDigOutAntA`/`_DoFightA`/
+  `_DoReturnFoodAnt`. `_DoAntSimA` itself (seg6:0x4D8, 1348 bytes) is the
+  natural next session's target — a deliberate follow-up, not attempted
+  here per this session's own scope boundary. Two callees it ALSO reaches
+  remain unconfirmed: `ANTEDIT!_RestBalloons` (established
+  presentation-only precedent, safe to omit) and `SIMANT!
+  _InvalQueenStorageDisp` (flagged by the prior scoping pass as "likely
+  omit but not yet independently confirmed" — still not confirmed by
+  THIS session either, since `_DoAntSimA` itself was out of scope; the
+  next session recovering `_DoAntSimA` should confirm this independently
+  before omitting it).
+
 ## 2026-07-15 (cont.217) — /goal grind: _DoAttackAnt (A-list "_DoAntSimA" dependency batch, 7/8)
 - RECOVERED `do_attack_ant` (`_DoAttackAnt`, seg6:0x2A40, NEAR return, 640
   bytes) — a yard ant invading the ENEMY colony: heads toward the

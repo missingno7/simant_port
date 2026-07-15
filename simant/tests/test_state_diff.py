@@ -4040,6 +4040,80 @@ def test_doattackant_yellowfight_gate_raises():
         do_attack_ant(dg_view, sdg_view, pack_view, 0)
 
 
+# ---- _DoRedInitiator (seg6:0x96D4) — red initiator ant rally tick --------
+# Composes get_new_red_task. Every real invocation unconditionally reaches
+# the genuinely-new, unrecovered _GetRedBestDirs dependency (seg6:0x9A18,
+# NOT one of this batch's 8 assigned targets, not _DoTroph/_YellowFight
+# either) and raises NotImplementedError -- there is no non-raising
+# scenario, so these tests confirm the pre-raise writes (the unconditional
+# rally-point stamp + the pack[0x9D74] task-state dispatch) rather than a
+# full ASM state-diff (which can't reach a natural return without
+# _GetRedBestDirs; same precedent as _DoForageAnt's own gate tests, which
+# also don't run a state-diff oracle for their pre-raise writes).
+@pytest.mark.parametrize("status,label", [
+    (0, "no-task-pending"),
+    (1, "general-task-pending"),
+    (2, "raid-task-pending"),
+    (5, "unexpected-status-value"),
+])
+def test_doredinitiator_always_raises(status, label):
+    from simant.recovered.gameplay import do_red_initiator
+    from simant.bridge.dgroup_view import ByteBackend
+
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, 20)
+    sdg_view.wb(0x278E, 25)
+    pack_view.ww(0x9D74, status)
+    with pytest.raises(NotImplementedError):
+        do_red_initiator(dg_view, sdg_view, pack_view, 0)
+    assert pack_view.rw(0x80A6) == 20, f"{label}: rally-point x"
+    assert pack_view.rw(0x80AC) == 25, f"{label}: rally-point y"
+    assert pack_view.rw(0x7606) == 1, f"{label}: defend-mode selector"
+
+
+def test_doredinitiator_no_task_pending_composes_get_new_red_task():
+    # pack[0x9D74] == 0 dispatches to a body independently confirmed
+    # byte-for-byte identical to the already-recovered get_new_red_task --
+    # cross-check by running get_new_red_task directly on an identical
+    # starting state and comparing the resulting pack/dgroup fields it
+    # touches to what do_red_initiator produced before its own raise.
+    from simant.recovered.gameplay import do_red_initiator, get_new_red_task
+    from simant.bridge.dgroup_view import ByteBackend
+
+    def make_state():
+        dg = bytearray(0x10000)
+        sdg = bytearray(0x10000)
+        pack = bytearray(0x10000)
+        dg_view = ByteBackend(dg, 0)
+        sdg_view = ByteBackend(sdg, 0)
+        pack_view = ByteBackend(pack, 0)
+        sdg_view.wb(0x23A4, 20)
+        sdg_view.wb(0x278E, 25)
+        pack_view.ww(0x9D74, 0)
+        dg_view.ww(0xCBF2, 0x4321)      # SRand seed
+        dg_view.ww(0xCE80, 0)           # skip the raid-roll branch (mode != 1)
+        sdg_view.ww(0x836C, 25)         # -> pack[0x9C22] source
+        sdg_view.ww(0x836A, 10)         # -> pack[0x9BEE] source
+        dg_view.ww(0xACA2, 8)
+        dg_view.ww(0xACA4, 4)
+        return dg_view, sdg_view, pack_view
+
+    dg1, sdg1, pack1 = make_state()
+    with pytest.raises(NotImplementedError):
+        do_red_initiator(dg1, sdg1, pack1, 0)
+
+    dg2, sdg2, pack2 = make_state()
+    get_new_red_task(dg2, sdg2, pack2)
+
+    for off in (0x9D74, 0x9C22, 0x9BEE):
+        assert pack1.rw(off) == pack2.rw(off), f"pack[{off:#06x}] mismatch"
+
+
 # ---- _DoDigInB (seg6:4BD0) — black nest ant dig-forward tick -------------
 # Composes get_new_mode_b, get_enter_dir_b, is_it_dirt, dig_tile_them_b,
 # is_yellow_ant, find_in_b_list, get_out_b, get_winner, _try_eat_food,

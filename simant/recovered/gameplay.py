@@ -9459,6 +9459,97 @@ def do_attack_ant(dgroup, simant_data_group, pack, slot: int) -> None:
     alarm_here2(simant_data_group, new_x, new_y, 0x28)
 
 
+def do_red_initiator(dgroup, simant_data_group, pack, slot: int) -> None:
+    """The red colony's "initiator" ant's per-tick behavior: rally the red
+    defend-direction target at its own position, refresh the colony's
+    recruitment task if one isn't already pending, then move via
+    `_GetRedBestDirs` — a routine this session's own from-scratch
+    disassembly surfaces as a genuinely NEW, unrecovered dependency (NOT
+    one of the two established `_DoTroph`/`_YellowFight` gaps, and not
+    listed in this batch's own prior scoping survey either), so this
+    function raises `NotImplementedError` at that exact call site, per
+    this project's fail-loud rule — see the "Genuinely new blocker" note
+    below for why every real invocation currently hits it.
+
+    Recovered from `_DoRedInitiator` (SIMANTW.SYM seg6:0x96D4, arg
+    slot=[bp+6]; FAR return — the ONLY FAR-return routine in this whole
+    A-list dependency batch, independently confirmed via all three of its
+    own raw `ret far` epilogues, unlike its seven NEAR-return siblings).
+    Composes the already-recovered `get_new_red_task`.
+
+    Unconditional rally-point stamp: reads this ant's own `(x, y)`
+    (`simant_data_group[0x23A4+slot]`/`[0x278E+slot]`) and writes
+    `pack[0x80A6] = x`, `pack[0x80AC] = y` — the SAME two fields
+    `get_red_defend_dir`'s own mode-1 branch reads as its target position
+    — then `pack[0x7606] = 1`, the SAME field `get_red_defend_dir` reads
+    as its mode selector, forcing every OTHER red ant's `get_red_defend_dir`
+    call this tick to seek THIS ant's position.
+
+    Task-state dispatch on `pack[0x9D74]` (the SAME "pending task" tri-
+    state field `get_new_red_task` itself writes at its own two exit
+    points):
+    - `0` ("no task"): this routine's own inlined body here is
+      BYTE-FOR-BYTE IDENTICAL to the already-recovered `get_new_red_task`
+      (same `_UnRecruitRed` call, same `dgroup[0xCE80]==1` raid-roll gate
+      with the identical thresholds/fields, same fallback general-task
+      sizing formula and `pack[0x9C22]`/`[0x9BEE]` clamp) — independently
+      confirmed field-by-field against `get_new_red_task`'s own already-
+      oracle-verified body rather than re-derived from scratch, and
+      composed here as a direct call rather than duplicated.
+    - `2` ("raid task pending"): if `dgroup[0xCE80] == 1`, copies the
+      BLACK colony's own `get_defend_dir` mode-1 target
+      (`pack[0x9FE4]`/`[0x9FEA]`) into `pack[0x9BEE]`/`[0x9C22]` — a
+      "mirror the black colony's rally point" convenience with no RNG at
+      all. Any other `dgroup[0xCE80]` value is a no-op here.
+    - Any OTHER value (typically `1`, "general task pending"): a pure
+      no-op — skips both branches above entirely.
+
+    Genuinely new blocker: regardless of which task-state branch ran,
+    every path converges unconditionally on a call to `_GetRedBestDirs`
+    (SIMANTW.SYM seg6:0x9A18, reached via the SAME same-segment
+    "push cs; call near" far-call-emulation idiom `_YellowFight`/`_DoTroph`
+    use, args `pack[0x80A6]`, `pack[0x80AC]`, `pack[0x9C22]`,
+    `pack[0x9BEE]`, `1`) whose own resolved AX return value gates
+    everything the rest of this routine does (a fight/move/jitter tail
+    broadly similar in SHAPE to this batch's other siblings, but not
+    independently verified since it's unreachable without
+    `_GetRedBestDirs`'s own result). `_GetRedBestDirs` is a substantial,
+    previously-unrecovered routine, at least ~450 bytes (its disassembly
+    was still going at the point this session stopped reading it) with
+    multiple internal branches and its own loop, calling the ALREADY-
+    recovered `get_dis` (seg5:0x1122) among others — genuinely out of this
+    session's scope (not itself one of this batch's assigned 8 targets,
+    surfaced only by this routine's own dependency chain, exactly like
+    `do_forage_ant`'s own session found an undocumented `_YellowFight`
+    call), matching the SAME fail-loud precedent as `_YellowFight`/
+    `_DoTroph` rather than a low-confidence guess or a scope-creeping
+    attempt to recover it too. Because
+    the call is UNCONDITIONAL (every task-state branch reaches it), this
+    means EVERY real invocation of `do_red_initiator` currently raises —
+    unlike the other seven routines in this batch, where the two gates are
+    narrow, data-dependent branches.
+    """
+    x = simant_data_group.rb(0x23A4 + slot)
+    y = simant_data_group.rb(0x278E + slot)
+
+    pack.ww(0x80A6, x)
+    pack.ww(0x80AC, y)
+    pack.ww(0x7606, 1)
+
+    status = pack.rw(0x9D74)
+    if status == 0:
+        get_new_red_task(dgroup, simant_data_group, pack)
+    elif status == 2:
+        if dgroup.rw(0xCE80) == 1:
+            pack.ww(0x9BEE, pack.rw(0x9FE4))
+            pack.ww(0x9C22, pack.rw(0x9FEA))
+    # else (typically 1, "general task pending"): no-op
+
+    raise NotImplementedError(
+        "do_red_initiator: _GetRedBestDirs branch reached (not recovered) "
+        "-- slot={!r}".format(slot))
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
