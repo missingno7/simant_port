@@ -1,5 +1,46 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.188) — /goal grind: _InitPillar
+- RECOVERED `init_pillar` (`_InitPillar`, SIMANTW.SYM seg7:4BF8, NO
+  args; FAR return, 228 bytes). Always zeroes the tracked pillar's own
+  position/state (`simant_data_group[0x8A8A]`/`[0x8A8C]`/`[0x8A8E]` —
+  the SAME `[0x8A8C]`/`[0x8A8E]` position pair `is_pill_dead` already
+  reads), the `_pillar_cache_index` rule flag `pack[0x9B1E]`, a
+  companion field `pack[0x78D4]`, and the already-recovered
+  `store_pillar_map`/`replace_pillar_map` 6-entry cache
+  (`pack[0x7C0E..0x7C19]`). When `pack[0x9B6E]` ("inside the nest")
+  is nonzero, returns there. Otherwise fills 2 small PACK arrays
+  (x/y/roll/old-tile, indexed by a raw ASM loop counter `si=4,2`) by
+  rolling random yard cells via `_SRand1(0x80)`/`_SRand1(0x40)` and
+  overwriting each with a random rock tile from an 8-entry
+  `simant_data_group[0x8A90..]` lookup table (indexed by a fresh
+  `_SRand1(8)` roll).
+- Caught a genuine CONTROL-FLOW bug on the first real-ASM run, not the
+  usual region-window class: a blocked (`>= 0x10`) candidate cell does
+  NOT skip to the next slot — the raw disassembly's blocked branch
+  jumps directly past the `sub si,2` slot-advance instruction, so `si`
+  is UNCHANGED and the loop rerolls the SAME slot. This is an
+  unbounded retry with no attempt cap (unlike `add_rand_ant_lion`'s
+  200-attempt ceiling), and the 8-roll LFSR draw only happens on a
+  hit. First-draft code treated a blocked cell as "skip this slot,
+  move to the next" — caught because the real ASM wrote a rock tile
+  at a cell my precomputed candidates never touched; re-disassembling
+  the exact branch target (rather than assuming symmetry with
+  `add_rand_ant_lion`) found the missing `sub si,2`. Also caught a
+  SECOND bug in the test fixture itself while fixing this: an
+  un-seeded map plane defaults to all-zero (clear), so a "blocked
+  cell" test that only pokes two specific offsets doesn't actually
+  block anything else the retry loop might land on — fixed by bulk-
+  filling the whole yard plane via `Memory.load` before carving out
+  exceptions (the same bulk-fill technique `add_rand_ant_lion`'s
+  fixture already used).
+- 3 cases (inside-nest early return, both slots succeeding
+  immediately, and slot 1 retrying twice before both slots succeed —
+  coordinates precomputed offline via the already-verified `srand1`,
+  interleaving the conditional 8-roll draw exactly like the real ASM)
+  — all green after the control-flow fix.
+- Suite: simant 1834 (+3), full suite green.
+
 ## 2026-07-15 (cont.187) — /goal grind: _AddRandAntLion
 - RECOVERED `add_rand_ant_lion` (`_AddRandAntLion`, SIMANTW.SYM
   seg7:4222, NO args; FAR return, 286 bytes). Searches up to 200

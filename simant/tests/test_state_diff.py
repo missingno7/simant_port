@@ -7074,3 +7074,61 @@ def test_addantlion_state_diff_matches_asm(x, y, count, blocked_dirs, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _ADDANTLION_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _InitPillar (seg7:4BF8) — reset pillar state + up to 2 random rocks --
+# Candidate cells are precomputed offline (via the already-verified srand1),
+# interleaving the conditional 8-roll draw exactly like the real ASM: for
+# seed 0x1234, blocking the WHOLE yard plane except two cells forces slot
+# si=4 to retry twice — (104,16) then (32,53) are blocked draws — before
+# landing on (106,20); slot si=2 then succeeds immediately on (79,43).
+_INITPILLAR_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),   # yard map plane + SRand seed (0xCBF2)
+    (_PACK, 0x7800, 0x9D00),
+    (_SDG, 0x8A80, 0x8AA0),
+]
+_IP_RETRY_TARGET1, _IP_RETRY_TARGET2 = (106, 20), (79, 43)
+
+
+def _initpillar_seed(seed_val, inside, all_clear, extra_clear_cells=()):
+    from simant.recovered.gameplay import MAP_PLANE_BASE
+
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B6E, 1 if inside else 0)
+        span = 0x80 * 0x40
+        m.mem.load(dg, MAP_PLANE_BASE[0], bytes(span) if all_clear else bytes([0x20] * span))
+        for cx, cy in extra_clear_cells:
+            m.mem.wb(dg, MAP_PLANE_BASE[0] + (cx << 6) + cy, 5)
+        for i in range(8):
+            m.mem.wb(sdg, 0x8A90 + i, 0x30 + i)
+        # Pre-existing (non-zero) state, to prove the unconditional reset:
+        m.mem.ww(sdg, 0x8A8A, 0x11)
+        m.mem.ww(sdg, 0x8A8C, 0x22)
+        m.mem.ww(sdg, 0x8A8E, 0x33)
+        m.mem.ww(pack, 0x78D4, 0x44)
+        m.mem.ww(pack, 0x9B1E, 1)
+        for i in range(6):
+            m.mem.ww(pack, 0x7C0E + (i << 1), 0x55)
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,inside,all_clear,extra_clear_cells,label", [
+    (0x1234, True, False, (), "inside-nest-early-return-still-resets"),
+    (0x1234, False, True, (), "both-slots-succeed-immediately"),
+    (0x1234, False, False, (_IP_RETRY_TARGET1, _IP_RETRY_TARGET2),
+     "slot1-retries-twice-then-both-succeed"),
+])
+def test_initpillar_state_diff_matches_asm(seed_val, inside, all_clear,
+                                           extra_clear_cells, label):
+    from simant.recovered.gameplay import init_pillar
+    results = _run_and_diff_segs(
+        7, 0x4BF8, (), lambda d, p, s: init_pillar(d, p, s),
+        _INITPILLAR_REGIONS,
+        seed_fn=_initpillar_seed(seed_val, inside, all_clear, extra_clear_cells))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _INITPILLAR_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
