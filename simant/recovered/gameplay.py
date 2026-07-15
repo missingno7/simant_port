@@ -9461,3 +9461,70 @@ def add_food(dgroup, pack, simant_data_group, table_view, table_off,
             pack.ww(0x9E84, (pack.rw(0x9E84) + 1) & 0xFFFF)
 
     dgroup.ww(SRAND_SEED_OFF, seed)
+
+
+def is_liftable(pack, simant_data_group, dgroup, plane: int, x: int, y: int) -> int:
+    """Whether an ant could pick up whatever's at `(plane, x, y)` — food,
+    a specific "liftable object" tile, or an egg/larva in its early
+    growth stages.
+
+    Recovered from `_IsLiftable` (SIMANTW.SYM seg5:97CA, args plane=
+    [bp+6], x=[bp+8], y=[bp+10]; FAR return, 276 bytes; composes the
+    already-recovered `find_egg_at` and `is_it_food`). `find_egg_at`
+    runs FIRST and unconditionally (it has its own internal validity
+    gate, so calling it before this routine's own is fine) — only its
+    SECOND tuple element (the AX-returned egg/larva tile value) is
+    ever consulted below; the first (the OUT-pointer slot) is written
+    but never read here, matching the real ASM's own unused
+    `[bp-6]`/`[bp-4]` local. Separately reads the raw map tile at
+    `(x, y)` — `< 4`, an OUT-of-bounds `is_valid_location` failure, OR
+    (independently confirmed via the raw disassembly) a `plane` other
+    than exactly `0`/`1`/`2`/`3` all fall back to the sentinel `-1`
+    (never matching any of the ranges below), even though a `plane >
+    3` could still pass `is_valid_location`'s own nest-bounds check.
+
+    Liftable if ANY of: `plane <= 1` and `is_it_food` says so (reading
+    the SAME `pack[0x9B6E]` "inside the nest" flag); `plane > 1` and
+    the map tile is in `[0x10, 0x13]`; `plane == 1` and the tile is in
+    `[0x51, 0x53]`; `plane > 1` and the tile is in `[0x30, 0x31]`
+    (`plane == 0` never matches this pair — confirmed via the raw
+    disassembly's `jnz`-skips-the-check polarity); or the egg tile's
+    `(value & 0x7F)` is in `1..7` (the growth-stage range
+    `find_egg_at`'s own docstring already established). Returns 1/0.
+    """
+    _, egg_tile = find_egg_at(pack, simant_data_group, dgroup, plane, x, y)
+
+    if is_valid_location(plane, x, y) != 1:
+        map_tile = -1
+    elif plane <= 1:
+        map_tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+    elif plane == 2:
+        map_tile = dgroup.rb(MAP_PLANE_BASE[2] + (x << 6) + y)
+    elif plane == 3:
+        map_tile = dgroup.rb(MAP_PLANE_BASE[3] + (x << 6) + y)
+    else:
+        map_tile = -1
+
+    if plane <= 1:
+        is_food_like = is_it_food(map_tile, pack.rw(0x9B6E) != 0)
+    else:
+        is_food_like = 1 if 0x10 <= map_tile <= 0x13 else 0
+
+    if is_food_like:
+        return 1
+
+    special = 0
+    if plane == 1:
+        if 0x51 <= map_tile <= 0x53:
+            special = 1
+    elif plane > 1:
+        if 0x30 <= map_tile <= 0x31:
+            special = 1
+
+    if special:
+        return 1
+
+    if 1 <= (egg_tile & 0x7F) <= 7:
+        return 1
+
+    return 0

@@ -7762,3 +7762,56 @@ def test_addfood_state_diff_matches_asm(seed_val, count, flag, inside, all_clear
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _ADDFOOD_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _IsLiftable (seg5:97CA) — can an ant pick this up? -------------------
+_ISLIFTABLE_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_PACK, 0x7200, 0x9D00),
+    (_SDG, 0x2300, 0x4B00),
+]
+
+
+def _isliftable_seed(inside, life_at, map_tile_at):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x9B6E, 1 if inside else 0)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes(span))
+        m.mem.load(dg, 0x68E8, bytes(span))
+        for (plane, cx, cy), tile in map_tile_at.items():
+            base = {0: 0x28E8, 1: 0x28E8, 2: 0x48E8, 3: 0x58E8}.get(plane)
+            if base is not None:
+                m.mem.wb(dg, base + (cx << 6) + cy, tile)
+        for (plane, cx, cy), life in life_at.items():
+            base = {0: 0x68E8, 1: 0x68E8, 2: 0x88E8, 3: 0x98E8}[plane]
+            m.mem.wb(dg, base + (cx << 6) + cy, life)
+    return seed
+
+
+@pytest.mark.parametrize("plane,x,y,inside,map_tile,expect,label", [
+    (0, 10, 10, False, 0x49, 1, "yard-outside-food-tile-liftable"),
+    (0, 10, 10, False, 0x05, 0, "yard-outside-plain-dirt-not-liftable"),
+    (1, 10, 10, False, 0x52, 1, "yard-plane1-special-tile-liftable"),
+    (2, 10, 10, False, 0x11, 1, "nest-liftable-object-tile"),
+    (2, 10, 10, False, 0x31, 1, "nest-plane-gt1-special-tile"),
+    (0, 10, 10, False, 0x31, 0, "plane0-special-tile-does-not-count"),
+    (4, 10, 10, False, 0x11, 0, "plane-outside-0to3-falls-back-to-sentinel"),
+    (0, 200, 10, False, 0x49, 0, "out-of-bounds-position-not-liftable"),
+])
+def test_isliftable_state_diff_matches_asm(plane, x, y, inside, map_tile,
+                                           expect, label):
+    from simant.recovered.gameplay import is_liftable
+
+    def apply_recovered(dgroup, pack, sdg):
+        return is_liftable(pack, sdg, dgroup, plane, x, y)
+
+    (asm_ax, rec_ax), results = _run_and_diff_segs_with_ax(
+        5, 0x97CA, (plane, x, y), apply_recovered,
+        _ISLIFTABLE_REGIONS,
+        seed_fn=_isliftable_seed(inside, {}, {(plane, x, y): map_tile}))
+    assert asm_ax == rec_ax == expect, f"{label}: asm_ax={asm_ax:#x} rec_ax={rec_ax:#x} expect={expect:#x}"
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _ISLIFTABLE_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

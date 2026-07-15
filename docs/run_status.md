@@ -1,5 +1,36 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.201) — /goal grind: _IsLiftable
+- RECOVERED `is_liftable` (`_IsLiftable`, SIMANTW.SYM seg5:97CA, args
+  plane=[bp+6], x=[bp+8], y=[bp+10]; FAR return, 276 bytes; composes
+  the already-recovered `find_egg_at` and `is_it_food`). Whether an
+  ant could pick up whatever's at `(plane, x, y)`.
+- `find_egg_at` runs first and unconditionally (it has its own
+  internal validity gate); only its SECOND tuple element (the
+  AX-returned egg/larva tile value) is ever consulted — the first
+  (the OUT-pointer slot) is written but never read, matching the real
+  ASM's own unused locals. Separately reads the raw map tile: an
+  out-of-bounds `is_valid_location` failure, OR (independently
+  confirmed via the raw disassembly) a `plane` other than exactly
+  `0`/`1`/`2`/`3`, falls back to a `-1` sentinel that never matches
+  any range check — even though a `plane > 3` could still legitimately
+  PASS `is_valid_location`'s own nest-bounds check, since that routine
+  only distinguishes "yard" (`<=1`) from "nest" (`>1`), not the exact
+  plane number. Liftable if the tile is food (`plane <= 1`, composing
+  `is_it_food`), a fixed "liftable object" tile range (`plane > 1`,
+  `[0x10,0x13]`), a `plane`-specific special tile (`[0x51,0x53]` only
+  for `plane == 1` exactly, `[0x30,0x31]` only for `plane > 1` —
+  `plane == 0` matches neither, confirmed via the raw disassembly's
+  `jnz`-skip polarity), or the egg tile's growth-stage byte is `1..7`.
+- 8 cases (food/plain-dirt on the yard, the plane-1-only and
+  plane>1-only special-tile ranges, the plane-0-doesn't-count check,
+  an out-of-0..3-range plane forcing the sentinel fallback, and an
+  out-of-bounds position) — all green on the FIRST real-ASM run (one
+  test-fixture bug caught and fixed immediately: the seed helper tried
+  to write a map tile for the deliberately-invalid `plane=4` case,
+  which has no real map base — not a recovery bug).
+- Suite: simant 1942 (+8), full suite green.
+
 ## 2026-07-15 (cont.200) — /goal grind: _SRand2.._SRand256 explicit coverage
 - Ran a fresh Explore survey now that the third survey's whole
   candidate list (pillar/sow cluster, `_GstrR`/`_GetStrategy`,
