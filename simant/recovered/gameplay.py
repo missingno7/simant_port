@@ -8459,3 +8459,66 @@ def add_ant_lion(dgroup, pack, simant_data_group, x: int, y: int) -> None:
     pack.wb(0x7D4E + slot, 0)
     if slot < 9:
         simant_data_group.ww(0x8A88, (slot + 1) & 0xFFFF)
+
+
+def add_rand_ant_lion(dgroup, pack, simant_data_group) -> None:
+    """Search up to 200 random locations for a spot to place a new ant
+    lion, preferring a fully-clear 3x3 block but falling back (after
+    100 failed attempts) to a merely-clear centre tile; if a spot is
+    found, composes `add_ant_lion` to do the actual placement.
+
+    Recovered from `_AddRandAntLion` (SIMANTW.SYM seg7:4222, NO args;
+    FAR return, 286 bytes). Each attempt rolls a candidate `x =
+    _SRand1(0x40) + _SRand1(0x41)`, `y = _SRand1(0x20) + _SRand1(0x21)`
+    (composing the already-recovered `srand1`; four LFSR draws EVERY
+    attempt regardless of outcome) and checks it via the real
+    `_IsClear3x3` routine's own composition — the same `map_cell_offset`
+    + `life_cell_offset` + `is_clear_tile` pattern `add_ant_lion` already
+    uses for its ring check, over the centre plus 8 neighbours (an
+    out-of-range cell reads as blocked, matching `_IsClear3x3`'s own
+    `_IsClearTile`-invalid-cell residue). A fully-clear 3x3 succeeds
+    immediately at any attempt count; a merely-clear centre tile (the
+    SAME cell already checked as `cells[0]` — reusing it rather than a
+    redundant re-check, since it's a pure function of unchanged map/life
+    state) only succeeds once the 0-indexed attempt count has reached
+    100 (a two-tier fallback, confirmed via the raw `cmp di,0x64`).  On
+    success, calls `add_ant_lion(dgroup, pack, simant_data_group, x, y)`
+    — its placement body (centre stamp + ring stamp + PACK slot append)
+    is byte-identical to this routine's own placement tail, confirmed by
+    direct comparison of both disassemblies.  If all 200 attempts fail,
+    the routine is a no-op (but has still burned up to 800 LFSR draws).
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    placed = False
+    x = y = 0
+    for attempt in range(200):
+        seed, r1 = srand1(seed, 0x40)
+        seed, r2 = srand1(seed, 0x41)
+        x = r1 + r2
+        seed, r3 = srand1(seed, 0x20)
+        seed, r4 = srand1(seed, 0x21)
+        y = r3 + r4
+
+        offsets = ((0, 0),) + tuple(zip(CLEAR_3X3_DX, CLEAR_3X3_DY))
+        cells = [0] * 9
+        for i, (ddx, ddy) in enumerate(offsets):
+            cx, cy = x + ddx, y + ddy
+            off = map_cell_offset(1, cx, cy)
+            if off is None:
+                continue
+            tile = dgroup.rb(off)
+            life = dgroup.rb(life_cell_offset(1, cx, cy))
+            cells[i] = is_clear_tile(1, tile, life)
+
+        if is_clear_3x3(cells):
+            placed = True
+            break
+        if cells[0] and attempt >= 100:
+            placed = True
+            break
+
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if placed:
+        add_ant_lion(dgroup, pack, simant_data_group, x, y)

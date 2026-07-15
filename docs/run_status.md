@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.187) — /goal grind: _AddRandAntLion
+- RECOVERED `add_rand_ant_lion` (`_AddRandAntLion`, SIMANTW.SYM
+  seg7:4222, NO args; FAR return, 286 bytes). Searches up to 200
+  random locations (`x = _SRand1(0x40)+_SRand1(0x41)`, `y =
+  _SRand1(0x20)+_SRand1(0x21)`, four LFSR draws EVERY attempt
+  regardless of outcome) for a spot to place a new ant lion —
+  preferring a fully-clear 3x3 block (composing `map_cell_offset` +
+  `life_cell_offset` + `is_clear_tile` over the centre and 8
+  neighbours, the same pattern `add_ant_lion`'s ring check already
+  uses, confirmed against `_IsClear3x3`'s own island in `hooks.py` for
+  the out-of-range-cell residue), but falling back to a merely-clear
+  centre tile once the 0-indexed attempt count reaches 100. On
+  success, composes `add_ant_lion` directly for the placement — its
+  body is byte-identical to this routine's own placement tail
+  (confirmed by direct disassembly comparison, the same centre-stamp +
+  ring-stamp + PACK-slot-append sequence cont.186 already recovered).
+- Test strategy: precomputed each seed's exact per-attempt `(x, y)`
+  candidates offline via the already-verified `srand1`, so the
+  fixture could deliberately bulk-clear or bulk-occupy the whole yard
+  plane and pre-clear exactly the cell needed to force a given branch
+  — immediate full-3x3 success at attempt 0, total failure across all
+  200 attempts (life occupied everywhere), and the single-tile
+  fallback landing exactly at attempt 100 (only that one precomputed
+  cell cleared, its neighbours left occupied so the full-3x3 check
+  keeps failing there). All 3 cases green on the first real-ASM run —
+  no region-window, segment, or off-by-one bug this time.
+- Suite: simant 1831 (+3), full suite green.
+
 ## 2026-07-15 (cont.186) — /goal grind: _AddAntLion
 - RECOVERED `add_ant_lion` (`_AddAntLion`, SIMANTW.SYM seg7:4340, args
   x=[bp+6], y=[bp+8]; FAR return, 186 bytes). Composes `set_map`

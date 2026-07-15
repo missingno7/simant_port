@@ -6974,6 +6974,56 @@ def test_reproduce_state_diff_matches_asm(seed_val, x, y, colony, pre_off,
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _AddRandAntLion (seg7:4222) — random search for an ant-lion spot ----
+# x/y candidates per attempt are precomputed offline (via the already-verified
+# srand1) for each seed below, so the fixture can deliberately pre-clear/block
+# exactly the cells needed to force a given branch:
+#   seed 0xABCD attempt 0   -> (51, 11)  (interior, used for immediate success)
+#   seed 0x1234 attempt 100 -> (78, 37)  (interior, used for the fallback case)
+_ADDRANDANTLION_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_PACK, 0x7A00, 0x8100),
+    (_SDG, 0x8A00, 0x8B00),
+]
+
+
+def _addrandantlion_seed(seed_val, all_clear, clear_cell=None):
+    """`all_clear=True` clears the whole yard plane (attempt 0 always
+    succeeds). `all_clear=False` occupies the whole yard plane, except
+    `clear_cell` (if given) whose life is cleared -- its 8 neighbours stay
+    occupied, so only a single-tile (fallback) success is possible there."""
+    from simant.recovered.gameplay import MAP_PLANE_BASE, LIFE_PLANE_BASE, \
+        map_cell_offset, life_cell_offset
+
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        span = 0x80 * 0x40
+        m.mem.load(dg, MAP_PLANE_BASE[1], bytes(span))
+        m.mem.load(dg, LIFE_PLANE_BASE[1], bytes(span if all_clear else [5] * span))
+        if clear_cell is not None:
+            cx, cy = clear_cell
+            m.mem.wb(dg, map_cell_offset(1, cx, cy), 0)
+            m.mem.wb(dg, life_cell_offset(1, cx, cy), 0)
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,all_clear,clear_cell,label", [
+    (0xABCD, True, None, "attempt0-full-3x3-clear-succeeds-immediately"),
+    (0x5555, False, None, "all-200-attempts-blocked-total-failure"),
+    (0x1234, False, (78, 37), "fallback-single-tile-success-at-attempt100"),
+])
+def test_addrandantlion_state_diff_matches_asm(seed_val, all_clear, clear_cell, label):
+    from simant.recovered.gameplay import add_rand_ant_lion
+    results = _run_and_diff_segs(
+        7, 0x4222, (), lambda d, p, s: add_rand_ant_lion(d, p, s),
+        _ADDRANDANTLION_REGIONS,
+        seed_fn=_addrandantlion_seed(seed_val, all_clear, clear_cell))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _ADDRANDANTLION_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _AddAntLion (seg7:4340) — stamp a pit + ring tiles + a slot ----------
 _ADDANTLION_REGIONS = [
     # A single wide DGROUP window spanning both the plane-1 map cells near
