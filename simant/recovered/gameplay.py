@@ -8612,3 +8612,128 @@ def start_attack(dgroup, pack) -> None:
     seed, roll = srand1(seed, 100)
     dgroup.ww(SRAND_SEED_OFF, seed)
     pack.ww(0x78DC, (roll + 0x1E) & 0xFFFF)
+
+
+def init_sim_yard(dgroup, pack, simant_data_group) -> None:
+    """Startup init: resets a large batch of yard-simulation fields to
+    fixed defaults (mostly zero, a few nonzero constants).
+
+    Recovered from `_InitSimYard` (SIMANTW.SYM seg7:1378, NO args; FAR
+    return, 304 bytes, NO calls). Every field below was independently
+    resolved to PACK or SIMANT_DATA_GROUP via a direct machine memory
+    read of its DGROUP pointer-global (never assumed); a few fields are
+    direct DGROUP writes (no pointer-global indirection). One field is
+    already-named: `simant_data_group[0x8A80]` is the SAME ant-lion
+    live-count field `find_in_lion_list`/`kill_ant_lion`/`add_ant_lion`
+    already use.
+
+    PACK: `[0x7D4C]`/`[0x7D4A]`/`[0x9FBE]`/`[0x9FBC]`/`[0x7380]`/
+    `[0x737E]`/`[0x99DA]`/`[0x78B0]`/`[0x78D2]`/`[0x72B6]`/`[0x7D5A]`/
+    `[0x7A4E]`/`[0x7A58]`/`[0x9AF4]`/`[0x9AFC]`/`[0x7C92]`/`[0x99E6]`/
+    `[0x9B30] = 0`; `[0x7A5A]`/`[0x8A72]` (SDG, see below) `= 2`;
+    `[0x72C0]`/`[0x8118] = 1`; `[0x72F2]`/`[0x7A5C] = 0xFFFF`.
+    SIMANT_DATA_GROUP: `[0x8A74] = 0x0C`; `[0x8A70] = 0x14`;
+    `[0x8A80]`/`[0x8A84]`/`[0x8A86]`/`[0x8A7E]`/`[0x8A82] = 0`.
+    DGROUP (direct): `[0xAC76] = 0xB4`; `[0xAC78] = 0x49`;
+    `[0xAC5C] = 0xFA`; `[0xAC5E] = 0x96`; `[0xAC7A]`/`[0xAC74]`/
+    `[0xAC64]`/`[0xAC6A]`/`[0xAC6C]`/`[0xAC60]`/`[0xAC72] = 0`;
+    `[0xAC62] = 1`.
+    """
+    pack.ww(0x7D4C, 0)
+    pack.ww(0x7D4A, 0)
+    dgroup.ww(0xAC76, 0x00B4)
+    dgroup.ww(0xAC78, 0x0049)
+    simant_data_group.ww(0x8A74, 0x000C)
+    simant_data_group.ww(0x8A70, 0x0014)
+    pack.ww(0x9FBE, 0)
+    pack.ww(0x9FBC, 0)
+    pack.ww(0x7380, 0)
+    pack.ww(0x737E, 0)
+    dgroup.ww(0xAC5C, 0x00FA)
+    dgroup.ww(0xAC5E, 0x0096)
+    simant_data_group.ww(0x8A72, 2)
+    pack.ww(0x7A5A, 2)
+    pack.ww(0x99DA, 0)
+    pack.ww(0x78B0, 0)
+    pack.ww(0x78D2, 0)
+    dgroup.ww(0xAC7A, 0)
+    dgroup.ww(0xAC74, 0)
+    simant_data_group.ww(0x8A80, 0)
+    simant_data_group.ww(0x8A84, 0)
+    simant_data_group.ww(0x8A86, 0)
+    dgroup.ww(0xAC64, 0)
+    pack.ww(0x72B6, 0)
+    dgroup.ww(0xAC6A, 0)
+    dgroup.ww(0xAC6C, 0)
+    dgroup.ww(0xAC60, 0)
+    pack.ww(0x7D5A, 0)
+    simant_data_group.ww(0x8A7E, 0)
+    simant_data_group.ww(0x8A82, 0)
+    pack.ww(0x7A4E, 0)
+    pack.ww(0x7A58, 0)
+    pack.ww(0x9AF4, 0)
+    pack.ww(0x9AFC, 0)
+    pack.ww(0x7C92, 0)
+    dgroup.ww(0xAC72, 0)
+    pack.ww(0x99E6, 0)
+    pack.ww(0x9B30, 0)
+    dgroup.ww(0xAC62, 1)
+    pack.ww(0x72C0, 1)
+    pack.ww(0x8118, 1)
+    pack.ww(0x72F2, 0xFFFF)
+    pack.ww(0x7A5C, 0xFFFF)
+
+
+def clr_arrays(dgroup, simant_data_group) -> None:
+    """Startup/new-game reset: zeroes every world-sim array this session
+    already tracks by name, plus one still-unrecovered companion field.
+
+    Recovered from `_ClrArrays` (SIMANTW.SYM seg7:6DEC, NO args; FAR
+    return, 274 bytes, NO calls). Zeroes, in order:
+
+    - The full yard map + life planes (`MAP_PLANE_BASE[0]`/
+      `LIFE_PLANE_BASE[0]`, 0x2000 bytes each — the 128x64 yard span).
+    - The full nest-plane-2 and nest-plane-3 map + life planes
+      (`MAP_PLANE_BASE[2]`/`[3]`, `LIFE_PLANE_BASE[2]`/`[3]`, 0x1000
+      bytes each — the 64x64 nest span), plus their `_FixExitMap`/`_GetExitDir`/
+      `_GetEnterDir` companion "exit map" arrays on SIMANT_DATA_GROUP
+      (`[0x3A4..)`/`[0x13A4..)`, the SAME fields those routines use).
+    - Six evenly-spaced (`0x800`-byte-apart) SIMANT_DATA_GROUP scent
+      grids: the alarm grid `[0x52D2..)`, an UNRECOVERED companion
+      field `[0x5AD2..)` (no consumer identified in this session yet),
+      then the black/red nest and trail scent grids `[0x62D2..)`/
+      `[0x6AD2..)`/`[0x72D2..)`/`[0x7AD2..)` (`colony_smell_decay_bn`/
+      `rn`, `jam_scent_bt`/`rt`'s own grids), each `0x800` bytes.
+    - The A/B/R-list per-slot arrays this session has used throughout
+      (caste/field_c/field_e): A-list `[0x2F62]`/`[0x2B78]`/`[0x334C]`
+      (1000 bytes each, the SAME 1000-slot cap `[0x80F0] >= 0x3E8`
+      elsewhere gates on), B-list `[0x3D18]`/`[0x3B22]`/`[0x3F0E]` and
+      R-list `[0x46E6]`/`[0x44F0]`/`[0x48DC]` (500 bytes each).
+    - `reproduce`'s two 192-byte per-colony grids (`[0xA4..)`/
+      `[0x164..)`).
+    """
+    for off in range(0x80 * 0x40):
+        dgroup.wb(MAP_PLANE_BASE[0] + off, 0)
+        dgroup.wb(LIFE_PLANE_BASE[0] + off, 0)
+
+    for off in range(0x40 * 0x40):
+        dgroup.wb(MAP_PLANE_BASE[2] + off, 0)
+        dgroup.wb(MAP_PLANE_BASE[3] + off, 0)
+        simant_data_group.wb(0x3A4 + off, 0)
+        simant_data_group.wb(0x13A4 + off, 0)
+        dgroup.wb(LIFE_PLANE_BASE[2] + off, 0)
+        dgroup.wb(LIFE_PLANE_BASE[3] + off, 0)
+
+    for base in (0x52D2, 0x5AD2, 0x62D2, 0x6AD2, 0x72D2, 0x7AD2):
+        for off in range(0x800):
+            simant_data_group.wb(base + off, 0)
+
+    for base, n in ((0x334C, 1000), (0x2B78, 1000), (0x2F62, 1000),
+                    (0x48DC, 500), (0x44F0, 500), (0x46E6, 500),
+                    (0x3F0E, 500), (0x3B22, 500), (0x3D18, 500)):
+        for off in range(n):
+            simant_data_group.wb(base + off, 0)
+
+    for off in range(0xC0):
+        simant_data_group.wb(0xA4 + off, 0)
+        simant_data_group.wb(0x164 + off, 0)

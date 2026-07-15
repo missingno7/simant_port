@@ -1,5 +1,63 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.190) — /goal grind: _InitSimYard + _ClrArrays
+- Ran a fresh Explore survey (previous candidate queue exhausted).
+  It flagged a self-contained "pillar/sow" cluster (7 leaves + 1
+  orchestrator, all 100%-recovered call targets) as the top priority,
+  plus confirmed `_GstrR`/`_GetStrategy` and `_AddFood` are now
+  tractable given `_StartAttack`'s presentation-call-stubbing
+  precedent. Picked the two smallest, zero-call candidates first.
+- RECOVERED `init_sim_yard` (`_InitSimYard`, SIMANTW.SYM seg7:1378, NO
+  args; FAR return, 304 bytes, NO calls) — a large batch of ~35 fixed
+  field resets across PACK/SIMANT_DATA_GROUP/DGROUP, every one
+  independently resolved via a direct machine memory read of its
+  DGROUP pointer-global. One field is already-named:
+  `simant_data_group[0x8A80]` is the SAME ant-lion live-count field
+  `find_in_lion_list`/`kill_ant_lion`/`add_ant_lion` already use.
+  - Caught a genuine REGION-WINDOW bug (this session's most common bug
+    class, now recurring after several clean runs): three PACK writes
+    (`0x72B6`, `0x72C0`, `0x72F2`) fell just BELOW the test region's
+    lower bound of `0x7300` — Python's negative-index wraparound
+    silently aliased them to the tail of the region buffer instead of
+    erroring. Diagnosed by direct whole-machine before/after byte
+    diffs against a fresh (un-prefilled) machine, which confirmed the
+    recovered function's own isolated writes exactly matched the real
+    ASM's 7 true PACK mutations — proving the bug was in the test's
+    region bounds, not the recovered code. Fixed by widening the PACK
+    region's lower bound to `0x7200`.
+- RECOVERED `clr_arrays` (`_ClrArrays`, SIMANTW.SYM seg7:6DEC, NO
+  args; FAR return, 274 bytes, NO calls) — a new-game reset zeroing
+  essentially every named world-sim array this session tracks: the
+  full yard + nest map/life planes, the `_FixExitMap` exit-map arrays
+  (`[0x3A4]`/`[0x13A4]`), six evenly-spaced `0x800`-byte scent grids
+  (the alarm grid, one still-unrecovered companion field at
+  `[0x5AD2]`, and the black/red nest+trail scent grids), the full
+  A/B/R-list per-slot arrays (caste/field_c/field_e, 1000/500 bytes
+  each), and `reproduce`'s two 192-byte per-colony grids.
+  - Verification technique for a function this wide-reaching: rather
+    than trust the region bounds blind, first ran a direct whole-
+    machine before/after byte diff on the REAL ASM (with regions
+    deliberately pre-seeded nonzero, scoped tightly to each real
+    segment's own bounds — a whole-64K blind fill was tried first and
+    produced a bogus 13864-byte "PACK changed" artifact, traced to
+    this VM's flat memory model letting adjacent NE segments share
+    physical space past a segment's declared size; re-ran scoped and
+    got a clean 0-byte PACK diff, confirming `_ClrArrays` never
+    touches PACK at all). The clean diff's contiguous merged ranges
+    (e.g. one 32768-byte DGROUP range, one 12288-byte SDG range)
+    turned out to exactly match the SUM of several adjacent
+    independently-derived arrays sitting back-to-back in memory — not
+    a discrepancy, just confirmation that the plane/grid layout has no
+    padding between same-family arrays.
+  - Both functions' loops were flattened from the ASM's nested
+    `di`/`si` two-level counters into flat `range()` loops in the
+    recovered Python (provably equivalent, since the nested bounds are
+    exact multiples covering every offset in the flat range exactly
+    once) — cleaner recovered source without changing byte-exactness.
+- 2 cases (one each, no branches to exercise) — both green after the
+  region-window fix.
+- Suite: simant 1840 (+2), full suite green.
+
 ## 2026-07-15 (cont.189) — /goal grind: _StartAttack
 - RECOVERED `start_attack` (`_StartAttack`, SIMANTW.SYM seg7:050E, NO
   args; FAR return, 66 bytes). Confirmed by resolving both far-call

@@ -7156,3 +7156,49 @@ def test_startattack_state_diff_matches_asm(seed_val):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _STARTATTACK_REGIONS):
         assert asm_after == rec_after, f"seed={seed_val:#x} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _InitSimYard (seg7:1378) — startup init, a large batch of fixed resets
+_INITSIMYARD_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC00, 0xAD00),
+    (_PACK, 0x7200, 0x9FD0),
+    (_SDG, 0x8A60, 0x8A90),
+]
+
+
+def test_initsimyard_state_diff_matches_asm():
+    from simant.recovered.gameplay import init_sim_yard
+    results = _run_and_diff_segs(
+        7, 0x1378, (), lambda d, p, s: init_sim_yard(d, p, s),
+        _INITSIMYARD_REGIONS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _INITSIMYARD_REGIONS):
+        assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _ClrArrays (seg7:6DEC) — new-game reset: zero every world-sim array --
+# Regions are seeded nonzero first (scoped exactly to each region's own
+# bounds, never a whole-64K fill -- this VM's flat memory model means
+# adjacent NE segments can share physical space past a segment's real
+# size, so a blind whole-segment fill corrupts unrelated state) so the
+# test actually proves the zeroing, not just "already zero by luck".
+_CLRARRAYS_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xA900),   # yard+nest map/life planes
+    (_SDG, 0x80, 0x8300),                    # reproduce grids, exit maps,
+                                              # A/B/R-list arrays, smell grids
+]
+
+
+def _clrarrays_seed(m):
+    for si, lo, hi in _CLRARRAYS_REGIONS:
+        m.mem.load(m.seg_bases[si], lo, bytes([0xAB]) * (hi - lo))
+
+
+def test_clrarrays_state_diff_matches_asm():
+    from simant.recovered.gameplay import clr_arrays
+    results = _run_and_diff_segs(
+        7, 0x6DEC, (), lambda d, s: clr_arrays(d, s),
+        _CLRARRAYS_REGIONS, seed_fn=_clrarrays_seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _CLRARRAYS_REGIONS):
+        assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"
