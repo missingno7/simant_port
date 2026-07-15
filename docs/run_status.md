@@ -1,5 +1,38 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.216) — /goal grind: _DoRecruitAnt (A-list "_DoAntSimA" dependency batch, 6/8)
+- RECOVERED `do_recruit_ant` (`_DoRecruitAnt`, seg6:0x22A8, NEAR return,
+  722 bytes) — a defending/recruited yard ant: flees via `get_alarm_dir`
+  when its OWN territory is alarmed, else steers via the colony-specific
+  `get_defend_dir`/`get_red_defend_dir` (picked by a numeric `caste >
+  0x7F` compare against the zero-extended caste byte — a plain compare
+  standing in for a bit test on the SAME `0x80` colony bit). Composed
+  entirely from already-recovered leaves.
+- TWO genuine, independently-confirmed asymmetries from every other
+  A-list sibling recovered this batch (neither assumed, both re-checked
+  against this routine's own raw disassembly):
+  1. The crowd-jitter path is COMPUTATIONALLY DIFFERENT from
+     `_forage_jitter` — a fresh `_SRand8()` roll is used DIRECTLY as the
+     new direction bits (`roll8 | high_bits`), with NO mode-table lookup
+     at all. Every OTHER A-list sibling's crowd-jitter and same-colony-
+     occupant jitter share the identical mode-table computation; this is
+     the first one where they genuinely differ (the post-trophallaxis-gate
+     tail here STILL uses the mode table, i.e. still is `_forage_jitter`
+     — only the crowd path itself differs).
+  2. The trophallaxis gate's polarity is INVERTED from
+     `do_rand_ant_a`/`do_to_nest_ant`'s own `pack[0x9AF2] == 1` test: this
+     routine's raw disassembly is `cmp ...,0000h; jz <skip>`, i.e. the
+     gate fires on ANY nonzero value, not just `1` — caught by re-reading
+     the actual compare/jump bytes rather than trusting the sibling
+     precedent, and covered by a dedicated test seeding `pack[0x9AF2]=7`
+     (nonzero, NOT `1`) to prove the gate still fires.
+- Tests: 10 new cases (at-entrance, defend-dir black/red, alarmed-flee,
+  the raw-roll8 crowd-jitter, occupied-same-colony, edge) plus dedicated
+  fight-found, yellowfight-gate, and the polarity-sensitive dotroph-gate
+  tests — all passed on the first run. Full suite: 2184 passed (was 2174).
+- Commit: (pending).
+- Still missing (2/8): `_DoAttackAnt`, `_DoRedInitiator`.
+
 ## 2026-07-15 (cont.215) — /goal grind: _DoToAlarm (A-list "_DoAntSimA" dependency batch, 5/8)
 - RECOVERED `do_to_alarm` (`_DoToAlarm`, seg6:0x1A0A, NEAR return, 682
   bytes) — a yard ant fleeing danger. Same entrance/crowd/move/fight tail
