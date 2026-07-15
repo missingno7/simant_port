@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.215) — /goal grind: _DoToAlarm (A-list "_DoAntSimA" dependency batch, 5/8)
+- RECOVERED `do_to_alarm` (`_DoToAlarm`, seg6:0x1A0A, NEAR return, 682
+  bytes) — a yard ant fleeing danger. Same entrance/crowd/move/fight tail
+  shape as the other A-list siblings, direction via the already-recovered
+  `get_alarm_dir`, composed entirely from already-recovered leaves.
+- One genuinely NEW front this routine has that none of the prior four
+  do: a territory "self-heal" gate BEFORE the direction roll — own-cell
+  ALARM scent `== 0` AND a fresh `_SRand4()==0` (1-in-4) re-stamps the
+  ant's own caste onto its own life cell (a no-op reassert) and computes
+  `field_c` via `get_new_mode`, with NO movement at all on that path.
+  Independently confirmed the territory-index formula
+  (`(x&0xFE)<<4 + (y>>1)`) is byte-identical to `do_forage_ant`'s own.
+- Three more absences independently confirmed via the raw disassembly and
+  resolved call-target list (no assumptions carried over from siblings):
+  no pickup-food logic anywhere (no `PickupFoodA` call at all — this
+  routine doesn't even have the "pickup-tile-but-caste_sub-wrong" wrinkle
+  its siblings do, since there's no pickup branch to skip into), no
+  `field_e`/jam-scent step on an empty move (the same genuinely-simpler
+  shape `do_rand_ant_aa`'s empty-move has), and no trophallaxis gate at
+  all (no `pack[0x9AF2]` read, no `_DoTroph` call) — same-colony occupants
+  (yellow or not) always just `_forage_jitter`.
+- Tests: 10 new cases (self-heal hit/miss, at-entrance, move-empty
+  black/red, crowded-jitter, occupied-same-colony, edge) plus dedicated
+  fight-found and yellowfight-gate tests — all passed on the first run.
+  Full suite: 2174 passed (was 2164).
+- Commit: (pending).
+- Still missing (3/8): `_DoRecruitAnt`, `_DoAttackAnt`, `_DoRedInitiator`.
+
 ## 2026-07-15 (cont.214) — /goal grind: _DoRepoExit (A-list "_DoAntSimA" dependency batch, 4/8)
 - RECOVERED `do_repo_exit` (`_DoRepoExit`, seg6:0xC7A, NEAR return, 208
   bytes) — a small dispatcher, unblocked once `_DoToNestAnt`/`_DoRandAntAA`

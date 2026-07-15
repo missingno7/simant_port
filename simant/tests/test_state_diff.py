@@ -3589,6 +3589,143 @@ def test_dorepoexit_acting_slot_matches_asm():
         assert asm_after == rec_after, f"acting-slot {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _DoToAlarm (seg6:0x1A0A) — yard ant flee-danger tick -----------------
+# Composes is_valid_a, go_in_nest, get_new_mode, get_alarm_dir, is_yellow_ant,
+# find_in_a_list, get_winner, alarm_here2, _forage_jitter. One gated branch
+# (_YellowFight) deliberately not recovered, same precedent as the siblings'.
+# get_alarm_dir's own gradient scan is deterministic (no RNG involved when a
+# neighbour outscents the rest), so most rows fix the ALARM grid directly
+# rather than hunting for a magic _SRand seed -- except the self-heal gate,
+# which genuinely needs a concrete _SRand4()==0/!=0 seed.
+_DOTOALARM_REGIONS = _DORANDANTA_REGIONS
+
+
+def _dotoalarm_seed(x, y, caste, srand, dest_tile, threshold, occupant,
+                    at_entrance=False, territory_alarmed=True, direction=2):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4, x)
+        m.mem.wb(sdg, 0x278E, y)
+        m.mem.wb(sdg, 0x2F62, caste)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.wb(pack, 0x9B6E, 0)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        m.mem.data[sdg + 0x52D2:sdg + 0x52D2 + 0x800] = bytes(0x800)
+        territory_idx = ((x & 0xFE) << 4) + (y >> 1)
+        if territory_alarmed:
+            m.mem.wb(sdg, 0x52D2 + territory_idx, 1)
+            hx, hy = x >> 1, y >> 1
+            nhx = (hx + GET_BEST_DIR_DX[direction]) & 0x3F
+            nhy = (hy + GET_BEST_DIR_DY[direction]) & 0x1F
+            m.mem.wb(sdg, 0x52D2 + (nhx << 5) + nhy, 200)
+        own_tile = (0x80 if False else 0x50) if at_entrance else 0x00
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, own_tile)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F and (nx, ny) != (x, y):
+                    m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+                    m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, occupant)
+        m.mem.ww(pack, 0x7604, threshold)
+        m.mem.wb(dg, 0xCE98, 0)
+        m.mem.wb(sdg, 0x8A5C, 0)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,caste,srand,dest_tile,threshold,occupant,at_entrance,"
+    "territory_alarmed,label", [
+    (20, 25, 0x03, 0x1234, 0x00, 0, 0, True, True, "at-entrance"),
+    (20, 25, 0x12, 0, 0x00, 0, 0, False, False, "selfheal-hit"),
+    (20, 25, 0x12, 1, 0x10, 0x30, 0x00, False, False, "selfheal-miss-then-move"),
+    (20, 25, 0x12, 0x1234, 0x10, 0x30, 0x00, False, True, "move-empty-black"),
+    (20, 25, 0x92, 0x1234, 0x10, 0x30, 0x00, False, True, "move-empty-red"),
+    (20, 25, 0x12, 0x1234, 0x50, 0x05, 0x00, False, True, "crowded-jitter"),
+    (20, 25, 0x12, 0x1234, 0x10, 0x30, 0x13, False, True, "occupied-same-colony"),
+    (1, 1, 0x12, 0x1234, 0x10, 0x30, 0x00, False, False, "near-origin-edge"),
+])
+def test_dotoalarm_state_diff_matches_asm(x, y, caste, srand, dest_tile,
+                                          threshold, occupant, at_entrance,
+                                          territory_alarmed, label):
+    from simant.recovered.gameplay import do_to_alarm
+    results = _run_and_diff_segs(
+        6, 0x1A0A, (0,),
+        lambda d, s, p: do_to_alarm(d, s, p, 0),
+        _DOTOALARM_REGIONS, near=True,
+        seed_fn=_dotoalarm_seed(x, y, caste, srand, dest_tile, threshold,
+                                occupant, at_entrance=at_entrance,
+                                territory_alarmed=territory_alarmed))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOTOALARM_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dotoalarm_fight_found_matches_asm():
+    from simant.recovered.gameplay import do_to_alarm
+    x, y, caste = 20, 25, 0x12
+    direction = 2
+    new_x = x + GET_BEST_DIR_DX[direction]
+    new_y = y + GET_BEST_DIR_DY[direction]
+
+    def seed(m):
+        _dotoalarm_seed(x, y, caste, 0x1234, 0x10, 0x30, 0x93)(m)
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x80F0, 2)
+        m.mem.wb(sdg, 0x23A4 + 1, new_x & 0xFF)
+        m.mem.wb(sdg, 0x278E + 1, new_y & 0xFF)
+        m.mem.wb(sdg, 0x2F62 + 1, 0x93)
+
+    results = _run_and_diff_segs(
+        6, 0x1A0A, (0,), lambda d, s, p: do_to_alarm(d, s, p, 0),
+        _DOTOALARM_REGIONS, near=True, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOTOALARM_REGIONS):
+        assert asm_after == rec_after, f"fight-found {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dotoalarm_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_to_alarm
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, caste = 20, 25, 0x12
+    direction = 2
+    new_x, new_y = x + GET_BEST_DIR_DX[direction], y + GET_BEST_DIR_DY[direction]
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(64):
+        sdg[0x24 + i] = i % 8
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    territory_idx = ((x & 0xFE) << 4) + (y >> 1)
+    hx, hy = x >> 1, y >> 1
+    nhx = (hx + GET_BEST_DIR_DX[direction]) & 0x3F
+    nhy = (hy + GET_BEST_DIR_DY[direction]) & 0x1F
+    sdg[0x52D2 + territory_idx] = 1
+    sdg[0x52D2 + (nhx << 5) + nhy] = 200
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, x)
+    sdg_view.wb(0x278E, y)
+    sdg_view.wb(0x2F62, caste)
+    dg_view.wb(0x28E8 + (x << 6) + y, 0x00)
+    dg_view.wb(0x28E8 + (new_x << 6) + new_y, 0x10)
+    dg_view.wb(0x68E8 + (new_x << 6) + new_y, 0xFE)     # yellow ant occupant
+    pack_view.ww(0x7604, 0x30)
+    dg_view.wb(0xCE98, 0x80)      # (caste ^ 0x80) & 0x80 -> nonzero -> gate fires
+    with pytest.raises(NotImplementedError):
+        do_to_alarm(dg_view, sdg_view, pack_view, 0)
+
+
 # ---- _DoDigInB (seg6:4BD0) — black nest ant dig-forward tick -------------
 # Composes get_new_mode_b, get_enter_dir_b, is_it_dirt, dig_tile_them_b,
 # is_yellow_ant, find_in_b_list, get_out_b, get_winner, _try_eat_food,

@@ -8967,6 +8967,155 @@ def do_repo_exit(dgroup, simant_data_group, pack, slot: int) -> None:
         simant_data_group.wb(0x2B78 + acting_slot, 0x10)
 
 
+def do_to_alarm(dgroup, simant_data_group, pack, slot: int) -> None:
+    """A yard ("A"-list) ant fleeing danger: same nest-entrance check as its
+    siblings, then either a "self-heal and idle" outcome (own territory is
+    unalarmed AND a 1-in-4 roll) or a move away from the ALARM scent
+    gradient via `get_alarm_dir` — no food-pickup logic, no `field_e`/
+    scent-jam bookkeeping on a move, and no trophallaxis gate at all (all
+    three genuinely absent, independently confirmed via this routine's own
+    raw disassembly and resolved call-target list).
+
+    Recovered from `_DoToAlarm` (SIMANTW.SYM seg6:0x1A0A, arg slot=[bp+4];
+    NEAR return, 682 bytes). Composes the already-recovered `is_valid_a`,
+    `go_in_nest`, `get_new_mode`, `get_alarm_dir`, `is_yellow_ant`,
+    `find_in_a_list`, `get_winner`, `alarm_here2`, and `_forage_jitter`.
+
+    Nest-entrance check is the SAME shape as every A-list sibling's.
+
+    Territory self-heal gate (BEFORE any direction roll, unique to this
+    routine among the A-list siblings recovered so far): indexes the SAME
+    half-res ALARM scent grid (`simant_data_group[0x52D2 + (x&0xFE)<<4 +
+    (y>>1)]`, byte-address-identical to `do_forage_ant`'s own `(x>>1)<<5 +
+    (y>>1)` territory formula) at the ant's OWN cell. If that cell is
+    UNALARMED (`== 0`) AND a fresh `_SRand4()` roll is `0` (1-in-4):
+    re-stamps the ant's OWN (freshly re-read) caste onto its own life-grid
+    cell — a plain "reassert" with no actual state change — then computes
+    `field_c` via `get_new_mode(caste_sub, caste)` and returns; NO movement
+    happens on this path at all.
+
+    Otherwise (territory alarmed, or the 1-in-4 roll missed): direction
+    comes from `get_alarm_dir(x, y, caste&7)` (no colony argument, unlike
+    `get_forage_dir`/`get_nest_dir`).
+
+    Crowding gate (`dest_tile > pack[0x7604]`) calls `_forage_jitter` and
+    returns — same shape as every sibling's.
+
+    Otherwise: reads the life-grid occupant at `(new_x, new_y)`.
+
+    - Occupant `0` (empty): moves (stamp new cell, clear old, update
+      position) and returns IMMEDIATELY — independently confirmed via the
+      raw disassembly that there is NO `field_e`/jam-scent step here at
+      all, the SAME genuinely-simpler empty-move tail `do_rand_ant_aa`
+      has (not `do_rand_ant_a`'s or `do_to_nest_ant`'s own, both of which
+      at least check `field_e`).
+
+    - Occupant is the player's yellow ant: same `(caste ^ dgroup[0xCE98]) &
+      0x80` gate as every sibling; a colony mismatch raises
+      `NotImplementedError` for the UNRECOVERED `SIMANT1!_YellowFight
+      (slot, 1)`. A colony match falls through to the SAME plain
+      `_forage_jitter` the same-colony-non-yellow branch below uses — NOT
+      a trophallaxis gate (independently confirmed: no `pack[0x9AF2]`
+      read and no `_DoTroph` call anywhere in this routine's body).
+
+    - Occupant same colony, not yellow: `_forage_jitter` (no `get_new_mode`/
+      `field_c` change) — the SAME jitter the same-colony-yellow branch
+      above falls into.
+
+    - Occupant a DIFFERENT colony's ant (not yellow): a fight, structurally
+      identical to every sibling's own (clear the acting ant's caste/life
+      cell, `find_in_a_list` the new position — a miss ends the routine —
+      `get_winner(occupant, acting)`, stamp the winner's colony bit `+0x70`
+      onto the found occupant's caste/life cell, `field_c=0x0A`,
+      `field_e=winner`, `alarm_here2(new_x, new_y, 0x28)`).
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    x = simant_data_group.rb(0x23A4 + slot)
+    y = simant_data_group.rb(0x278E + slot)
+    caste = simant_data_group.rb(0x2F62 + slot)
+
+    at_entrance = False
+    if is_valid_a(x, y):
+        tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+        if pack.rw(0x9B6E) == 0:
+            at_entrance = tile == 0x50
+        else:
+            at_entrance = 0x80 <= tile <= 0x8F
+
+    if at_entrance:
+        go_in_nest(dgroup, simant_data_group, pack, x, y, slot)
+        return
+
+    high_bits = caste & 0xF8
+    caste_sub = (caste & 0x78) >> 3
+    caste_low3 = caste & 7
+
+    territory_idx = ((x & 0xFE) << 4) + (y >> 1)
+    if simant_data_group.rb(0x52D2 + territory_idx) == 0:
+        seed, roll4 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 3)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        if roll4 == 0:
+            cur_caste = simant_data_group.rb(0x2F62 + slot)
+            dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, cur_caste)
+            result = get_new_mode(dgroup, simant_data_group, pack, caste_sub, caste)
+            simant_data_group.wb(0x2B78 + slot, result & 0xFF)
+            return
+
+    direction = get_alarm_dir(dgroup, simant_data_group, x, y, caste_low3)
+    new_x = (x + sx8(simant_data_group.rb(direction))) & 0xFFFF
+    new_y = (y + sx8(simant_data_group.rb(8 + direction))) & 0xFFFF
+    dest_tile = dgroup.rb(MAP_PLANE_BASE[0] + (new_x << 6) + new_y)
+
+    if dest_tile > pack.rw(0x7604):
+        _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
+        return
+
+    occupant = dgroup.rb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y)
+
+    if occupant == 0:
+        new_caste = (direction | high_bits) & 0xFF
+        dgroup.wb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y, new_caste)
+        simant_data_group.wb(0x2F62 + slot, new_caste)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
+        simant_data_group.wb(0x23A4 + slot, new_x & 0xFF)
+        simant_data_group.wb(0x278E + slot, new_y & 0xFF)
+        return
+
+    if is_yellow_ant(occupant):
+        if (caste ^ dgroup.rb(0xCE98)) & 0x80:
+            raise NotImplementedError(
+                "do_to_alarm: _YellowFight branch reached (not recovered) "
+                "-- slot={!r}".format(slot))
+        _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
+        return
+
+    if (occupant ^ caste) & 0x80 == 0:
+        _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
+        return
+
+    # different colony: fight
+    acting_caste = caste
+    simant_data_group.wb(0x2F62 + slot, 0)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
+    found = find_in_a_list(pack, simant_data_group, new_x, new_y)
+    if found == 0xFFFF:
+        return
+    occupant_caste = simant_data_group.rb(0x2F62 + found)
+    winner = get_winner(dgroup, simant_data_group, pack, occupant_caste,
+                        acting_caste) & 0xFF
+    new_caste_occ = ((winner & 0x80) + 0x70) & 0xFF
+    simant_data_group.wb(0x2F62 + found, new_caste_occ)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y, new_caste_occ)
+    simant_data_group.wb(0x2B78 + found, 0x0A)
+    simant_data_group.wb(0x334C + found, winner)
+    alarm_here2(simant_data_group, new_x, new_y, 0x28)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
