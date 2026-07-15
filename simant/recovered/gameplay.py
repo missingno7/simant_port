@@ -8719,6 +8719,61 @@ def init_ant_lions(dgroup, pack, simant_data_group, count: int) -> None:
     pack.ww(0x9E8C, clamped & 0xFFFF)
 
 
+def _paint_pillar_arm(dgroup, pack, simant_data_group, dx_step: int, dy_step: int) -> None:
+    """Paint a 6-cell arm out from the tracked pillar's own position
+    (`simant_data_group[0x8A8C]`/`[0x8A8E]`, the SAME position pair
+    `is_pill_dead` reads), one step `(dx_step, dy_step)` at a time.
+    Shared body of `_MakePillFood`'s 4 direction blocks (byte-identical
+    across all 4 — same `_pillar_cache_index` rule, same food-tile
+    stamp).
+
+    For each of the 6 cells: an `is_valid_a` gate skips the whole cell
+    if invalid (the real ASM calls it TWICE with identical args — a
+    genuine redundant double-check, same precedent as `pill_food_tile`
+    — collapsed to one call here since it's a pure, deterministic
+    predicate). Restores the cell's map tile from the SAME 6-entry
+    `store_pillar_map`/`replace_pillar_map` PACK cache
+    (`_pillar_cache_index`, `pack[0x7C0E + idx*2]`), then stamps it to
+    the fixed "food" tile `0x4B` if it's `< 0x18` (the SAME threshold
+    `pill_food_tile` uses).
+    """
+    px = _sx16(simant_data_group.rw(0x8A8C))
+    py = _sx16(simant_data_group.rw(0x8A8E))
+    for i in range(6):
+        x = px + i * dx_step
+        y = py + i * dy_step
+        if is_valid_a(x, y) != 1:
+            continue
+        idx = _pillar_cache_index(pack, x, y)
+        tile = pack.rb(0x7C0E + (idx << 1))
+        cell = MAP_PLANE_BASE[0] + (x << 6) + y
+        dgroup.wb(cell, tile)
+        if dgroup.rb(cell) < 0x18:
+            dgroup.wb(cell, 0x4B)
+
+
+def make_pill_food(dgroup, pack, simant_data_group) -> None:
+    """Paint one 6-cell arm out from the tracked pillar, direction
+    selected by `pack[0x9B1E]` (the SAME `_pillar_cache_index` rule
+    flag `_InitPillar` resets) — `0`=south, `1`=west, `2`=north,
+    `3`=east; any other value is a no-op.
+
+    Recovered from `_MakePillFood` (SIMANTW.SYM seg7:57D2, NO args;
+    FAR return, 560 bytes; calls `_IsValidA` x2 per cell). The four
+    direction blocks are byte-identical past their own `(dx_step,
+    dy_step)` — composed here as one shared `_paint_pillar_arm`.
+    """
+    mode = pack.rw(0x9B1E)
+    if mode == 0:
+        _paint_pillar_arm(dgroup, pack, simant_data_group, 0, 1)
+    elif mode == 1:
+        _paint_pillar_arm(dgroup, pack, simant_data_group, -1, 0)
+    elif mode == 2:
+        _paint_pillar_arm(dgroup, pack, simant_data_group, 0, -1)
+    elif mode == 3:
+        _paint_pillar_arm(dgroup, pack, simant_data_group, 1, 0)
+
+
 def start_attack(dgroup, pack) -> None:
     """Roll a random attack-duration/timer value into `pack[0x78DC]`.
 

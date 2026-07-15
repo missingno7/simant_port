@@ -7327,3 +7327,48 @@ def test_initantlions_state_diff_matches_asm(seed_val, count, all_clear, pre_cou
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _INITANTLIONS_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _MakePillFood (seg7:57D2) — paint one 6-cell pillar arm --------------
+_MAKEPILLFOOD_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0x4900),
+    (_PACK, 0x7C00, 0x9B30),
+    (_SDG, 0x8A80, 0x8AA0),
+]
+
+
+def _makepillfood_seed(mode, px, py, cache, tile_at):
+    """cache: list of 6 byte values for pack[0x7C0E+i*2]. tile_at: dict
+    (x,y) -> initial map tile (defaults to 0x20, i.e. neither <0x18 nor
+    a cache hit collision)."""
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(pack, 0x9B1E, mode)
+        m.mem.ww(sdg, 0x8A8C, px & 0xFFFF)
+        m.mem.ww(sdg, 0x8A8E, py & 0xFFFF)
+        for i, val in enumerate(cache):
+            m.mem.ww(pack, 0x7C0E + (i << 1), val)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes([0x20]) * span)
+        for (cx, cy), tile in tile_at.items():
+            m.mem.wb(dg, 0x28E8 + (cx << 6) + cy, tile)
+    return seed
+
+
+@pytest.mark.parametrize("mode,px,py,cache,label", [
+    (0, 10, 0, [0x10, 0x11, 0x05, 0x13, 0x14, 0x15], "south-arm-one-cell-becomes-food"),
+    (1, 20, 0, [0x21, 0x22, 0x23, 0x24, 0x25, 0x26], "west-arm-all-cache-hits-above-threshold"),
+    (2, 30, 30, [0x01, 0x02, 0x03, 0x04, 0x05, 0x06], "north-arm-all-cells-become-food"),
+    (3, 124, 0, [0x30, 0x31, 0x32, 0x33, 0x34, 0x35], "east-arm-runs-off-grid-edge"),
+    (4, 10, 10, [0, 0, 0, 0, 0, 0], "mode-four-is-a-noop"),
+])
+def test_makepillfood_state_diff_matches_asm(mode, px, py, cache, label):
+    from simant.recovered.gameplay import make_pill_food
+    results = _run_and_diff_segs(
+        7, 0x57D2, (), lambda d, p, s: make_pill_food(d, p, s),
+        _MAKEPILLFOOD_REGIONS, seed_fn=_makepillfood_seed(mode, px, py, cache, {}))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _MAKEPILLFOOD_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

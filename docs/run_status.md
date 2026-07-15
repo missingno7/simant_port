@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.194) — /goal grind: _MakePillFood
+- RECOVERED `make_pill_food` (`_MakePillFood`, SIMANTW.SYM seg7:57D2,
+  NO args; FAR return, 560 bytes; calls `_IsValidA` x2 per cell).
+  Paints one 6-cell "arm" out from the tracked pillar's own position
+  (`simant_data_group[0x8A8C]`/`[0x8A8E]`, the SAME pair
+  `is_pill_dead` reads), direction selected by `pack[0x9B1E]` (the
+  SAME `_pillar_cache_index` rule flag `_InitPillar` resets) —
+  `0`=south, `1`=west, `2`=north, `3`=east; any other value is a
+  no-op.
+- The four direction blocks in the raw ASM are BYTE-IDENTICAL past
+  their own fixed `(dx_step, dy_step)` per-cell delta — including the
+  SAME `_pillar_cache_index` bit0 test (which axis is "the one that's
+  changing" always matches which axis the existing rule already
+  selects) and the SAME food-tile (`0x4B` if `<0x18`) stamp — so all
+  four compose ONE new shared helper, `_paint_pillar_arm`, rather than
+  four independent bodies. Each cell's `_IsValidA` gate is called
+  TWICE with identical args in the real ASM (the SAME genuine
+  redundant-double-check precedent as `pill_food_tile`) — collapsed to
+  one call here since it's a pure, deterministic predicate.
+- 5 cases (all four directions, including one deliberately near the
+  grid edge to exercise the per-cell `is_valid_a` skip, plus the
+  no-op `mode=4` case) — all green on the first real-ASM run.
+- Suite: simant 1856 (+5), full suite green.
+
 ## 2026-07-15 (cont.193) — /goal grind: _InitAntLions
 - RECOVERED `init_ant_lions` (`_InitAntLions`, SIMANTW.SYM seg7:40C6,
   arg count=[bp+6]; FAR return, 348 bytes). Zeroes
