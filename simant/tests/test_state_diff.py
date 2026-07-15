@@ -7415,3 +7415,64 @@ def test_makeapill_state_diff_matches_asm(seed_val, x, y, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _MAKEAPILL_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _DoPillar (seg7:4CDC) — per-tick pillar lifecycle --------------------
+# seed 0x1234 gives _DoSow's own 3 slots all gate1=0 (a quiet, minimal-draw
+# pass), used for every "already active" case below so do_sow's own
+# already-verified randomness doesn't interfere with exercising do_pillar's
+# OWN branches.
+_DOPILLAR_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_PACK, 0x7800, 0x9D00),
+    (_SDG, 0x8A80, 0x8AA0),
+]
+
+
+def _dopillar_seed(seed_val, inside, active, mode, px, py, counter,
+                   occupied_cells=()):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B6E, 1 if inside else 0)
+        m.mem.ww(sdg, 0x8A8A, 1 if active else 0)
+        m.mem.ww(pack, 0x9B1E, mode)
+        m.mem.ww(sdg, 0x8A8C, px & 0xFFFF)
+        m.mem.ww(sdg, 0x8A8E, py & 0xFFFF)
+        m.mem.ww(pack, 0x78D4, counter & 0xFFFF)
+        for i in range(6):
+            m.mem.ww(pack, 0x7C0E + (i << 1), 0x40 + i)
+        for i in range(8):
+            m.mem.wb(sdg, 0x8A90 + i, 0x50 + i)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes(span))          # yard map: all clear
+        m.mem.load(dg, 0x68E8, bytes(span))           # yard life: all clear
+        for (cx, cy) in occupied_cells:
+            m.mem.wb(dg, 0x68E8 + (cx << 6) + cy, 5)
+    return seed
+
+
+@pytest.mark.parametrize("inside,active,mode,px,py,counter,occupied,label", [
+    (True, True, 0, 20, 20, 3, (), "inside-nest-total-noop"),
+    (False, False, 0, 0, 0, 0, (), "inactive-pillar-activates"),
+    (False, True, 0, 20, 20, 3, ((20, 19),), "front-occupied-crowd-low-aborts"),
+    (False, True, 0, 20, 20, 3,
+     ((19, 19), (20, 19), (21, 19), (19, 20), (19, 21), (21, 21)),
+     "front-occupied-crowd-high-kills-pillar"),
+    (False, True, 1, 30, 30, 3, (), "front-clear-mid-cycle-direct-stamps-only"),
+    (False, True, 2, 40, 30, 5, (), "front-clear-counter-hits-four-growth"),
+    (False, True, 3, 50, 30, 1, (), "front-clear-counter-hits-zero-moves"),
+    (False, True, 1, 133, 30, 1, (), "counter-zero-move-goes-out-of-bounds"),
+])
+def test_dopillar_state_diff_matches_asm(inside, active, mode, px, py, counter,
+                                         occupied, label):
+    from simant.recovered.gameplay import do_pillar
+    results = _run_and_diff_segs(
+        7, 0x4CDC, (), lambda d, p, s: do_pillar(d, p, s),
+        _DOPILLAR_REGIONS,
+        seed_fn=_dopillar_seed(0x1234, inside, active, mode, px, py, counter, occupied))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOPILLAR_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

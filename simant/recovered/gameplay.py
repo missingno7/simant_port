@@ -8825,6 +8825,150 @@ def make_a_pill(dgroup, pack, simant_data_group) -> None:
         dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, tile)
 
 
+# Per `pack[0x9B1E]` mode (0=south,1=west,2=north,3=east): which axis the
+# pillar's front/growth/movement act along, the front-check sign (movement
+# uses the SAME sign; growth/arm stamps use the OPPOSITE sign), the tile
+# stamped at the pillar's own (just-moved) position, and the two arm-segment
+# tiles shared between the north/south pair (0) and the east/west pair (1) --
+# confirmed via the raw disassembly: modes 0 and 2 jump into each other's
+# tile-stamp code, as do modes 1 and 3.
+_DOPILLAR_MODE_AXIS = ('y', 'x', 'y', 'x')
+_DOPILLAR_MODE_FRONT_SIGN = (-1, 1, 1, -1)
+_DOPILLAR_MODE_OWN_TILE = (0x6C, 0x6B, 0x6F, 0x68)
+_DOPILLAR_MODE_NEAR_TILE = (0x6D, 0x69, 0x6D, 0x69)
+_DOPILLAR_MODE_FAR_TILE = (0x6E, 0x6A, 0x6E, 0x6A)
+
+
+def do_pillar(dgroup, pack, simant_data_group) -> None:
+    """Per-tick pillar lifecycle: sow, activate, grow (in a 5-tick
+    cycle), retreat, or die of overcrowding.
+
+    Recovered from `_DoPillar` (SIMANTW.SYM seg7:4CDC, NO args; FAR
+    return, 1576 bytes; near-calls `_DoSow`/`_MakeAPill`/
+    `_MakePillFood`, far-calls `_IsValidA` many times). Composes all
+    three already-recovered near-callees plus `store_pillar_map`/
+    `replace_pillar_map`.
+
+    When `pack[0x9B6E]` ("inside the nest") is exactly `1`, no-ops
+    entirely (before even `do_sow` runs). Otherwise always runs
+    `do_sow` first. If the pillar isn't active
+    (`simant_data_group[0x8A8A] == 0`): activates it via `make_a_pill`,
+    sets `[0x8A8A] = 1`, seeds the growth counter `pack[0x78D4] = 4`,
+    and returns.
+
+    Once active, mode (`pack[0x9B1E]`) selects an axis/sign for the
+    "front" cell one step ahead of the pillar. If that cell is valid
+    and occupied (life != 0): counts occupied, valid cells in the
+    surrounding 3x3 block; if MORE than 5 of 9 are occupied, the
+    pillar dies (`[0x8A8A] = 0`, composes `make_pill_food`) — otherwise
+    the tick is a no-op. If the front is clear (or invalid): decrements
+    `pack[0x78D4]`. When the decremented counter is exactly `4` (i.e.
+    it just wrapped from `5`), restores the cached tile (composing
+    `replace_pillar_map`) at `counter+1` (`5`) steps out, in the
+    OPPOSITE sign from the front check (the "growth" direction).
+    OTHERWISE (counter != 4 — the two are mutually exclusive, confirmed
+    via the raw disassembly's control flow, NOT a "both happen"
+    reading) direct-stamps `_DOPILLAR_MODE_NEAR_TILE` at that SAME
+    `counter+1` steps. Either way, always direct-stamps
+    `_DOPILLAR_MODE_FAR_TILE` at `counter` steps (both growth
+    direction, each independently `is_valid_a`-gated). If the counter
+    is NOT `0` after all that, returns. If it IS `0`: shifts the
+    pillar's own tracked position one step in the FRONT direction; if
+    that pushes it outside a generous bounding box (`x` in `-6..134`,
+    `y` in `-6..69` — signed, wider than the strict yard bounds),
+    deactivates and returns. Otherwise caches the new position's
+    current tile (composing `store_pillar_map`), stamps
+    `_DOPILLAR_MODE_OWN_TILE` there, stamps `_DOPILLAR_MODE_NEAR_TILE`
+    one more growth-direction step out, and resets
+    `pack[0x78D4] = 5` (restarting the 5-tick cycle).
+    """
+    if pack.rw(0x9B6E) == 1:
+        return
+
+    do_sow(dgroup, pack, simant_data_group)
+
+    if simant_data_group.rw(0x8A8A) == 0:
+        make_a_pill(dgroup, pack, simant_data_group)
+        simant_data_group.ww(0x8A8A, 1)
+        pack.ww(0x78D4, 4)
+        return
+
+    mode = pack.rw(0x9B1E)
+    axis = _DOPILLAR_MODE_AXIS[mode]
+    front_sign = _DOPILLAR_MODE_FRONT_SIGN[mode]
+    growth_sign = -front_sign
+    px = _sx16(simant_data_group.rw(0x8A8C))
+    py = _sx16(simant_data_group.rw(0x8A8E))
+
+    def along(sign, delta):
+        if axis == 'y':
+            return px, py + sign * delta
+        return px + sign * delta, py
+
+    fx, fy = along(front_sign, 1)
+    occupied = (is_valid_a(fx, fy) == 1
+                and dgroup.rb(LIFE_PLANE_BASE[0] + (fx << 6) + fy) != 0)
+
+    if occupied:
+        count = 0
+        for cx in (px - 1, px, px + 1):
+            for cy in (py - 1, py, py + 1):
+                if (is_valid_a(cx, cy) == 1
+                        and dgroup.rb(LIFE_PLANE_BASE[0] + (cx << 6) + cy) != 0):
+                    count += 1
+        if count > 5:
+            simant_data_group.ww(0x8A8A, 0)
+            make_pill_food(dgroup, pack, simant_data_group)
+        return
+
+    counter = (_sx16(pack.rw(0x78D4)) - 1) & 0xFFFF
+    pack.ww(0x78D4, counter)
+    counter = _sx16(counter)
+
+    if counter == 4:
+        gx, gy = along(growth_sign, counter + 1)
+        if is_valid_a(gx, gy) == 1:
+            replace_pillar_map(dgroup, pack, gx, gy)
+    else:
+        nx, ny = along(growth_sign, counter + 1)
+        if is_valid_a(nx, ny) == 1:
+            dgroup.wb(MAP_PLANE_BASE[0] + (nx << 6) + ny, _DOPILLAR_MODE_NEAR_TILE[mode])
+
+    fx2, fy2 = along(growth_sign, counter)
+    if is_valid_a(fx2, fy2) == 1:
+        dgroup.wb(MAP_PLANE_BASE[0] + (fx2 << 6) + fy2, _DOPILLAR_MODE_FAR_TILE[mode])
+
+    if counter != 0:
+        return
+
+    if axis == 'y':
+        py += front_sign
+    else:
+        px += front_sign
+
+    if not (-6 <= px <= 134 and -6 <= py <= 69):
+        simant_data_group.ww(0x8A8A, 0)
+        return
+
+    simant_data_group.ww(0x8A8C, px & 0xFFFF)
+    simant_data_group.ww(0x8A8E, py & 0xFFFF)
+
+    store_pillar_map(dgroup, pack, px, py)
+    if is_valid_a(px, py) == 1:
+        dgroup.wb(MAP_PLANE_BASE[0] + (px << 6) + py, _DOPILLAR_MODE_OWN_TILE[mode])
+
+    def along2(sign, delta):
+        if axis == 'y':
+            return px, py + sign * delta
+        return px + sign * delta, py
+
+    nx2, ny2 = along2(growth_sign, 1)
+    if is_valid_a(nx2, ny2) == 1:
+        dgroup.wb(MAP_PLANE_BASE[0] + (nx2 << 6) + ny2, _DOPILLAR_MODE_NEAR_TILE[mode])
+
+    pack.ww(0x78D4, 5)
+
+
 def start_attack(dgroup, pack) -> None:
     """Roll a random attack-duration/timer value into `pack[0x78DC]`.
 

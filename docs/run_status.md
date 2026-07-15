@@ -1,5 +1,51 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.196) — /goal grind: _DoPillar (cluster complete)
+- RECOVERED `do_pillar` (`_DoPillar`, SIMANTW.SYM seg7:4CDC, NO args;
+  FAR return, 1576 bytes — the largest single recovery this session;
+  near-calls `_DoSow`/`_MakeAPill`/`_MakePillFood`, far-calls
+  `_IsValidA` many times). The per-tick pillar lifecycle orchestrator
+  — this closes out the entire "pillar/sow" cluster the third Explore
+  survey flagged (`_InitSow`, `_DoSow`, `_InitAntLions`,
+  `_MakePillFood`, `_MakeAPill`, and now `_DoPillar` itself, all
+  recovered this session).
+- Composes ALL THREE already-recovered near-callees plus
+  `store_pillar_map`/`replace_pillar_map`/`is_valid_a`. Structure:
+  `pack[0x9B6E]==1` ("inside") no-ops entirely (before even `do_sow`
+  runs); otherwise always runs `do_sow` first. If inactive
+  (`simant_data_group[0x8A8A]==0`): activates via `make_a_pill`, sets
+  active + seeds the growth counter `pack[0x78D4]=4`. Once active: a
+  mode-selected (`pack[0x9B1E]`) "front" cell one step ahead gates
+  everything — if occupied, counts occupied cells in the surrounding
+  3x3 block and kills the pillar (composing `make_pill_food`) past a
+  threshold of 5, else no-ops; if clear, decrements the growth
+  counter and, on a 5-tick cycle, alternates a `replace_pillar_map`
+  cache-restore (the "growth" event, `counter==4`) with a direct
+  arm-segment tile stamp (any other counter) at the SAME distance —
+  always ALSO stamping a second, closer arm tile — then, once the
+  counter reaches `0`, shifts the pillar's own position one step
+  toward the front, checks a generous bounding box (deactivating if
+  exceeded), and otherwise caches + repaints its new position
+  (composing `store_pillar_map`) before resetting the counter to `5`.
+- Caught a genuine MUTUAL-EXCLUSIVITY bug on the first real-ASM run:
+  first-draft code did BOTH the growth cache-restore (on
+  `counter==4`) AND the direct near-tile stamp (unconditionally) at
+  the SAME distance — but the raw disassembly's control flow shows
+  these two are mutually exclusive branches (the `counter==4` growth
+  dispatch converges directly to the FAR-tile dispatch, entirely
+  bypassing the near-tile dispatch that the `counter!=4` path takes
+  instead). Caught immediately via a single failing byte at the exact
+  cache-vs-direct-tile collision cell; fixed by making the near-tile
+  stamp an `else` branch of the `counter==4` check instead of an
+  unconditional follow-on.
+- 8 cases (inside-nest no-op, activation, front-occupied at both
+  crowd thresholds, a mid-cycle direct-stamp-only tick, the
+  counter-hits-4 growth tick, the counter-hits-0 movement tick, and a
+  movement-goes-out-of-bounds deactivation) — all green after the
+  mutual-exclusivity fix, covering every major branch of this state
+  machine.
+- Suite: simant 1868 (+8), full suite green.
+
 ## 2026-07-15 (cont.195) — /goal grind: _MakeAPill
 - RECOVERED `make_a_pill` (`_MakeAPill`, SIMANTW.SYM seg7:53DA, NO
   args; FAR return, 768 bytes; calls `_SRand1` x2, `_IsValidA` x2).
