@@ -6131,6 +6131,232 @@ def do_forage_ant(dgroup, simant_data_group, pack, slot: int) -> None:
     _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
 
 
+def _dig_in_b_mode_refresh(dgroup, simant_data_group, pack, caste_sub: int) -> None:
+    """Shared early-exit tail `do_dig_in_b` reuses at THREE distinct exit
+    points (mode-sub shortcut, edge-of-nest `y == 0x3F`, and a rejected
+    dig): refresh the acting slot's `field_c` from `get_new_mode_b`, no
+    other state change. Independently confirmed byte-identical at all
+    three real-ASM jump targets (seg6:4BED/4C5A, both landing on the SAME
+    tail at 4BF6), not assumed from one.
+    """
+    slot = pack.rw(0x9B6A)
+    result = get_new_mode_b(dgroup, simant_data_group, pack, caste_sub)
+    simant_data_group.wb(0x3B22 + slot, result & 0xFF)
+
+
+def do_dig_in_b(dgroup, simant_data_group, pack, x: int, y: int, mode: int,
+                caste_sub: int) -> None:
+    """A black nest ("B"-list) ant digging its way through the nest: face
+    (or dig through) a chosen direction, and either move into the newly-
+    opened cell, fight an occupant, or defer to `_YellowFight` — the
+    `_DoNestAntB` orchestrator's actual per-tick dig-forward behavior.
+
+    Recovered from `_DoDigInB` (SIMANTW.SYM seg6:4BD0, FAR return, 736
+    bytes). FOUR args, not the three the prior scoping survey's summary
+    named: `x=[bp+6]`, `y=[bp+8]`, `mode=[bp+10]` (the acting ant's caste/
+    mode byte), and a FOURTH, unlisted arg `caste_sub=[bp+12]` — the
+    caller's own precomputed `(mode & 0x78) >> 3`, confirmed by its use as
+    `get_new_mode_b`'s sole `sub` argument at the very first instruction
+    (a plain `push ss:[bp+12]`, no computation from `mode` at all here).
+    Composes the already-recovered `get_new_mode_b`, `get_enter_dir_b`,
+    `is_it_dirt`, `dig_tile_them_b`, `is_yellow_ant`, `find_in_b_list`,
+    `get_out_b`, `get_winner`, `_try_eat_food` (reused verbatim for the
+    tile-range-gated food-nibble + colony-growth-trigger tail — its own
+    `MAP_PLANE_BASE[2]`/`0x9EA4`/`0xAC82`/`0xAC98`/`0x7402`/`0xAC86`
+    argument set matches this routine's own disassembled field accesses
+    exactly, byte for byte, confirming both independently), and
+    `fix_exit_map_b`.
+
+    `caste_sub NOT in (2, 6)`: an immediate shortcut — calls
+    `get_new_mode_b(caste_sub)` into `field_c`
+    (`simant_data_group[0x3B22 + slot]`, `slot = pack[0x9B6A]`) and
+    returns, before computing anything else (see `_dig_in_b_mode_refresh`).
+    SAME polarity as `do_forage_ant`'s own `caste_sub` shortcut (only sub
+    `2`/`6` are the "digging" sub-modes that reach the real body below) —
+    independently re-verified via a live register dump after the real
+    ASM's own `enter`, not assumed from the mnemonic shape alone: the
+    `jz` at seg6:4BDA/4BE0 jumps PAST the shortcut (to seg6:4C04, the main
+    body) exactly when `caste_sub == 2` or `== 6`, so the two-instruction
+    fallthrough at 4BE2 (the shortcut itself) is what runs when NEITHER
+    matches — the opposite polarity from an early mis-reading of this
+    session, caught by a real-ASM state-diff mismatch before being trusted.
+
+    Otherwise (`caste_sub in (2, 6)`): calls `get_enter_dir_b(x, y, exclude=mode & 7)`; a negative
+    result rerolls via `_SRand8()`. `dir_caste = (mode & 0xF8) | direction`
+    is stamped onto BOTH the slot's caste field and the CURRENT (not yet
+    moved) nest life-grid cell `(x, y)` — a "turn to face" stamp made
+    UNCONDITIONALLY, before any of the edge/dig/occupant logic below (this
+    exact value, NOT a later re-read, is also what `get_winner` uses as
+    its second argument in the fight case below — independently confirmed
+    via the raw disassembly, not assumed to always equal a fresh read).
+
+    `y == 0x3F` (bottom nest row, can't go deeper): refreshes `field_c`
+    the SAME way the `caste_sub` shortcut does and returns (the "turn to
+    face" stamp above still took effect).
+
+    Otherwise: computes `new_x`/`new_y` from `simant_data_group[direction]`/
+    `[direction + 8]` (the SAME live compass dx/dy table
+    `do_forage_ant`/`get_forage_dir` read — independently confirmed: the
+    prior scoping survey's claimed `0xC364`/`0xC366` pointer-globals both
+    resolve fresh to SIMANT_DATA_GROUP's own selector, `0x5294`, the SAME
+    segment those other two established reads use). Either coordinate out
+    of `0..0x3F` is a silent no-op return. `new_y < 1` instead calls
+    `get_out_b(x)` and returns UNCONDITIONALLY, discarding its result (the
+    real ASM's own `add sp,2; leave; ret` never touches AX afterward).
+
+    Otherwise: reads the nest map tile at `(new_x, new_y)`; `>= 0x30` is a
+    silent no-op return. If it's dirt (`is_it_dirt`): calls
+    `dig_tile_them_b(new_x, new_y)`; a `0` (rejected) result runs the SAME
+    `field_c`-refresh tail as the `y == 0x3F` case and returns; success
+    bumps the slot's caste field by `0x18` (byte-wrapping) and sets
+    `field_c = 5` — the real ASM also fires the presentation-only
+    `GR!_myBeginSound(0x11, 0, 0)` here, omitted per this project's core/
+    presentation split (stubbed in the oracle test, same as `_AddFood`'s
+    own sound call). Either way (dirt-dug or already-clear), the CURRENT
+    `(x, y)` nest life-grid cell is unconditionally cleared to `0` next —
+    even on the fight branch below, which otherwise leaves the acting ant
+    with no life-grid presence at either its old OR new cell (confirmed
+    real, not a porting error: nothing after this write ever re-touches
+    the acting slot's own caste/position fields on that branch).
+
+    The `(new_x, new_y)` life-grid occupant is then read; bit `0x80` CLEAR
+    (empty, or an own-colony ant — this routine does not special-case a
+    non-empty-but-`0x80`-clear cell, confirmed via the raw `test ..., 80h`
+    against the RAW byte before any `is_yellow_ant` call) falls straight
+    through to the move below. Bit `0x80` SET:
+
+    - `is_yellow_ant(occupant)` and `dgroup[0xCE98] == 0`: ALSO falls
+      through to the move (treated as if empty).
+    - `is_yellow_ant(occupant)` and `dgroup[0xCE98] != 0`: calls the
+      UNRECOVERED `SIMANT1!_YellowFight(2, pack[0x9B6A])` (seg6:823E, same
+      `push cs; call near` far-call-emulation idiom as `do_forage_ant`'s
+      own gate, and the SAME `(2, slot)` argument pair
+      `check_nest_fight_b` already established for this exact call) and
+      returns — raises `NotImplementedError` per this project's fail-loud
+      rule, matching that established precedent.
+    - Not yellow, occupant in `0x88..0xE7`: looks it up via
+      `find_in_b_list` (coordinate-role-swap convention, like
+      `check_nest_fight_b`: the callee's `y` gets `new_x`, `x` gets
+      `new_y`). A miss falls through to the move. A hit resolves
+      `get_winner(arg_a=occupant, arg_b=dir_caste)` (the ORIGINAL stamped
+      value, not a fresh read — see above): stamps the winner onto the
+      found occupant's `field_e`, recomputes its caste as
+      `(winner & 0x80) + 0x70` onto both its own caste field and the new-
+      position life-grid cell, sets its `field_c = 0x0A`, and returns —
+      no move, no growth-tail roll.
+    - Not yellow, occupant outside `0x88..0xE7`: falls through to the move
+      (same as a miss).
+
+    The move: re-reads the slot's CURRENT caste field (which may already
+    reflect the `+0x18` dig-success bump above — a fresh read, not reused
+    `dir_caste`, independently confirmed via the raw disassembly), keeps
+    its high bits, ORs in `direction`, stamps that at the new position AND
+    the slot's caste field, and updates the slot's `x`/`y` fields
+    (`[0x3736+slot]`/`[0x392C+slot]` — X and Y respectively for the B-list,
+    confirmed by cross-checking `try_move_dir_b`'s own use of the SAME two
+    offsets, not `find_in_b_list`'s own doc-comment coordinate-role-swapped
+    parameter NAMES).
+
+    Finally (move path only — every abort/fight/yellow-fight-gate return
+    above skips this): rolls `_SRand64()`; only when it exceeds
+    `dgroup[0xAC86]` does it run `_try_eat_food` at the new position (tile-
+    range-gated nibble + growth trigger — see above), then unconditionally
+    rolls `_SRand4()`; on an exact `0` (1-in-4), calls
+    `fix_exit_map_b(new_x, new_y)`.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    if caste_sub not in (2, 6):
+        _dig_in_b_mode_refresh(dgroup, simant_data_group, pack, caste_sub)
+        return
+
+    caste_low3 = mode & 7
+    direction = get_enter_dir_b(dgroup, simant_data_group, x, y, caste_low3)
+    if direction < 0:
+        seed, direction = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+
+    high_bits = mode & 0xF8
+    dir_caste = (high_bits | direction) & 0xFF
+    dgroup.wb(LIFE_PLANE_BASE[2] + (x << 6) + y, dir_caste)
+    slot = pack.rw(0x9B6A)
+    simant_data_group.wb(0x3D18 + slot, dir_caste)
+
+    if y == 0x3F:
+        _dig_in_b_mode_refresh(dgroup, simant_data_group, pack, caste_sub)
+        return
+
+    new_y = (y + sx8(simant_data_group.rb(8 + direction))) & 0xFFFF
+    new_x = (x + sx8(simant_data_group.rb(direction))) & 0xFFFF
+    if not (0 <= new_x <= 0x3F):
+        return
+    if not (0 <= new_y <= 0x3F):
+        return
+    if new_y < 1:
+        get_out_b(dgroup, simant_data_group, pack, x)
+        return
+
+    idx = (new_x << 6) + new_y
+    tile = dgroup.rb(MAP_PLANE_BASE[2] + idx)
+    if tile >= 0x30:
+        return
+
+    if is_it_dirt(tile):
+        if not dig_tile_them_b(dgroup, simant_data_group, pack, new_x, new_y):
+            _dig_in_b_mode_refresh(dgroup, simant_data_group, pack, caste_sub)
+            return
+        slot = pack.rw(0x9B6A)
+        bumped = (simant_data_group.rb(0x3D18 + slot) + 0x18) & 0xFF
+        simant_data_group.wb(0x3D18 + slot, bumped)
+        simant_data_group.wb(0x3B22 + slot, 5)
+        # GR!_myBeginSound(0x11, 0, 0) omitted -- presentation-only, no sim effect
+
+    dgroup.wb(LIFE_PLANE_BASE[2] + (x << 6) + y, 0)
+
+    occupant = dgroup.rb(LIFE_PLANE_BASE[2] + idx)
+    if occupant & 0x80:
+        if is_yellow_ant(occupant):
+            if dgroup.rb(0xCE98) != 0:
+                raise NotImplementedError(
+                    "do_dig_in_b: _YellowFight branch reached (not recovered) "
+                    "-- x={!r} y={!r}".format(x, y))
+            # else falls through to the move, below
+        elif 0x88 <= occupant <= 0xE7:
+            found = find_in_b_list(pack, simant_data_group, new_x, new_y, occupant)
+            if found != 0xFFFF:
+                winner = get_winner(dgroup, simant_data_group, pack, occupant,
+                                    dir_caste) & 0xFF
+                simant_data_group.wb(0x3F0E + found, winner)
+                new_caste_occ = ((winner & 0x80) + 0x70) & 0xFF
+                simant_data_group.wb(0x3D18 + found, new_caste_occ)
+                dgroup.wb(LIFE_PLANE_BASE[2] + idx, new_caste_occ)
+                simant_data_group.wb(0x3B22 + found, 0x0A)
+                return
+
+    slot = pack.rw(0x9B6A)
+    cur_caste = simant_data_group.rb(0x3D18 + slot)
+    new_caste = ((cur_caste & 0xF8) | direction) & 0xFF
+    simant_data_group.wb(0x3D18 + slot, new_caste)
+    dgroup.wb(LIFE_PLANE_BASE[2] + idx, new_caste)
+    simant_data_group.wb(0x3736 + slot, new_x & 0xFF)
+    simant_data_group.wb(0x392C + slot, new_y & 0xFF)
+
+    seed, roll64 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0x3F)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll64 > _sx16(dgroup.rw(0xAC86)):
+        _try_eat_food(dgroup, pack, MAP_PLANE_BASE[2], 0x9EA4, 0xAC82, 0xAC98,
+                      0x7402, 0xAC86, new_x, new_y)
+
+    seed, roll4 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 3)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll4 == 0:
+        fix_exit_map_b(dgroup, simant_data_group, new_x, new_y)
+
+
 def rand_turn(dgroup, simant_data_group, caste_low3: int) -> int:
     """Pick a purely random direction from the caste-mode table — no
     yard-edge handling, no gradient, just a fresh `_SRand8()` roll.

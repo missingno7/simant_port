@@ -3022,6 +3022,163 @@ def test_doforageant_dotroph_gate_raises():
         do_forage_ant(dg_view, sdg_view, pack_view, 0)
 
 
+# ---- _DoDigInB (seg6:4BD0) — black nest ant dig-forward tick -------------
+# Composes get_new_mode_b, get_enter_dir_b, is_it_dirt, dig_tile_them_b,
+# is_yellow_ant, find_in_b_list, get_out_b, get_winner, _try_eat_food,
+# fix_exit_map_b. GR!_myBeginSound (the dig-success sound) is presentation-
+# only and stubbed, same treatment as _AddFood's own sound call. One gated
+# branch this session deliberately does NOT recover (_YellowFight) -- kept
+# out of every seeded scenario below, with a dedicated test confirming the
+# gate raises loudly when it WOULD fire (same pattern as _DoForageAnt's).
+_DODIGINB_STUBS = [(2, 0x98B0)]   # GR!_myBeginSound
+_DODIGINB_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2000, 0xD000),
+    (_SDG, 0, 0x9000),
+    (_PACK, 0x7000, 0xA300),
+]
+
+
+def _dodiginb_seed(x, y, mode, srand, dest_tile, occupant, ce98=0,
+                   b_list_occupant_at=None):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, 0)          # current slot = 0
+        m.mem.wb(sdg, 0x3D18, mode)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)    # pin get_winner's C-runtime rand state
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+        m.mem.wb(sdg, 0x8A5C, 0)           # get_winner: no cheat gate
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x48E8 + (nx << 6) + ny, dest_tile)
+                    m.mem.wb(dg, 0x88E8 + (nx << 6) + ny, occupant)
+        m.mem.wb(dg, 0xCE98, ce98)
+        # get_enter_dir_b's exit-distance arrays: clear so behavior is deterministic
+        m.mem.data[sdg + 0x3A4:sdg + 0x3A4 + 0x1000] = bytes(0x1000)
+        if b_list_occupant_at is not None:
+            ox, oy = b_list_occupant_at
+            m.mem.ww(pack, 0x99D4, 2)
+            m.mem.wb(sdg, 0x3736 + 1, ox & 0xFF)
+            m.mem.wb(sdg, 0x392C + 1, oy & 0xFF)
+            m.mem.wb(sdg, 0x3D18 + 1, occupant)
+        else:
+            m.mem.ww(pack, 0x99D4, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,mode,caste_sub,srand,dest_tile,occupant,label", [
+    (20, 20, 0x12, 1, 0x1111, 0x00, 0x00, "sub-not-2-6-shortcut"),
+    (20, 20, 0x92, 4, 0x2222, 0x00, 0x00, "sub-not-2-6-shortcut-red"),
+    (20, 0x3F, 0x12, 2, 0x3333, 0x00, 0x00, "y-edge-bottom-row"),
+    (20, 20, 0x12, 2, 0x4444, 0x40, 0x00, "blocked-tile-ge-0x30"),
+    (20, 20, 0x12, 2, 0x5555, 0x25, 0x00, "dig-dirt-and-move"),
+    (20, 20, 0x12, 2, 0x6666, 0x05, 0x00, "already-clear-move"),
+    (20, 1, 0x12, 2, 0x7777, 0x05, 0x00, "new-y-lt-1-get-out-b"),
+    (20, 20, 0x12, 2, 0x8888, 0x05, 0x03, "occupant-0x80-clear-treated-empty"),
+    (20, 20, 0x12, 2, 0x9999, 0x05, 0x90, "invader-out-of-blist-move"),
+])
+def test_dodiginb_state_diff_matches_asm(x, y, mode, caste_sub, srand,
+                                         dest_tile, occupant, label):
+    from simant.recovered.gameplay import do_dig_in_b
+    results = _run_and_diff_segs(
+        6, 0x4BD0, (x, y, mode, caste_sub),
+        lambda d, s, p: do_dig_in_b(d, s, p, x, y, mode, caste_sub),
+        _DODIGINB_REGIONS,
+        seed_fn=_dodiginb_seed(x, y, mode, srand, dest_tile, occupant),
+        stubs=_DODIGINB_STUBS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DODIGINB_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dodiginb_yellow_ce98_zero_treated_empty_matches_asm():
+    # occupant is the yellow ant AND dgroup[0xCE98] == 0 -> treated as empty,
+    # falls through to the move -- NOT the _YellowFight gate.
+    from simant.recovered.gameplay import do_dig_in_b
+    x, y, mode, caste_sub = 20, 20, 0x12, 2
+    results = _run_and_diff_segs(
+        6, 0x4BD0, (x, y, mode, caste_sub),
+        lambda d, s, p: do_dig_in_b(d, s, p, x, y, mode, caste_sub),
+        _DODIGINB_REGIONS,
+        seed_fn=_dodiginb_seed(x, y, mode, 0xAAAA, 0x05, 0xFE, ce98=0),
+        stubs=_DODIGINB_STUBS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DODIGINB_REGIONS):
+        assert asm_after == rec_after, f"yellow-ce98-zero {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dodiginb_fight_found_matches_asm():
+    # Occupant in 0x88..0xE7 IS present in the B-list at the resulting
+    # (new_x, new_y) -- exercises the get_winner tail, not just the
+    # "not found -> fall through to move" case the other scenarios hit.
+    # get_enter_dir_b's own gradient/random pick is left to the real ASM;
+    # the occupant record is placed at every plausible neighbor cell.
+    from simant.recovered.gameplay import do_dig_in_b, GET_BEST_DIR_DX, GET_BEST_DIR_DY
+    x, y, mode, caste_sub = 20, 20, 0x12, 2
+    occupant = 0x90
+
+    def seed(m):
+        _dodiginb_seed(x, y, mode, 0xBBBB, 0x05, occupant)(m)
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x99D4, 2 + 8)
+        for i, (dx, dy) in enumerate(zip(GET_BEST_DIR_DX, GET_BEST_DIR_DY)):
+            nx, ny = x + dx, y + dy
+            slot = 2 + i
+            m.mem.wb(sdg, 0x3736 + slot, nx & 0xFF)
+            m.mem.wb(sdg, 0x392C + slot, ny & 0xFF)
+            m.mem.wb(sdg, 0x3D18 + slot, occupant)
+
+    results = _run_and_diff_segs(
+        6, 0x4BD0, (x, y, mode, caste_sub),
+        lambda d, s, p: do_dig_in_b(d, s, p, x, y, mode, caste_sub),
+        _DODIGINB_REGIONS, seed_fn=seed, stubs=_DODIGINB_STUBS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DODIGINB_REGIONS):
+        assert asm_after == rec_after, f"fight-found {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dodiginb_yellowfight_gate_raises():
+    # Occupied destination is the player's yellow ant AND dgroup[0xCE98] != 0
+    # -> the UNRECOVERED _YellowFight(2, slot) branch WOULD fire
+    # (independently confirmed against the real ASM: it reaches
+    # SIMANT1!_YellowFight, seg6:823E, and crashes deeper in that routine's
+    # own unrecovered dependency chain -- the SAME call/argument pair
+    # check_nest_fight_b already established for this exact call).
+    from simant.recovered.gameplay import (do_dig_in_b, GET_BEST_DIR_DX,
+                                            GET_BEST_DIR_DY)
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, mode, caste_sub = 20, 20, 0x12, 2
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(8):         # live compass dx/dy table get_enter_dir_b's own
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF   # neighbor scan / this routine's own
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF  # post-direction lookup both read
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    dg_view.ww(0xCBF2, 0x1234)     # nonzero SRand seed
+    pack_view.ww(0x9B6A, 0)
+    sdg_view.wb(0x3D18, mode)
+    # get_enter_dir_b's own exit-distance arrays already all-zero (fresh
+    # bytearray); a zero-everywhere field makes it return a fixed direction
+    # deterministically -- whichever direction it is, place the yellow ant
+    # at ALL 8 plausible neighbor cells so the occupant check is exercised
+    # regardless of which one gets picked.
+    for dx, dy in zip(GET_BEST_DIR_DX, GET_BEST_DIR_DY):
+        nx, ny = x + dx, y + dy
+        dg_view.wb(0x48E8 + (nx << 6) + ny, 0x05)     # passable, not a hole
+        dg_view.wb(0x88E8 + (nx << 6) + ny, 0xFE)     # yellow ant occupant
+    dg_view.wb(0xCE98, 1)          # nonzero -> _YellowFight gate fires
+    with pytest.raises(NotImplementedError):
+        do_dig_in_b(dg_view, sdg_view, pack_view, x, y, mode, caste_sub)
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.

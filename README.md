@@ -39,9 +39,9 @@ recovered logic on a copy of the pre-state → diff against the ASM's mutation)
 instead of the return-value oracle the foundation was built with. The first genuine
 top-level `_Do*Ant*` routine is now also byte-exact: `_DoFightA` (yard combat
 resolution, composed with the newly-recovered `_GetNewMode` caste mode-transition
-lookup). What remains is the rest of the per-ant **behaviors** (`_DoForageAnt`,
-`_DoNestAntB`, `_DoDigInB`) and the **orchestrators** above them, which compose the
-now-recovered mutator tier. The graph below is a real slice of the `seg5`/`seg6`/`seg7` call
+lookup) — followed by two full per-ant **behavior** routines, `_DoForageAnt` and
+`_DoDigInB`. What remains is `_DoNestAntB` and the **orchestrators** above them,
+which compose the now-recovered mutator tier. The graph below is a real slice of the `seg5`/`seg6`/`seg7` call
 graph (every edge is an actual call); green nodes are proven byte-exact against the
 original ASM, an amber ring marks the most-called routines, dashed nodes are the
 not-yet-recovered frontier.
@@ -141,10 +141,10 @@ flowchart TD
   grdd --> bnc & gnd & srand
   dnb --> ddig & iyel & srand
   dfor --> iva & iyel & srand
-  dfor -.-> fial & aal & csd
+  dfor --> gin & gnm & gfd & fial & gw & jsc
   dnb -.-> jsc
   gbd --> gmap & gdis & glife & inobs & ipeb
-  ddig --> idirt & iyel
+  ddig --> idirt & iyel & gnd2 & dttb & gob & gw & fxm
   gmap --> iva
   ihole --> iva & ifood
   tmp --> mri
@@ -153,14 +153,11 @@ flowchart TD
   grbd --> tcbmo & gdis
   gmrd --> tcbmo & gdis
   cmbd --> gmbd
-  dfor -.-> gmbd
   dttb --> dtb & mnhb & idirt
   mnhb --> dtb & exh
   dtb --> seb & fxm & afld
-  ddig -.-> dttb
   tmdb <--> gob
   gob --> mnhb & exh & dttb
-  ddig -.-> tmdb
 
   classDef done fill:#2f7d4f,stroke:#8fce9e,color:#fff;
   classDef load fill:#2f7d4f,stroke:#e8a72c,stroke-width:3px,color:#fff;
@@ -172,7 +169,8 @@ flowchart TD
   class dtb,dttb,mnhb,exh,seb,fxm,afld,ged,gnd2 done;
   class tmdb,gob,rob done;
   class dfa,ddoa,gnm,dah,gw,sfa,gin,rt done;
-  class das,dab,daa,dnb,dfor,ddig front;
+  class dfor,ddig done;
+  class das,dab,daa,dnb front;
 ```
 
 Coverage by segment — named routines proven byte-exact (an island + A/B oracle):
@@ -180,7 +178,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}`/`_PickupFood{A,B,R}`/`_CanBeHouseHole`/`_HoleBorder`/`_GetFromAlist`/`_PlaceEgg{B,R}`/`_ScanForAnts`/`_BuildAntListA`/`_IsItFoodAt`/`_FindAntIndex`/`_SFoundAnt`/`_GetAntIndex`/`_FindLifeIndex`/`_SG{I,S,}Rand`/`_IsItYellow`/`_FindLifeAt`/`_FindEggAt`/`_FoodFall`/`_DropFoodA`/`_SRand{1,2,4,8,16,32,64,128,256}` (each now individually byte-tested against its own ASM instance)/`_IsLiftable`/`_PlaceDrop`/`_InitWater`/`_AddWater`/`_CreateNewHole`/`_DigMyNewHole`/`_DigMyTile`/`_FillMap`/`_TileFrame1`/`_TileFrame2`/`_MakePlugV`/`_MakePlugH`/`_MakeKnob`/`_MakePenny`/`_MakeClip`/`_MakeOutletV`/`_MakeOutletH`/`_MakeKitchenWall` done | 123 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_Sim{Egg,Queen}A`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_Raid{Out,In}B/R`/`_QueenMoveB/R`/`_MakeNewTailB/R`/`_GetMyInitialRandDir`/`_LeaveNestB`/`_DoDrown{B,R}`/`_GetNewRedTask`/`_DigOut{B,R}Nest`/`_StayInR`/`_DoRestAnt`/`_DoRepoFly`/`_GetMyNextRandDirs`/`_GetMyBestDir`/`_SimEgg{B,R}`/`_DoNestFight{B,R}`/`_DoReturnFoodAnt`/`_DoNesting{B,R}`/`_GetMyDir`/`_GetMyDis`/`_CheckNestFight{B,R}`/`_DoRest{B,R}`/`_DoRand{B,R}`/`_FeedAnts`/`_DoForageAnt` done (two documented gaps: `_DoTroph`/`_YellowFight`, both raise loudly); nest-ant/dig-in frontier | 93 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_Sim{Egg,Queen}A`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_Raid{Out,In}B/R`/`_QueenMoveB/R`/`_MakeNewTailB/R`/`_GetMyInitialRandDir`/`_LeaveNestB`/`_DoDrown{B,R}`/`_GetNewRedTask`/`_DigOut{B,R}Nest`/`_StayInR`/`_DoRestAnt`/`_DoRepoFly`/`_GetMyNextRandDirs`/`_GetMyBestDir`/`_SimEgg{B,R}`/`_DoNestFight{B,R}`/`_DoReturnFoodAnt`/`_DoNesting{B,R}`/`_GetMyDir`/`_GetMyDis`/`_CheckNestFight{B,R}`/`_DoRest{B,R}`/`_DoRand{B,R}`/`_FeedAnts`/`_DoForageAnt`/`_DoDigInB` done (two documented gaps shared by both: `_DoTroph`/`_YellowFight`, both raise loudly); `_DoNestAntB`/`_DoAntSim*` orchestration frontier | 94 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family, `_Make{Blk,Red}Queen`/`_Place{Red,Black}Queen`/`_Add{Black,Red}Ants`/`_{Un}RecruitRed`/`_IsValidYard`/`_FindInLionList`/`_SetAntLion`/`_NotMowed`/`_ForceMode{A,B}`/`_MaintainSwarm`/`_SetCasteProd`/`_SetModeProd`/`_GstrB`/`_KillAntLion`/`_FollowCatDir`/`_GrabMap`/`_GetNearbyPatches`/`_StartMigrate`/`_EndMigrate`/`_fracSIN`/`_fracCOS`/`_PlacePillTile`/`_PillGetLife`/`_StorePillarMap`/`_ReplacePillarMap`/`_PillFoodTile`/`_IsPillDead`/`_InitGrassMap`/`_InitSimVars`/`_Recruit`/`_UnRecruit`/`_Reproduce`/`_AddAntLion`/`_AddRandAntLion`/`_InitPillar`/`_StartAttack`/`_InitSimYard`/`_ClrArrays`/`_InitSow`/`_DoSow`/`_InitAntLions`/`_MakePillFood`/`_MakeAPill`/`_DoPillar`/`_GstrR`/`_GetStrategy`/`_AddFood` done | 66 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -264,22 +262,31 @@ move and then actually move* is byte-exact, end to end:
   the MSC C-runtime long-arithmetic helpers `__aFldiv`/`__aFulmul` and the
   independent `rand`/`srand`/`_RRand` generator (distinct from the `_SRand*`
   LFSR used for map generation).
-- **First full per-ant behavior tier routine: `_DoForageAnt`, complete**
-  (yard "A"-list foraging ant per-tick decision — nest-entrance homing,
-  scent-gradient-or-random forage direction, pickup/move/jitter/fight
-  resolution). Composes `is_valid_a`/`go_in_nest`/`get_new_mode`/
-  `get_forage_dir`/`pickup_food_a`/`is_yellow_ant`/`find_in_a_list`/
-  `get_winner`/`jam_scent_bn`/`rn`/`dec_t_smell`/`alarm_here2` — every
-  dependency it needs except two, which raise loudly by design (see below).
+- **Two full per-ant behavior tier routines, complete: `_DoForageAnt` and
+  `_DoDigInB`.** `_DoForageAnt` (yard "A"-list foraging ant per-tick
+  decision — nest-entrance homing, scent-gradient-or-random forage
+  direction, pickup/move/jitter/fight resolution) composes `is_valid_a`/
+  `go_in_nest`/`get_new_mode`/`get_forage_dir`/`pickup_food_a`/
+  `is_yellow_ant`/`find_in_a_list`/`get_winner`/`jam_scent_bn`/`rn`/
+  `dec_t_smell`/`alarm_here2`. `_DoDigInB` (black nest "B"-list ant
+  dig-forward per-tick decision — face-or-dig a chosen direction, then
+  move/jitter/fight) composes `get_new_mode_b`/`get_enter_dir_b`/
+  `is_it_dirt`/`dig_tile_them_b`/`is_yellow_ant`/`find_in_b_list`/
+  `get_out_b`/`get_winner`/`fix_exit_map_b`, reusing `_try_eat_food`
+  verbatim for its own tile-nibble + colony-growth tail (a byte-for-byte
+  argument match confirming both independently). Between them, every
+  dependency either needs except two, which raise loudly by design (see
+  below).
 
 **Missing**: the rest of the per-ant **behavior tier** in `seg6`
-(`_DoNestAntB`, `_DoDigInB`, `_DoAntSim*`) that composes all of the above into
-an actual decision, `_DoTroph`'s own dependency chain (a real sound-engine
+(`_DoNestAntB`, `_DoAntSim*`) that composes all of the above into an
+actual decision, `_DoTroph`'s own dependency chain (a real sound-engine
 routine plus a dialog/busy-wait UI routine — presentation/audio work, not
 core sim logic), and `_YellowFight` (seg6:823E — its own deep, so-far-
-unexplored dependency chain; both `_DoForageAnt` and `_DoDigInB`'s combat
-paths gate on it and raise loudly rather than guess). That's the next
-milestone toward the [VM-less native port](docs/vmless_port.md).
+unexplored dependency chain; both `_DoForageAnt`'s and `_DoDigInB`'s combat
+paths gate on it and raise loudly rather than guess — the SAME `(2, slot)`
+call signature at both sites). That's the next milestone toward the
+[VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 

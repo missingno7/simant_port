@@ -1,5 +1,64 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.207) — /goal grind: _DoDigInB (seg6 behavior tier, cont.)
+- RECOVERED `do_dig_in_b`/`_dig_in_b_mode_refresh` (`_DoDigInB`, SIMANTW.SYM
+  seg6:4BD0, FAR return, 736 bytes) — the black nest ("B"-list) ant
+  dig-forward per-tick behavior, the second Target from this session's
+  brief. FOUR args, not the three the scoping survey's summary named:
+  `x=[bp+6]`, `y=[bp+8]`, `mode=[bp+10]`, and an unlisted fourth
+  `caste_sub=[bp+12]` (the caller's own precomputed `(mode&0x78)>>3` —
+  confirmed by its direct `push ss:[bp+12]` into `get_new_mode_b`'s sole
+  arg, no computation from `mode` at this call site at all).
+- Composes `get_new_mode_b`, `get_enter_dir_b`, `is_it_dirt`,
+  `dig_tile_them_b`, `is_yellow_ant`, `find_in_b_list`, `get_out_b`,
+  `get_winner`, and — a genuine simplification this session found —
+  `_try_eat_food` reused VERBATIM for the tile-range-gated food-nibble +
+  colony-growth-trigger tail: its own `(MAP_PLANE_BASE[2], 0x9EA4, 0xAC82,
+  0xAC98, 0x7402, 0xAC86)` argument set matches this routine's own
+  disassembled field accesses byte for byte, confirming both
+  independently rather than composing a near-duplicate. `GR!_myBeginSound`
+  (the dig-success sound) is presentation-only, omitted per established
+  precedent (stubbed in the oracle test, same as `_AddFood`'s own call).
+- One raise-loudly gate, matching `check_nest_fight_b`'s EXACT precedent
+  for the exact same call: `SIMANT1!_YellowFight(2, pack[0x9B6A])` (seg6:
+  823E, same `push cs; call near` far-call-emulation idiom, same `(2,
+  slot)` argument pair already established) — fires when the destination
+  cell holds the player's yellow ant AND `dgroup[0xCE98] != 0`; when
+  `dgroup[0xCE98] == 0` the yellow ant is instead treated as an empty
+  cell and the move proceeds normally (independently confirmed via a
+  300-case randomized fuzz harness: zero disagreements between "real ASM
+  reaches an unrecovered opcode" and "recovered code raises").
+- **A real bug caught before trusting the ASM oracle**: an early reading
+  of the `caste_sub in (2, 6)` branch had the polarity BACKWARDS (shortcut
+  triggers on `caste_sub NOT in (2, 6)`, matching `do_forage_ant`'s own
+  polarity for the analogous check — a `jz` at seg6:4BDA/4BE0 jumps PAST
+  the shortcut to the main body exactly when `caste_sub` matches `2`/`6`,
+  the opposite of an initial mis-reading). Caught immediately by the
+  FIRST real-ASM state-diff run (a hard mismatch, not a subtle one) and
+  fixed before writing any test beyond the reproducer — exactly the class
+  of "confidently-traced but wrong" mistake this session's brief warned
+  about, resolved by trusting the oracle over the manual read.
+- Also independently confirmed the scoping survey's claim that the
+  mode-derived 8-neighbour table at DGROUP `0xC364`/`0xC366` resolves to
+  the SAME `SIMANT_DATA_GROUP` segment (`0x5294`) `do_forage_ant`'s own
+  compass-table reads use (fresh `m.mem.rw` against a live
+  `runtime.create_machine()`, not trusted from the report) — true, and
+  reused the identical live-read pattern rather than the `GET_BEST_DIR_DX`/
+  `DY` Python constants, matching this routine's own compiled reads.
+- `dir_caste` (the stamped "turn to face" value, computed once early) is
+  what `get_winner`'s second argument uses in the fight branch — NOT a
+  fresh re-read of the acting slot's caste field, which by that point may
+  already reflect `dig_tile_them_b`'s own `+0x18` success bump. The FINAL
+  move's own new-caste computation, by contrast, DOES re-read fresh
+  (confirmed via the raw disassembly: two textually-similar computations,
+  genuinely different data sources, ported as such rather than unified).
+- 12 new state-diff/gate tests (9 parametrized branch cases, a dedicated
+  yellow+CE98==0 case, a forced fight-found case exercising the
+  get_winner tail, and the `_YellowFight` gate-raises test), all green on
+  real ASM. Suite: simant 2040 (+12), full suite green.
+- Both scoping-report Targets now fully recovered and verified this
+  session: `_DoForageAnt` (cont.206) and `_DoDigInB` (this entry).
+
 ## 2026-07-15 (cont.206) — /goal grind: _DoForageAnt (seg6 behavior tier)
 - RECOVERED `do_forage_ant`/`_forage_jitter` (`_DoForageAnt`, SIMANTW.SYM
   seg6:1E42, arg slot=[bp+4]; NEAR return, 1126 bytes) — the yard ("A"-list)
