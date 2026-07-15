@@ -1,5 +1,32 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.195) — /goal grind: _MakeAPill
+- RECOVERED `make_a_pill` (`_MakeAPill`, SIMANTW.SYM seg7:53DA, NO
+  args; FAR return, 768 bytes; calls `_SRand1` x2, `_IsValidA` x2).
+  Rolls a fresh direction (`_SRand1(4)`, stored into `pack[0x9B1E]` —
+  the SAME `_pillar_cache_index` rule flag `make_pill_food` reads),
+  places the tracked pillar at a random point along ONE of the yard's
+  4 edges (mode 0: south, `x` random `y=0x3F`, tile `0x6C`; mode 1:
+  west, `x=0`, `y` random, tile `0x6B`; mode 2: north, `x` random,
+  `y=0`, tile `0x6F`; mode 3: east, `x=0x7F`, `y` random, tile `0x68`)
+  and, if valid, caches its current tile (composing the
+  already-recovered `store_pillar_map` — the real ASM's cache-store
+  math is inline but byte-identical to that routine's own body) then
+  stamps the mode-specific pillar tile.
+- The real ASM's two `_IsValidA` calls use IDENTICAL `(x, y)` (a pure
+  deterministic predicate, same coordinates both times) — collapsed to
+  one check, matching `pill_food_tile`/`_paint_pillar_arm`'s own
+  precedent. Also noted: since each mode's fixed coordinate (`0`,
+  `0x3F`, `0x7F`) and each mode's random draw range (`_SRand1(0x80)`
+  or `_SRand1(0x40)`) are both always within `is_valid_a`'s bounds,
+  the "invalid" branch is mathematically unreachable for this
+  function's own random-generation scheme — same category as
+  `make_a_pill`'s own dead `mode>=4` branch (`_SRand1(4)` can only
+  return `0..3`).
+- 4 cases (one per mode/edge, coordinates precomputed offline via the
+  already-verified `srand1`) — all green on the first real-ASM run.
+- Suite: simant 1860 (+4), full suite green.
+
 ## 2026-07-15 (cont.194) — /goal grind: _MakePillFood
 - RECOVERED `make_pill_food` (`_MakePillFood`, SIMANTW.SYM seg7:57D2,
   NO args; FAR return, 560 bytes; calls `_IsValidA` x2 per cell).

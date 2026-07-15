@@ -8774,6 +8774,57 @@ def make_pill_food(dgroup, pack, simant_data_group) -> None:
         _paint_pillar_arm(dgroup, pack, simant_data_group, 1, 0)
 
 
+def make_a_pill(dgroup, pack, simant_data_group) -> None:
+    """Roll a fresh direction (`_SRand1(4)`, stored into `pack[0x9B1E]` —
+    the SAME `_pillar_cache_index` rule flag `make_pill_food` reads),
+    place the tracked pillar (`simant_data_group[0x8A8C]`/`[0x8A8E]`) at
+    a random point along ONE of the yard's 4 edges, and — if that point
+    is valid — cache its current tile (composing the already-recovered
+    `store_pillar_map`) then stamp it with a mode-specific pillar tile.
+
+    Recovered from `_MakeAPill` (SIMANTW.SYM seg7:53DA, NO args; FAR
+    return, 768 bytes; calls `_SRand1` x2, `_IsValidA` x2). Mode `0`:
+    `x=_SRand1(0x80)`, `y=0x3F` (south edge), tile `0x6C`. Mode `1`:
+    `x=0` (west edge), `y=_SRand1(0x40)`, tile `0x6B`. Mode `2`:
+    `x=_SRand1(0x80)`, `y=0` (north edge), tile `0x6F`. Mode `3`:
+    `x=0x7F` (east edge), `y=_SRand1(0x40)`, tile `0x68`. The real ASM
+    calls `_IsValidA` TWICE with identical `(x, y)` — once gating the
+    cache-store, once (independently) gating the tile stamp — a
+    genuine redundant double-check (same coordinates both times, a
+    pure deterministic predicate) collapsed to one check here, same
+    precedent as `pill_food_tile`/`_paint_pillar_arm`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, mode = srand1(seed, 4)
+    pack.ww(0x9B1E, mode)
+
+    if mode == 0:
+        seed, x = srand1(seed, 0x80)
+        y, tile = 0x3F, 0x6C
+    elif mode == 1:
+        x, tile = 0, 0x6B
+        seed, y = srand1(seed, 0x40)
+    elif mode == 2:
+        seed, x = srand1(seed, 0x80)
+        y, tile = 0, 0x6F
+    elif mode == 3:
+        x, tile = 0x7F, 0x68
+        seed, y = srand1(seed, 0x40)
+    else:
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        return
+
+    simant_data_group.ww(0x8A8C, x)
+    simant_data_group.ww(0x8A8E, y)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+    if is_valid_a(x, y) == 1:
+        store_pillar_map(dgroup, pack, x, y)
+        dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, tile)
+
+
 def start_attack(dgroup, pack) -> None:
     """Roll a random attack-duration/timer value into `pack[0x78DC]`.
 

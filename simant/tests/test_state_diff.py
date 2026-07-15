@@ -7372,3 +7372,46 @@ def test_makepillfood_state_diff_matches_asm(mode, px, py, cache, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _MAKEPILLFOOD_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _MakeAPill (seg7:53DA) — place the pillar on a random edge cell -----
+# Mode (0..3) and the resulting (x, y) are precomputed offline (via the
+# already-verified srand1): 0x1234 -> mode0 (80, 63); 0x8000 -> mode1
+# (0, 42); 0x5555 -> mode2 (33, 0); 0xabcd -> mode3 (127, 30).
+_MAKEAPILL_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_PACK, 0x7C00, 0x9B30),
+    (_SDG, 0x8A80, 0x8AA0),
+]
+
+
+def _makeapill_seed(seed_val, existing_tile_at):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x9B1E, 0x99)          # stale, to prove it's overwritten
+        m.mem.ww(sdg, 0x8A8C, 0x11)
+        m.mem.ww(sdg, 0x8A8E, 0x22)
+        for i in range(6):
+            m.mem.ww(pack, 0x7C0E + (i << 1), 0x55)
+        for (cx, cy), tile in existing_tile_at.items():
+            m.mem.wb(dg, 0x28E8 + (cx << 6) + cy, tile)
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,x,y,label", [
+    (0x1234, 80, 63, "mode0-south-edge"),
+    (0x8000, 0, 42, "mode1-west-edge"),
+    (0x5555, 33, 0, "mode2-north-edge"),
+    (0xabcd, 127, 30, "mode3-east-edge"),
+])
+def test_makeapill_state_diff_matches_asm(seed_val, x, y, label):
+    from simant.recovered.gameplay import make_a_pill
+    results = _run_and_diff_segs(
+        7, 0x53DA, (), lambda d, p, s: make_a_pill(d, p, s),
+        _MAKEAPILL_REGIONS, seed_fn=_makeapill_seed(seed_val, {(x, y): 0x07}))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _MAKEAPILL_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
