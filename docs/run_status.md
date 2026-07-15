@@ -1,5 +1,74 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.212) — /goal grind: _DoRandAntA + _DoRandAntAA (A-list "_DoAntSimA" dependency batch, 2/8)
+- Task: recover the 8 still-unrecovered dependencies `_DoAntSimA` (seg6:0x4D8,
+  1348 bytes — NOT itself attempted this session, a deliberate follow-up)
+  calls: `_DoRandAntA`, `_DoRandAntAA`, `_DoRecruitAnt`, `_DoAttackAnt`,
+  `_DoToAlarm`, `_DoToNestAnt`, `_DoRepoExit`, `_DoRedInitiator`. Every
+  address was re-verified fresh via `symbols.symbols_in_segment(6)` against
+  a fresh `create_machine()` (matched the prior scoping pass's numbers
+  exactly, but independently confirmed rather than trusted).
+- RECOVERED `do_rand_ant_a` (`_DoRandAntA`, seg6:0xE66, NEAR return, 974
+  bytes) and `do_rand_ant_aa` (`_DoRandAntAA`, seg6:0x1234, NEAR, 588
+  bytes) — both yard-ant ("A-list") random-wander ticks, siblings of the
+  already-recovered `do_forage_ant` but WITHOUT its scent-gradient
+  direction pick (`get_rand_dir` instead of `get_forage_dir`, no "stay
+  put" sentinel) and without its `_SRand32` idle short-circuit or
+  alarm-territory gate. Composed entirely from ALREADY-recovered leaves —
+  `is_valid_a`, `go_in_nest`, `get_rand_dir`, `pickup_food_a`,
+  `is_yellow_ant`, `find_in_a_list`, `get_winner`, `get_new_mode`,
+  `jam_scent_bn`/`rn`, `dec_t_smell`, `alarm_here2`, and `do_forage_ant`'s
+  own `_forage_jitter` helper (reused verbatim where the real ASM's jitter
+  computation is byte-identical — independently confirmed per call site,
+  not assumed) — no new seg7/seg5 primitives were needed at all.
+- `_DoRandAntA` has two genuine differences from `_DoRandAntAA` beyond the
+  presence/absence of pickup-food logic: (1) after an empty-cell move, an
+  extra `_SRand8()==0` (1-in-8) roll, gated on `caste_sub in {2,6}`, can
+  additionally set `field_c=2` — `_DoRandAntAA`'s empty-move tail has NO
+  such follow-up (returns immediately after the move, independently
+  confirmed via the raw disassembly's own absence of any post-move
+  `call far _SRand8`). (2) `_DoRandAntA` has a same-colony-yellow/
+  trophallaxis gate (`pack[0x9AF2]==1` → unrecovered `_DoTroph`, raises
+  `NotImplementedError` per the established `do_forage_ant`/
+  `try_move_dir_b` precedent) that `_DoRandAntAA` does NOT have at all —
+  its same-colony branch (yellow OR not) just falls straight into a plain
+  `_forage_jitter`, no `pack[0x9AF2]` read anywhere in its body.
+- Genuine bug caught by the oracle (not by inspection): `_DoRandAntA`'s
+  pickup-tile check is evaluated UNCONDITIONALLY, but when the tile IS a
+  pickup tile and `caste_sub` is NOT `2`/`6`, the real ASM's `jnz` jumps
+  STRAIGHT to the move/occupant-resolution code, BYPASSING the crowding
+  check (`dest_tile > pack[0x7604]`) entirely — the first draft ran the
+  crowd check unconditionally in that case too. A dedicated
+  `pickup-tile-caste-sub-not-2-6` state-diff scenario (dest tile in the
+  pickup range, threshold set low enough that a wrongly-run crowd check
+  would divert into a jitter) caught the 2-byte real-ASM mismatch
+  immediately; fixed by restructuring the `is_pickup`/crowd-check as an
+  `if/elif` matching the real control flow, not two independent `if`s.
+- Both `_DoAttackAnt`/`_DoRecruitAnt`/`_DoToAlarm`/`_DoToNestAnt` share
+  this SAME "move → yellow-fight/trophallaxis-or-fight" tail shape
+  (confirmed via a batch `resolve_calls.py` pass over all 8 fresh
+  disassemblies — every one of them calls the identical fixed addresses
+  `SIMONE!_IsYellowAnt`/`SIMANT1!_YellowFight`/`SIMONE!_FindInAList`/
+  `SIMANT1!_GetWinner`/`SIMANT1!_AlarmHere2`, and `_DoRandAntA`/
+  `_DoToNestAnt`/`_DoRecruitAnt` additionally reach `SIMANT!_DoTroph`),
+  which should make the remaining 6 routines faster to recover — only
+  their "front" (how they pick a direction) genuinely differs.
+- Tests: `simant/tests/test_state_diff.py` — parametrized state-diff
+  tables for both routines (at-entrance, empty-move black/red, the
+  field_c-refresh roll via a brute-forced seed `0x0` — `srand_step(0)&7==0`
+  for BOTH the direction roll and the immediately-following field_c roll,
+  same "find a concrete seed" technique as `do_forage_ant`'s own
+  idle-srand32 test — pickup outside/inside, the caste_sub-gated pickup
+  miss, crowded-jitter, occupied-same-colony, an edge-adjacent position),
+  plus dedicated `fight_found` (forces a `find_in_a_list` hit),
+  `yellowfight_gate_raises`, and (for `_DoRandAntA` only) `dotroph_gate_
+  raises` tests. Full suite: 2142 passed (was 2121).
+- Commit: (pending — see `_DoRandAntA`/`_DoRandAntAA` commit).
+- Still missing (6/8): `_DoRecruitAnt`, `_DoAttackAnt`, `_DoToAlarm`,
+  `_DoToNestAnt`, `_DoRepoExit` (composes `_DoToNestAnt`+`_DoRandAntAA`,
+  so ordered after them), `_DoRedInitiator` (a genuinely different shape —
+  calls `SIMTWO!_RecruitRed`/`_UnRecruitRed`, not the shared A-list tail).
+
 ## 2026-07-15 (cont.211) — /goal grind: _DoNestAntB + _DoAntSimB (seg6 behavior tier — the dispatcher itself, COMPLETE)
 - RECOVERED `do_nest_ant_b` (`_DoNestAntB`, SIMANTW.SYM seg6:2DAE, FAR
   return, 1910 bytes, args `x=[bp+6]`, `y=[bp+8]`, `mode=[bp+10]`) — the

@@ -3022,6 +3022,288 @@ def test_doforageant_dotroph_gate_raises():
         do_forage_ant(dg_view, sdg_view, pack_view, 0)
 
 
+# ---- _DoRandAntA (seg6:0E66) — yard ant random-wander tick ----------------
+# Composes is_valid_a, go_in_nest, get_rand_dir, pickup_food_a, is_yellow_ant,
+# find_in_a_list, get_winner, get_new_mode, jam_scent_bn/rn, dec_t_smell,
+# alarm_here2, _forage_jitter. Two gated branches this session deliberately
+# does NOT recover (_YellowFight, _DoTroph) -- kept out of every seeded
+# scenario below, with dedicated tests confirming each gate raises loudly
+# when it WOULD fire (same pattern as _DoForageAnt's).
+_DORANDANTA_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2000, 0xD000),
+    (_SDG, 0, 0x9000),
+    (_PACK, 0x7000, 0xA300),
+]
+
+
+def _dorandanta_seed(x, y, caste, srand, inside, dest_tile, threshold,
+                     occupant, pack_9af2=0, ce98=0, at_entrance=False):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4, x)
+        m.mem.wb(sdg, 0x278E, y)
+        m.mem.wb(sdg, 0x2F62, caste)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        for i in range(8):         # live compass dx/dy table
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        for i in range(64):        # identity mode table -> direction == roll
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        own_tile = (0x80 if inside else 0x50) if at_entrance else 0x00
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, own_tile)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F and (nx, ny) != (x, y):
+                    m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+                    m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, occupant)
+        m.mem.ww(pack, 0x7604, threshold)
+        m.mem.ww(pack, 0x9AF2, pack_9af2)
+        m.mem.wb(dg, 0xCE98, ce98)
+        m.mem.wb(sdg, 0x8A5C, 0)           # get_winner: no cheat gate
+        m.mem.ww(dg, RAND_STATE_OFF, 0)    # pin the C-runtime rand state
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,caste,srand,inside,dest_tile,threshold,occupant,at_entrance,label", [
+    (20, 25, 0x03, 0, False, 0x00, 0, 0, True, "at-entrance"),
+    (20, 25, 0x12, 0x1111, False, 0x10, 0x30, 0x00, False, "move-empty-black"),
+    (20, 25, 0x92, 0x1111, False, 0x10, 0x30, 0x00, False, "move-empty-red"),
+    (20, 25, 0x12, 0x0000, False, 0x10, 0x30, 0x00, False, "move-empty-field-c-refresh"),
+    (20, 25, 0x12, 0x1111, False, 0x49, 0x30, 0x00, False, "pickup-outside"),
+    (20, 25, 0x12, 0x1111, True, 0x20, 0x30, 0x00, False, "pickup-inside"),
+    (20, 25, 0x08, 0x1111, False, 0x49, 0x30, 0x00, False, "pickup-tile-caste-sub-not-2-6"),
+    (20, 25, 0x12, 0x1111, False, 0x50, 0x05, 0x00, False, "crowded-jitter"),
+    (20, 25, 0x12, 0x1111, False, 0x10, 0x30, 0x13, False, "occupied-same-colony"),
+    (1, 1, 0x12, 0x1234, False, 0x10, 0x30, 0x00, False, "near-origin-edge"),
+])
+def test_dorandanta_state_diff_matches_asm(x, y, caste, srand, inside,
+                                           dest_tile, threshold, occupant,
+                                           at_entrance, label):
+    from simant.recovered.gameplay import do_rand_ant_a
+    results = _run_and_diff_segs(
+        6, 0xE66, (0,),
+        lambda d, s, p: do_rand_ant_a(d, s, p, 0),
+        _DORANDANTA_REGIONS, near=True,
+        seed_fn=_dorandanta_seed(x, y, caste, srand, inside, dest_tile,
+                                 threshold, occupant, at_entrance=at_entrance))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DORANDANTA_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dorandanta_fight_found_matches_asm():
+    # Force a deterministic direction (identity mode table -> direction ==
+    # the first _SRand8 roll) so the enemy-colony occupant at the resulting
+    # (new_x, new_y) is guaranteed to be found by find_in_a_list, exercising
+    # the get_winner/alarm_here2 tail (not just the "not found" case).
+    from simant.recovered.gameplay import do_rand_ant_a
+    x, y, caste = 20, 25, 0x12   # black, low3=2
+    srand = 0x1111               # -> direction 2 -> dx=+1, dy=0
+    direction = 2
+    new_x = x + GET_BEST_DIR_DX[direction]
+    new_y = y + GET_BEST_DIR_DY[direction]
+
+    def seed(m):
+        _dorandanta_seed(x, y, caste, srand, False, 0x10, 0x30, 0x93)(m)
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x80F0, 2)                         # A-list count
+        m.mem.wb(sdg, 0x23A4 + 1, new_x & 0xFF)
+        m.mem.wb(sdg, 0x278E + 1, new_y & 0xFF)
+        m.mem.wb(sdg, 0x2F62 + 1, 0x93)                   # nonzero -> "alive"
+
+    results = _run_and_diff_segs(
+        6, 0xE66, (0,), lambda d, s, p: do_rand_ant_a(d, s, p, 0),
+        _DORANDANTA_REGIONS, near=True, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DORANDANTA_REGIONS):
+        assert asm_after == rec_after, f"fight-found {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dorandanta_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_rand_ant_a
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, caste = 20, 25, 0x12
+    srand = 0x1111
+    new_x, new_y = x + GET_BEST_DIR_DX[2], y + GET_BEST_DIR_DY[2]
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(64):
+        sdg[0x24 + i] = i % 8
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, x)
+    sdg_view.wb(0x278E, y)
+    sdg_view.wb(0x2F62, caste)
+    dg_view.ww(0xCBF2, srand)
+    dg_view.wb(0x28E8 + (x << 6) + y, 0x00)
+    dg_view.wb(0x28E8 + (new_x << 6) + new_y, 0x10)
+    dg_view.wb(0x68E8 + (new_x << 6) + new_y, 0xFE)     # yellow ant occupant
+    pack_view.ww(0x7604, 0x30)
+    dg_view.wb(0xCE98, 0x80)      # (caste ^ 0x80) & 0x80 -> nonzero -> gate fires
+    with pytest.raises(NotImplementedError):
+        do_rand_ant_a(dg_view, sdg_view, pack_view, 0)
+
+
+def test_dorandanta_dotroph_gate_raises():
+    from simant.recovered.gameplay import do_rand_ant_a
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, caste = 20, 25, 0x12
+    srand = 0x1111
+    new_x, new_y = x + GET_BEST_DIR_DX[2], y + GET_BEST_DIR_DY[2]
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(64):
+        sdg[0x24 + i] = i % 8
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, x)
+    sdg_view.wb(0x278E, y)
+    sdg_view.wb(0x2F62, caste)
+    dg_view.ww(0xCBF2, srand)
+    dg_view.wb(0x28E8 + (x << 6) + y, 0x00)
+    dg_view.wb(0x28E8 + (new_x << 6) + new_y, 0x10)
+    dg_view.wb(0x68E8 + (new_x << 6) + new_y, 0xFE)
+    pack_view.ww(0x7604, 0x30)
+    dg_view.wb(0xCE98, 0x00)      # colony bit matches -> skip _YellowFight
+    pack_view.ww(0x9AF2, 1)       # -> _DoTroph gate fires
+    with pytest.raises(NotImplementedError):
+        do_rand_ant_a(dg_view, sdg_view, pack_view, 0)
+
+
+# ---- _DoRandAntAA (seg6:1234) — yard ant simpler random-wander tick -------
+# Composes is_valid_a, go_in_nest, get_rand_dir, is_yellow_ant, find_in_a_list,
+# get_winner, _forage_jitter. One gated branch (_YellowFight) deliberately
+# not recovered, same precedent as _DoRandAntA's.
+_DORANDANTAA_REGIONS = _DORANDANTA_REGIONS
+
+
+def _dorandantaa_seed(x, y, caste, srand, inside, dest_tile, threshold,
+                      occupant, ce98=0, at_entrance=False):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4, x)
+        m.mem.wb(sdg, 0x278E, y)
+        m.mem.wb(sdg, 0x2F62, caste)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        own_tile = (0x80 if inside else 0x50) if at_entrance else 0x00
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, own_tile)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F and (nx, ny) != (x, y):
+                    m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+                    m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, occupant)
+        m.mem.ww(pack, 0x7604, threshold)
+        m.mem.wb(dg, 0xCE98, ce98)
+        m.mem.wb(sdg, 0x8A5C, 0)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,caste,srand,inside,dest_tile,threshold,occupant,at_entrance,label", [
+    (20, 25, 0x03, 0, False, 0x00, 0, 0, True, "at-entrance"),
+    (20, 25, 0x12, 0x1111, False, 0x10, 0x30, 0x00, False, "move-empty-black"),
+    (20, 25, 0x92, 0x1111, False, 0x10, 0x30, 0x00, False, "move-empty-red"),
+    (20, 25, 0x12, 0x1111, False, 0x50, 0x05, 0x00, False, "crowded-jitter"),
+    (20, 25, 0x12, 0x1111, False, 0x10, 0x30, 0x13, False, "occupied-same-colony"),
+    (1, 1, 0x12, 0x1234, False, 0x10, 0x30, 0x00, False, "near-origin-edge"),
+])
+def test_dorandantaa_state_diff_matches_asm(x, y, caste, srand, inside,
+                                            dest_tile, threshold, occupant,
+                                            at_entrance, label):
+    from simant.recovered.gameplay import do_rand_ant_aa
+    results = _run_and_diff_segs(
+        6, 0x1234, (0,),
+        lambda d, s, p: do_rand_ant_aa(d, s, p, 0),
+        _DORANDANTAA_REGIONS, near=True,
+        seed_fn=_dorandantaa_seed(x, y, caste, srand, inside, dest_tile,
+                                  threshold, occupant, at_entrance=at_entrance))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DORANDANTAA_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dorandantaa_fight_found_matches_asm():
+    from simant.recovered.gameplay import do_rand_ant_aa
+    x, y, caste = 20, 25, 0x12
+    srand = 0x1111
+    direction = 2
+    new_x = x + GET_BEST_DIR_DX[direction]
+    new_y = y + GET_BEST_DIR_DY[direction]
+
+    def seed(m):
+        _dorandantaa_seed(x, y, caste, srand, False, 0x10, 0x30, 0x93)(m)
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x80F0, 2)
+        m.mem.wb(sdg, 0x23A4 + 1, new_x & 0xFF)
+        m.mem.wb(sdg, 0x278E + 1, new_y & 0xFF)
+        m.mem.wb(sdg, 0x2F62 + 1, 0x93)
+
+    results = _run_and_diff_segs(
+        6, 0x1234, (0,), lambda d, s, p: do_rand_ant_aa(d, s, p, 0),
+        _DORANDANTAA_REGIONS, near=True, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DORANDANTAA_REGIONS):
+        assert asm_after == rec_after, f"fight-found {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dorandantaa_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_rand_ant_aa
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, caste = 20, 25, 0x12
+    srand = 0x1111
+    new_x, new_y = x + GET_BEST_DIR_DX[2], y + GET_BEST_DIR_DY[2]
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(64):
+        sdg[0x24 + i] = i % 8
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, x)
+    sdg_view.wb(0x278E, y)
+    sdg_view.wb(0x2F62, caste)
+    dg_view.ww(0xCBF2, srand)
+    dg_view.wb(0x28E8 + (x << 6) + y, 0x00)
+    dg_view.wb(0x28E8 + (new_x << 6) + new_y, 0x10)
+    dg_view.wb(0x68E8 + (new_x << 6) + new_y, 0xFE)
+    pack_view.ww(0x7604, 0x30)
+    dg_view.wb(0xCE98, 0x80)
+    with pytest.raises(NotImplementedError):
+        do_rand_ant_aa(dg_view, sdg_view, pack_view, 0)
+
+
 # ---- _DoDigInB (seg6:4BD0) — black nest ant dig-forward tick -------------
 # Composes get_new_mode_b, get_enter_dir_b, is_it_dirt, dig_tile_them_b,
 # is_yellow_ant, find_in_b_list, get_out_b, get_winner, _try_eat_food,
