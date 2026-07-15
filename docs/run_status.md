@@ -1,5 +1,28 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.193) — /goal grind: _InitAntLions
+- RECOVERED `init_ant_lions` (`_InitAntLions`, SIMANTW.SYM seg7:40C6,
+  arg count=[bp+6]; FAR return, 348 bytes). Zeroes
+  `simant_data_group[0x8A88]` (the ant-lion live-count field) and a
+  companion `pack[0x9C6E]`, then places up to `count` (clamped to a
+  max of 10; non-positive skips the loop) ant lions, finally storing
+  the clamped count into `pack[0x9E8C]` unconditionally.
+- The real ASM INLINES the entire `_AddRandAntLion` body (identical
+  instructions — same 200-attempt/100-threshold search, same
+  placement tail — confirmed by direct comparison of both
+  disassemblies) once per iteration rather than calling it; ported as
+  `clamped` calls to the already-recovered `add_rand_ant_lion` instead
+  of re-deriving the same search+place logic a second time (the
+  session's now-familiar "compiler inlined it, we compose it instead"
+  pattern already used for `_AddAntLion`/`_AddRandAntLion` and
+  `_InitPillar`/`_InitSow`).
+- 4 cases (count `0` and negative both no-op but still reset/store,
+  count `2` and count `15`→clamped-10 both against a fully-clear yard
+  so every placement succeeds immediately, reusing `add_rand_ant_lion`'s
+  own "attempt0 succeeds" fixture pattern) — all green on the first
+  real-ASM run.
+- Suite: simant 1851 (+4), full suite green.
+
 ## 2026-07-15 (cont.192) — /goal grind: _DoSow
 - RECOVERED `do_sow` (`_DoSow`, SIMANTW.SYM seg7:3F8A, NO args; FAR
   return, 316 bytes; calls `_SRand4` x2, `_SRand1(3)`, `_IsValidA`).

@@ -7287,3 +7287,43 @@ def test_dosow_state_diff_matches_asm(seed_val, slots, target_cells, label):
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _DOSOW_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _InitAntLions (seg7:40C6) — reset count + place up to N ant lions ----
+_INITANTLIONS_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_PACK, 0x7A00, 0x9F00),   # widens _ADDRANDANTLION_REGIONS's PACK bound
+                                # to also cover 0x9C6E/0x9E8C
+    (_SDG, 0x8A00, 0x8B00),
+]
+
+
+def _initantlions_seed(seed_val, all_clear, pre_count):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        sdg = m.seg_bases[_SDG]
+        pack = m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes(span))
+        m.mem.load(dg, 0x68E8, bytes(span) if all_clear else bytes([5]) * span)
+        m.mem.ww(sdg, 0x8A88, pre_count)
+        m.mem.ww(pack, 0x9C6E, 0x77)   # pre-existing nonzero, to prove the reset
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,count,all_clear,pre_count,label", [
+    (0x1234, 0, False, 3, "count-zero-no-placement-still-resets"),
+    (0x1234, -1, False, 3, "negative-count-stored-as-signed-word"),
+    (0xABCD, 2, True, 0, "count-two-both-placed-fully-clear-map"),
+    (0x1234, 15, True, 0, "count-clamped-to-ten-fully-clear-map"),
+])
+def test_initantlions_state_diff_matches_asm(seed_val, count, all_clear, pre_count, label):
+    from simant.recovered.gameplay import init_ant_lions
+    results = _run_and_diff_segs(
+        7, 0x40C6, (count,), lambda d, p, s: init_ant_lions(d, p, s, count),
+        _INITANTLIONS_REGIONS,
+        seed_fn=_initantlions_seed(seed_val, all_clear, pre_count))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _INITANTLIONS_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

@@ -8690,6 +8690,35 @@ def do_sow(dgroup, pack, simant_data_group) -> None:
     dgroup.ww(SRAND_SEED_OFF, seed)
 
 
+def init_ant_lions(dgroup, pack, simant_data_group, count: int) -> None:
+    """Reset the ant-lion count, then place up to `count` (clamped to a
+    max of 10; a non-positive count places none) ant lions via
+    `add_rand_ant_lion`.
+
+    Recovered from `_InitAntLions` (SIMANTW.SYM seg7:40C6, arg
+    count=[bp+6]; FAR return, 348 bytes). Zeroes
+    `simant_data_group[0x8A88]` (the SAME ant-lion live-count field
+    `add_ant_lion`/`find_in_lion_list`/`kill_ant_lion` already use) and
+    a companion `pack[0x9C6E]`. The real ASM inlines the ENTIRE
+    `_AddRandAntLion` body (identical instructions, confirmed by direct
+    comparison of both disassemblies — same 200-attempt/100-threshold
+    search, same placement tail) once per iteration rather than calling
+    it; ported as `count` (clamped) calls to the already-recovered
+    `add_rand_ant_lion` instead of re-deriving the same logic a second
+    time. Finally stores the clamped count into `pack[0x9E8C]`
+    (unconditionally, even when no placement happened).
+    """
+    simant_data_group.ww(0x8A88, 0)
+    pack.ww(0x9C6E, 0)
+
+    clamped = count if count <= 10 else 10
+    if clamped > 0:
+        for _ in range(clamped):
+            add_rand_ant_lion(dgroup, pack, simant_data_group)
+
+    pack.ww(0x9E8C, clamped & 0xFFFF)
+
+
 def start_attack(dgroup, pack) -> None:
     """Roll a random attack-duration/timer value into `pack[0x78DC]`.
 
