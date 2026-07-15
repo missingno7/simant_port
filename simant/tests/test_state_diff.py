@@ -3496,6 +3496,99 @@ def test_dotonestant_dotroph_gate_raises():
         do_to_nest_ant(dg_view, sdg_view, pack_view, 0)
 
 
+# ---- _DoRepoExit (seg6:0xC7A) — yard ant head-home dispatcher -------------
+# Composes do_to_nest_ant and do_rand_ant_aa (both already recovered).
+_DOREPOEXIT_REGIONS = _DORANDANTA_REGIONS
+
+
+def _dorepoexit_seed(x, y, caste, nest_scent, srand, dest_tile, threshold,
+                     occupant, count_7c44=0, count_8078=0, acting_slot=0):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4, x)
+        m.mem.wb(sdg, 0x278E, y)
+        m.mem.wb(sdg, 0x2F62, caste)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.wb(pack, 0x9B6E, 0)
+        m.mem.ww(pack, 0x9B6A, acting_slot)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        nest_base = 0x72D2 if (caste & 0x80) else 0x62D2
+        hx, hy = x >> 1, y >> 1
+        m.mem.data[sdg + 0x52D2:sdg + 0x52D2 + 0x800] = bytes(0x800)
+        m.mem.data[sdg + nest_base:sdg + nest_base + 0x800] = bytes(0x800)
+        m.mem.wb(sdg, nest_base + (hx << 5) + hy, nest_scent)
+        # a strong neighbour at direction 0 -> get_nest_dir's argmax picks 0
+        # (only matters on the do_to_nest_ant branch; harmless otherwise)
+        nhx = (hx + GET_BEST_DIR_DX[0]) & 0x3F
+        nhy = (hy + GET_BEST_DIR_DY[0]) & 0x1F
+        if nest_scent != 0:
+            m.mem.wb(sdg, nest_base + (nhx << 5) + nhy, 200)
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, 0x00)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F and (nx, ny) != (x, y):
+                    m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+                    m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, occupant)
+        m.mem.ww(pack, 0x7604, threshold)
+        m.mem.ww(pack, 0x9AF2, 0)
+        m.mem.wb(dg, 0xCE98, 0)
+        m.mem.ww(pack, 0x7C44, count_7c44)
+        m.mem.ww(pack, 0x8078, count_8078)
+        m.mem.wb(sdg, 0x8A5C, 0)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "caste,nest_scent,srand,count_7c44,count_8078,label", [
+    (0x12, 10, 0x1234, 0, 0, "to-nest-black-count-zero"),
+    (0x92, 10, 0x1234, 0, 0, "to-nest-red-count-zero"),
+    (0x12, 150, 0x1111, 0, 0, "rand-black-count-zero"),
+    (0x92, 150, 0x1111, 0, 0, "rand-red-count-zero"),
+    (0x12, 150, 0x0000, 5, 0, "rand-black-count-hit"),
+    (0x12, 150, 0x0001, 5, 0, "rand-black-count-miss"),
+    (0x12, 150, 0x2222, 1, 0, "rand-black-count-one-forced-hit"),
+    (0x92, 150, 0x0000, 0, 5, "rand-red-count-hit"),
+])
+def test_dorepoexit_state_diff_matches_asm(caste, nest_scent, srand,
+                                           count_7c44, count_8078, label):
+    from simant.recovered.gameplay import do_repo_exit
+    results = _run_and_diff_segs(
+        6, 0xC7A, (0,),
+        lambda d, s, p: do_repo_exit(d, s, p, 0),
+        _DOREPOEXIT_REGIONS, near=True,
+        seed_fn=_dorepoexit_seed(20, 25, caste, nest_scent, srand, 0x10, 0x30,
+                                 0x00, count_7c44=count_7c44,
+                                 count_8078=count_8078))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOREPOEXIT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_dorepoexit_acting_slot_matches_asm():
+    # The population-cap override writes field_c onto pack[0x9B6A]'s slot,
+    # NOT this routine's own `slot` argument -- force them to differ (slot
+    # 0 acting, but pack[0x9B6A] points at slot 1) and confirm slot 1's
+    # field_c gets the 0x10 override while slot 0's own state just reflects
+    # the ordinary do_rand_ant_aa move.
+    from simant.recovered.gameplay import do_repo_exit
+    results = _run_and_diff_segs(
+        6, 0xC7A, (0,), lambda d, s, p: do_repo_exit(d, s, p, 0),
+        _DOREPOEXIT_REGIONS, near=True,
+        seed_fn=_dorepoexit_seed(20, 25, 0x12, 150, 0x0000, 0x10, 0x30, 0x00,
+                                 count_7c44=1, acting_slot=1))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOREPOEXIT_REGIONS):
+        assert asm_after == rec_after, f"acting-slot {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _DoDigInB (seg6:4BD0) — black nest ant dig-forward tick -------------
 # Composes get_new_mode_b, get_enter_dir_b, is_it_dirt, dig_tile_them_b,
 # is_yellow_ant, find_in_b_list, get_out_b, get_winner, _try_eat_food,

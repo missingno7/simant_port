@@ -1,5 +1,32 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.214) — /goal grind: _DoRepoExit (A-list "_DoAntSimA" dependency batch, 4/8)
+- RECOVERED `do_repo_exit` (`_DoRepoExit`, seg6:0xC7A, NEAR return, 208
+  bytes) — a small dispatcher, unblocked once `_DoToNestAnt`/`_DoRandAntAA`
+  both landed: reads the acting ant's own-cell NEST scent (the SAME grid
+  `get_nest_dir` reads) and calls `do_to_nest_ant` if `< 100`, else
+  `do_rand_ant_aa`; then a per-colony population-cap roll can force
+  `field_c = 0x10` on `pack[0x9B6A]`'s CURRENT acting slot.
+- One subtlety independently confirmed via the raw disassembly (not
+  assumed): the population-cap tail re-reads the colony bit FRESH from
+  `simant_data_group[0x2F62+slot]` AFTER the dispatch call, not a cached
+  pre-dispatch value — so a fight inside the composed call that clears the
+  acting ant's own caste changes which of `pack[0x7C44]`/`[0x8078]` this
+  tail reads. Also: `pack[0x9B6A]`, not this routine's own `slot` argument,
+  is what the final override write targets — a dedicated test
+  (`test_dorepoexit_acting_slot_matches_asm`) forces the two to differ to
+  prove this isn't accidentally-equivalent.
+- A count of exactly `1` is a forced hit with NO `_SRand1` call at all (the
+  real ASM special-cases it since `_SRand1(1)` is deterministically `0`
+  anyway) — ported as an explicit `if count == 1: hit = True` branch
+  rather than always calling `srand1`.
+- Tests: 9 new cases (dispatch branch x colony x population-cap
+  hit/miss/forced/zero) plus the acting-slot test — all passed on the
+  first run. Full suite: 2164 passed (was 2155).
+- Commit: (pending).
+- Still missing (4/8): `_DoRecruitAnt`, `_DoAttackAnt`, `_DoToAlarm`,
+  `_DoRedInitiator`.
+
 ## 2026-07-15 (cont.213) — /goal grind: _DoToNestAnt (A-list "_DoAntSimA" dependency batch, 3/8)
 - RECOVERED `do_to_nest_ant` (`_DoToNestAnt`, seg6:0x1676, NEAR return, 916
   bytes) — a yard ant heading toward its own nest. Same overall shape as

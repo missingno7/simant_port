@@ -8893,6 +8893,80 @@ def do_to_nest_ant(dgroup, simant_data_group, pack, slot: int) -> None:
     _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
 
 
+def do_repo_exit(dgroup, simant_data_group, pack, slot: int) -> None:
+    """A yard ("A"-list) ant deciding how to head home: dispatches to
+    `do_to_nest_ant` when its own colony's NEST scent at its current cell is
+    still low (`< 100`), else to `do_rand_ant_aa` (scent trail must have
+    gone cold — wander randomly instead of following it) — then, on a
+    per-colony population-cap roll, force-overrides the (possibly
+    just-written) `field_c` to `0x10`.
+
+    Recovered from `_DoRepoExit` (SIMANTW.SYM seg6:0xC7A, arg slot=[bp+4];
+    NEAR return, 208 bytes). Composes the already-recovered `do_to_nest_ant`
+    and `do_rand_ant_aa`.
+
+    NEST-scent gate: reads the acting ant's colony bit
+    (`simant_data_group[0x2F62+slot] & 0x80`) and current position, indexes
+    the SAME half-res NEST scent grid `get_nest_dir` reads (`[0x72D2..)`
+    red / `[0x62D2..)` black, `(x>>1)*32 + (y>>1)` — independently confirmed
+    the `(x&0xFE)<<4 + (y>>1)` the raw ASM computes is byte-address-
+    identical to that `(x>>1)<<5 + (y>>1)` formula) at the ant's OWN cell:
+    `< 100` calls `do_to_nest_ant(slot)`, `>= 100` calls `do_rand_ant_aa
+    (slot)`. Neither composed call's return value is used.
+
+    Population-cap tail: re-reads the colony bit FRESH from
+    `simant_data_group[0x2F62+slot]` (independently confirmed via the raw
+    disassembly's own fresh `es:[si+12130]` test AFTER the dispatch call —
+    not a cached pre-dispatch value, so a fight inside the composed call
+    that clears the acting ant's own caste field changes which population
+    counter this tail reads) and picks the matching PACK-resident
+    population counter: `pack[0x8078]` (red) / `pack[0x7C44]` (black) — the
+    SAME two counters `clr_mode_pop` decrements each tick.  A counter of
+    `0` is a no-op (return as-is). A counter of exactly `1` is treated as an
+    UNCONDITIONAL "population capped" hit WITHOUT a roll — the real ASM
+    special-cases this because `_SRand1(1)` would deterministically return
+    `0` anyway (`seed % 1 == 0`), so it skips the call entirely (independently
+    confirmed via the raw disassembly's own `cmp ..., 1; jz` branching
+    straight to the override, bypassing the `_SRand1` call site). Any
+    OTHER count calls `_SRand1(count)`: a `0` result (or the forced `count
+    == 1` case) writes `field_c = 0x10` onto `pack[0x9B6A]`'s CURRENT
+    acting-slot's `simant_data_group[0x2B78+...]` — read fresh from
+    `pack[0x9B6A]` rather than reusing this routine's own `slot` argument
+    (independently confirmed via the raw disassembly's own `es:[9B6A]`
+    read at the write site, matching the SAME "current acting slot"
+    pointer-global `do_ant_sim_b`'s own loop uses) — any nonzero roll is a
+    no-op.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    colony = simant_data_group.rb(0x2F62 + slot) & 0x80
+    x = simant_data_group.rb(0x23A4 + slot)
+    y = simant_data_group.rb(0x278E + slot)
+    idx = ((x & 0xFE) << 4) + (y >> 1)
+    nest_scent = simant_data_group.rb((0x72D2 if colony else 0x62D2) + idx)
+
+    if nest_scent < 100:
+        do_to_nest_ant(dgroup, simant_data_group, pack, slot)
+    else:
+        do_rand_ant_aa(dgroup, simant_data_group, pack, slot)
+
+    colony2 = simant_data_group.rb(0x2F62 + slot) & 0x80
+    count = pack.rw(0x8078 if colony2 else 0x7C44)
+
+    if count == 0:
+        return
+    if count == 1:
+        hit = True
+    else:
+        seed, roll = srand1(dgroup.rw(SRAND_SEED_OFF), count)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        hit = roll == 0
+
+    if hit:
+        acting_slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x2B78 + acting_slot, 0x10)
+
+
 def kill_tail_b(dgroup, simant_data_group, ant_idx: int) -> None:
     """Remove a black-colony ant's tail segment from the sim.
 
