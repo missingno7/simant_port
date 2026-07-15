@@ -3179,6 +3179,243 @@ def test_dodiginb_yellowfight_gate_raises():
         do_dig_in_b(dg_view, sdg_view, pack_view, x, y, mode, caste_sub)
 
 
+# ---- _SimQueenB (seg6:3DC2) — the black queen's own DoNestAntB dispatch arm --
+# Composes queen_move_b, find_in_b_list, in_nest_bounds, place_egg_b, dec_eat_b.
+# SIMANT!_PictStrnDialog (seg1:615A, starvation message) and
+# ANTEDIT!_QueenBalloons (seg3:4A44, post-move speech balloon) are
+# presentation-only and stubbed, same treatment as _DoDigInB's own sound stub.
+_SIMQUEENB_STUBS = [(1, 0x615A), (3, 0x4A44)]
+_SIMQUEENB_REGIONS = _DODIGINB_REGIONS
+
+
+def _simqueenb_seed(x, y, caste, srand, *, ac86=50, ac82=20, queen_count=0,
+                    no_starve=0, balloon_flag=0, throttle=0, move_open=None,
+                    b_list_match_at=None, b_list_match_caste=None):
+    """Common ground for _SimQueenB scenarios: PACK/SDG/DGROUP fields, plus a
+    fully-blocked nest-map neighborhood (0xFF everywhere) so `queen_move_b`'s
+    own `try_move_dir_b` always fails, isolating the occupancy-check/
+    placement logic under test -- UNLESS `move_open=(nx, ny)` names one
+    neighbor cell to leave clear (tile 0x05, empty life) so a real move can
+    succeed there instead.
+    """
+    from simant.recovered.gameplay import GET_BEST_DIR_DX, GET_BEST_DIR_DY
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, 0)
+        m.mem.wb(sdg, 0x3D18, caste)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
+        m.mem.ww(dg, 0xAC82, ac82 & 0xFFFF)
+        m.mem.ww(pack, 0x78E8, queen_count & 0xFFFF)
+        m.mem.wb(sdg, 0x8A60, no_starve)
+        m.mem.ww(sdg, 0x85FC, balloon_flag)
+        m.mem.wb(pack, 0x75FC, throttle)
+        m.mem.ww(pack, 0x7402, 5)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x48E8 + (nx << 6) + ny, 0xFF)
+                    m.mem.wb(dg, 0x88E8 + (nx << 6) + ny, 0x00)
+        if move_open is not None:
+            onx, ony = move_open
+            m.mem.wb(dg, 0x48E8 + (onx << 6) + ony, 0x05)
+        m.mem.ww(pack, 0x7C48, (x + 30) & 0xFFFF)   # queen's move target: far east
+        m.mem.ww(pack, 0x7C90, y & 0xFFFF)
+        m.mem.wb(pack, 0x9B6E, 1)
+        m.mem.ww(pack, 0x99D4, 0)                    # empty b-list by default
+        if b_list_match_at is not None:
+            bx, by = b_list_match_at
+            m.mem.ww(pack, 0x99D4, 2)
+            m.mem.wb(sdg, 0x3736 + 1, bx & 0xFF)
+            m.mem.wb(sdg, 0x392C + 1, by & 0xFF)
+            m.mem.wb(sdg, 0x3D18 + 1, b_list_match_caste)
+    return seed
+
+
+def _simqueenb_run(x, y, mode, caste_sub, seed_fn):
+    from simant.recovered.gameplay import sim_queen_b
+    return _run_and_diff_segs(
+        6, 0x3DC2, (x, y, mode, caste_sub),
+        lambda d, s, p: sim_queen_b(d, s, p, x, y, mode, caste_sub),
+        _SIMQUEENB_REGIONS, seed_fn=seed_fn, stubs=_SIMQUEENB_STUBS)
+
+
+def _simqueenb_assert(results, label):
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _SIMQUEENB_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("mode", [0x00, 0x0B, 0x0E, 0xFF])
+def test_simqueenb_noop_mode_matches_asm(mode):
+    x, y = 20, 20
+    results = _simqueenb_run(x, y, mode, 2, _simqueenb_seed(x, y, 0x12, 0x1234))
+    _simqueenb_assert(results, f"noop-{mode:#x}")
+
+
+def test_simqueenb_0c_starvation_matches_asm():
+    # SRand64()==0 (seed 0 -> first LFSR step is 0) AND dgroup[0xAC86]==0 ->
+    # kills this ant and clears her own nest cell; the starvation dialog is
+    # stubbed.
+    x, y = 20, 20
+    results = _simqueenb_run(x, y, 0x0C, 2,
+                             _simqueenb_seed(x, y, 0x12, 0x0000, ac86=0))
+    _simqueenb_assert(results, "0c-starvation")
+
+
+def test_simqueenb_0c_move_succeeds_matches_asm():
+    # SRand64()==0 (seed 0) AND dgroup[0xAC86]!=0 -> queen_move_b actually
+    # gets called; she finds an open cell one step toward her far-east move
+    # target and moves -> returns immediately, no occupancy-check/balloon
+    # logic runs at all.
+    x, y = 20, 20
+    results = _simqueenb_run(
+        x, y, 0x0C, 2,
+        _simqueenb_seed(x, y, 0x12, 0x0000, move_open=(x + 1, y)))
+    _simqueenb_assert(results, "0c-move-succeeds")
+
+
+def test_simqueenb_0c_move_fails_falls_to_occupancy_check_matches_asm():
+    # SRand64()==0 (seed 0) AND dgroup[0xAC86]!=0 -> queen_move_b gets
+    # called, but the nest map is fully blocked so she can't move (0) ->
+    # falls through to the SAME occupancy pre-check the roll64!=0 tests
+    # exercise, but via the OTHER control path into it (with an extra
+    # _SRand8() consumed internally by queen_move_b's own random-direction
+    # fallback, since every neighbour is an obstacle).
+    x, y, caste = 20, 20, 0x12
+    results = _simqueenb_run(
+        x, y, 0x0C, 2, _simqueenb_seed(x, y, caste, 0x0000, queen_count=3))
+    _simqueenb_assert(results, "0c-move-fails-falls-to-occupancy-check")
+
+
+def test_simqueenb_0c_occupied_direct_matches_asm():
+    # Move fails (nest map fully blocked); occupancy pre-check direction is
+    # (caste ^ 0xFC) & 7 == 6 (west) for caste=0x12 -> checks (x-1, y).
+    # Seed that cell's life byte to the expected "occupied" value
+    # (caste + 8) directly -> "occupied", no kill, her own cell refreshes to
+    # her unchanged caste.
+    x, y, caste = 20, 20, 0x12
+
+    def seed(m):
+        _simqueenb_seed(x, y, caste, 0x1234, queen_count=3)(m)
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        m.mem.wb(dg, 0x88E8 + ((x - 1) << 6) + y, (caste + 8) & 0xFF)
+
+    results = _simqueenb_run(x, y, 0x0C, 2, seed)
+    _simqueenb_assert(results, "0c-occupied-direct")
+
+
+def test_simqueenb_0c_occupied_via_blist_matches_asm():
+    # Same setup, but the life-plane byte at (x-1, y) does NOT directly
+    # match (caste + 8); instead a b-list record at that position with that
+    # caste is found via find_in_b_list -- also counts as "occupied".
+    x, y, caste = 20, 20, 0x12
+    seed = _simqueenb_seed(x, y, caste, 0x1234, queen_count=3,
+                           b_list_match_at=(x - 1, y),
+                           b_list_match_caste=(caste + 8) & 0xFF)
+    results = _simqueenb_run(x, y, 0x0C, 2, seed)
+    _simqueenb_assert(results, "0c-occupied-blist")
+
+
+def test_simqueenb_0c_clear_kills_self_matches_asm():
+    # Ahead cell (x-1, y) is genuinely clear (no direct match, no b-list hit,
+    # both defaults from the base seed) -> kills this ant and decrements
+    # pack[0x78E8].
+    x, y, caste = 20, 20, 0x12
+    results = _simqueenb_run(
+        x, y, 0x0C, 2, _simqueenb_seed(x, y, caste, 0x1234, queen_count=3))
+    _simqueenb_assert(results, "0c-clear-kills-self")
+
+
+def test_simqueenb_0c_balloon_flag_matches_asm():
+    # Same "occupied" scenario as above but with the speech-balloon flag set
+    # (simant_data_group[0x85FC] != 0) -- the (stubbed) balloon call fires;
+    # simulation state must still match byte-exact.
+    x, y, caste = 20, 20, 0x12
+
+    def seed(m):
+        _simqueenb_seed(x, y, caste, 0x1234, queen_count=3, balloon_flag=1)(m)
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        m.mem.wb(dg, 0x88E8 + ((x - 1) << 6) + y, (caste + 8) & 0xFF)
+
+    results = _simqueenb_run(x, y, 0x0C, 2, seed)
+    _simqueenb_assert(results, "0c-balloon-flag")
+
+
+def test_simqueenb_0d_queen_count_zero_places_egg_matches_asm():
+    # pack[0x78E8] <= 0 -> skip the occupancy pre-check entirely, go
+    # straight to the placement attempt. caste_sub=2 -> placement direction
+    # (caste_sub ^ 0xFC) & 7 == 6 (west) -> target (x-1, y), in bounds;
+    # throttle clear; SRand128() (seed 0 -> roll 0) <= food -> place_egg_b +
+    # dec_eat_b + the 32-bit PACK counter all fire.
+    x, y, caste = 20, 20, 0x12
+    results = _simqueenb_run(
+        x, y, 0x0D, 2, _simqueenb_seed(x, y, caste, 0x0000, queen_count=0))
+    _simqueenb_assert(results, "0d-queencount-zero-places-egg")
+
+
+def test_simqueenb_0d_ahead_clear_kills_self_matches_asm():
+    # pack[0x78E8] > 0; first occupancy pre-check direction is caste & 7 ==
+    # 2 (east, NO xor) for caste=0x12 -> checks (x+1, y), genuinely clear
+    # (default seed) -> kills this ant immediately, no placement attempt.
+    x, y, caste = 20, 20, 0x12
+    results = _simqueenb_run(
+        x, y, 0x0D, 2, _simqueenb_seed(x, y, caste, 0x1234, queen_count=5))
+    _simqueenb_assert(results, "0d-ahead-clear-kills-self")
+
+
+def test_simqueenb_0d_ahead_occupied_places_egg_matches_asm():
+    # Same pre-check, but (x+1, y)'s life byte directly matches (caste - 8)
+    # -> "occupied" -> falls through to the SAME placement attempt as the
+    # queen_count<=0 case.
+    x, y, caste = 20, 20, 0x12
+
+    def seed(m):
+        _simqueenb_seed(x, y, caste, 0x0000, queen_count=5)(m)
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        m.mem.wb(dg, 0x88E8 + ((x + 1) << 6) + y, (caste - 8) & 0xFF)
+
+    results = _simqueenb_run(x, y, 0x0D, 2, seed)
+    _simqueenb_assert(results, "0d-ahead-occupied-places-egg")
+
+
+def test_simqueenb_0d_out_of_bounds_matches_asm():
+    # y=0, caste_sub=4 -> placement direction (4 ^ 0xFC) & 7 == 0 (north) ->
+    # new_y = -1, fails in_nest_bounds -> silent no-op return (no PACK/SDG
+    # writes at all beyond the unconditional own-cell refresh).
+    x, y, caste = 20, 0, 0x12
+    results = _simqueenb_run(
+        x, y, 0x0D, 4, _simqueenb_seed(x, y, caste, 0x1234, queen_count=0))
+    _simqueenb_assert(results, "0d-out-of-bounds")
+
+
+def test_simqueenb_0d_throttle_blocks_matches_asm():
+    # pack[0x75FC] & 0x0F != 0 -> aborts after the in-bounds/target-stamp
+    # step, before ever rolling SRand128 or touching food/place_egg_b/
+    # dec_eat_b.
+    x, y, caste = 20, 20, 0x12
+    results = _simqueenb_run(
+        x, y, 0x0D, 2,
+        _simqueenb_seed(x, y, caste, 0x0000, queen_count=0, throttle=0x01))
+    _simqueenb_assert(results, "0d-throttle-blocks")
+
+
+def test_simqueenb_0d_food_roll_blocks_matches_asm():
+    # dgroup[0xAC86] == 0xFFFF (-1 signed) -> SRand128()'s 0..127 roll always
+    # exceeds it -> aborts before place_egg_b/dec_eat_b/the PACK counter.
+    x, y, caste = 20, 20, 0x12
+    results = _simqueenb_run(
+        x, y, 0x0D, 2,
+        _simqueenb_seed(x, y, caste, 0x0000, queen_count=0, ac86=0xFFFF))
+    _simqueenb_assert(results, "0d-food-roll-blocks")
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.

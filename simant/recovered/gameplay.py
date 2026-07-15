@@ -6756,6 +6756,213 @@ def queen_move_r(dgroup, simant_data_group, pack, x: int, y: int,
                        lambda d: (d - 0x18) & 0xFF, x, y, exclude_direction)
 
 
+def sim_queen_b(dgroup, simant_data_group, pack, x: int, y: int, mode: int,
+                caste_sub: int) -> None:
+    """The black queen's own per-tick `_DoNestAntB` dispatch arm: try to
+    relocate her, and otherwise decide whether to expand the colony (place
+    a new egg) or die.
+
+    Recovered from `_SimQueenB` (SIMANTW.SYM seg6:3DC2, FAR return, 668
+    bytes). FOUR args, the SAME `_DoNestAntB` dispatch signature
+    `do_dig_in_b` already established: `x=[bp+6]`, `y=[bp+8]`,
+    `mode=[bp+10]`, `caste_sub=[bp+12]` (the caller's own precomputed
+    `(mode & 0x78) >> 3`). Only `mode == 0x0C` or `== 0x0D` do anything;
+    any other value is a complete no-op (confirmed: the real ASM's own
+    two back-to-back `cmp`/`jz` gates fall straight through to the shared
+    tail with no side effects at all otherwise). Composes the already-
+    recovered `queen_move_b`, `find_in_b_list`, `in_nest_bounds`,
+    `place_egg_b`, and `dec_eat_b` — the last one reused VERBATIM for this
+    routine's own trailing hunger-tick block (`pack[0x7402]`/
+    `dgroup[0xAC82]`/`dgroup[0xAC86]`/`simant_data_group[0x8A60]`), whose
+    disassembled field accesses match `_DecEatB`'s own byte for byte,
+    confirming both independently rather than re-deriving a near-duplicate.
+    Two presentation-only calls are omitted per this project's core/
+    presentation split, same treatment as `_DoDigInB`'s own
+    `GR!_myBeginSound` omission: `SIMANT!_PictStrnDialog(0, 0x271F, 1)`
+    (mode 0x0C's starvation-death message) and
+    `ANTEDIT!_QueenBalloons(x, y, 2)` (mode 0x0C's post-move speech
+    balloon, gated on `simant_data_group[0x85FC] != 0`).
+
+    `mode == 0x0C`: rolls `_SRand64()`. A NONZERO roll (63-in-64, the
+    common case) skips `queen_move_b` ENTIRELY and falls straight to the
+    occupancy pre-check below — confirmed via the raw disassembly's own
+    `or ax,ax` / `jnz` pair, which jumps PAST the `queen_move_b` call site
+    on a nonzero roll, not just past the starvation check (an early
+    mis-reading of this session's own first draft, caught immediately by
+    a real-ASM state-diff mismatch on the SRand LFSR seed itself — the
+    two control-flow readings consume a different number of `_SRand*`
+    calls and so are trivially distinguishable). Only on an exact `0`
+    roll does `dgroup[0xAC86] == 0` (colony has no food at all) get
+    checked at all: if so, kills this ant (`simant_data_group[0x3D18 +
+    slot] = 0`, the SAME "dead slot" marker `find_in_b_list`'s own
+    docstring cites for `kill_tail_b`) and clears her own nest life-grid
+    cell to `0`; the presentation dialog fires here but is omitted; the
+    routine returns immediately (no further logic, not even the shared
+    tail below). If the roll is `0` but `dgroup[0xAC86] != 0`: calls
+    `queen_move_b(x, y, caste_sub)`; a nonzero (moved) result returns
+    immediately with NO further logic.
+
+    Either way — a nonzero roll (queen_move_b never called), or a `0`
+    roll with `queen_move_b` returning `0` (didn't move) — falls through
+    to an occupancy pre-check on the cell one step in direction
+    `(caste ^ 0xFC) & 7` from her own LIVE caste field
+    (`simant_data_group[0x3D18 + slot]`, re-read fresh here, NOT
+    `caste_sub`): if that cell already holds a byte equal
+    to `(caste + 8) & 0xFF` (a fast direct compare), OR a
+    `find_in_b_list(new_x, new_y, caste + 8)` search finds a matching
+    slot, the cell counts as "occupied" and nothing else happens. If
+    BOTH checks miss ("clear"): kills this ant the same way as the
+    starvation branch above AND decrements the queen-count
+    `pack[0x78E8]`. Either way, her own `(x, y)` nest cell is
+    unconditionally rewritten — to `0` on the "clear"/kill path, or to her
+    (unchanged) live caste byte on the "occupied" path (a harmless
+    refresh) — confirmed via the raw disassembly: `ax` still holds the
+    zeroed-or-original value from whichever branch ran. Finally, if
+    `simant_data_group[0x85FC] != 0`, the (omitted) speech-balloon fires;
+    either way the routine then returns via the shared 6-byte-stack-
+    cleanup tail (reused by the starvation branch's own dialog call).
+    NOTE: this occupancy pre-check dereferences the nest life-grid at
+    `(new_x, new_y)` with NO bounds check beforehand (unlike
+    `_DoDigInB`'s own `0..0x3F` gate) — an edge-adjacent queen can read
+    outside the nominal 64x64 window; ported as flat 16-bit-wrapped
+    address arithmetic, not artificially bounds-checked.
+
+    `mode == 0x0D`: refreshes her own `(x, y)` nest cell to her live
+    caste byte (unconditional, unlike mode 0x0C's conditional refresh).
+    If `pack[0x78E8] > 0` (signed — at least one queen tracked): runs a
+    SECOND, differently-derived occupancy pre-check one step in direction
+    `caste & 7` (no XOR this time — confirmed via the raw disassembly,
+    genuinely different from mode 0x0C's `(caste ^ 0xFC) & 7`) against an
+    expected byte of `(caste - 8) & 0xFF` (SUBTRACT, not add) via the SAME
+    direct-compare-then-`find_in_b_list`-fallback shape as mode 0x0C. If
+    that cell is "clear" (both checks miss): decrements `pack[0x78E8]`,
+    kills this ant, clears her own nest cell to `0`, and returns
+    IMMEDIATELY — no placement attempt at all, and no shared-tail stack
+    cleanup needed (this exit path never pushed anything left on the
+    stack). If the cell was "occupied" (or `pack[0x78E8] <= 0` skipped the
+    check entirely), falls through to a placement attempt using a THIRD
+    direction, `(caste_sub ^ 0xFC) & 7` (the caller-supplied arg, like
+    `_DoDigInB`'s own dig-direction — NOT a live caste re-read this time):
+    computes `(new_x, new_y)`, stamps them onto
+    `simant_data_group[0x8362]`/`[0x8364]` (the SAME "recorded dig
+    position" field pair `_PlaceBlackQueen` initializes at colony
+    founding) ONLY if `in_nest_bounds(new_x, new_y)` (an out-of-bounds
+    result is a silent no-op return, no stamp at all). A `pack[0x75FC] & 0x0F`
+    throttle gate and an `_SRand128()` roll against `dgroup[0xAC86]`
+    (food supply — a roll exceeding the supply aborts) each silently
+    return on failure. On success: calls `place_egg_b(new_x, new_y, 1)`,
+    then `dec_eat_b()` (the hunger-tick block, see above), then
+    unconditionally bumps a 32-bit PACK counter
+    (`[0x9AF8]:[0x9AFA]`) before returning via the shared tail.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    def life2(nx: int, ny: int) -> int:
+        return (LIFE_PLANE_BASE[2] + (nx << 6) + ny) & 0xFFFF
+
+    if mode not in (0x0C, 0x0D):
+        return
+
+    if mode == 0x0C:
+        seed, roll64 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0x3F)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+
+        if roll64 == 0:
+            if dgroup.rw(0xAC86) == 0:
+                slot = pack.rw(0x9B6A)
+                simant_data_group.wb(0x3D18 + slot, 0)
+                dgroup.wb(life2(x, y), 0)
+                # SIMANT!_PictStrnDialog(0, 0x271F, 1) omitted -- presentation-only
+                return
+
+            if queen_move_b(dgroup, simant_data_group, pack, x, y, caste_sub):
+                return
+
+        slot = pack.rw(0x9B6A)
+        caste = simant_data_group.rb(0x3D18 + slot)
+        direction = (caste ^ 0xFC) & 7
+        new_y = (y + sx8(simant_data_group.rb(8 + direction))) & 0xFFFF
+        new_x = (x + sx8(simant_data_group.rb(direction))) & 0xFFFF
+        expected = (caste + 8) & 0xFF
+        occupant = dgroup.rb(life2(new_x, new_y))
+        if occupant == expected:
+            ahead_clear = False
+        else:
+            found = find_in_b_list(pack, simant_data_group, new_x, new_y, expected)
+            ahead_clear = (found == 0xFFFF)
+
+        own_val = caste
+        if ahead_clear:
+            slot = pack.rw(0x9B6A)
+            simant_data_group.wb(0x3D18 + slot, 0)
+            pack.ww(0x78E8, (pack.rw(0x78E8) - 1) & 0xFFFF)
+            own_val = 0
+
+        dgroup.wb(life2(x, y), own_val & 0xFF)
+
+        if simant_data_group.rw(0x85FC) == 0:
+            return
+        # ANTEDIT!_QueenBalloons(x, y, 2) omitted -- presentation-only
+        return
+
+    # mode == 0x0D
+    slot = pack.rw(0x9B6A)
+    caste = simant_data_group.rb(0x3D18 + slot)
+    own_off = life2(x, y)
+    dgroup.wb(own_off, caste & 0xFF)
+
+    if _sx16(pack.rw(0x78E8)) > 0:
+        direction = caste & 7
+        new_y = (y + sx8(simant_data_group.rb(8 + direction))) & 0xFFFF
+        new_x = (x + sx8(simant_data_group.rb(direction))) & 0xFFFF
+        expected = (caste - 8) & 0xFF
+        occupant = dgroup.rb(life2(new_x, new_y))
+        if occupant == expected:
+            ahead_clear = False
+        else:
+            found = find_in_b_list(pack, simant_data_group, new_x, new_y, expected)
+            ahead_clear = (found == 0xFFFF)
+
+        if ahead_clear:
+            pack.ww(0x78E8, (pack.rw(0x78E8) - 1) & 0xFFFF)
+            slot = pack.rw(0x9B6A)
+            simant_data_group.wb(0x3D18 + slot, 0)
+            dgroup.wb(own_off, 0)
+            return
+
+    direction = (caste_sub ^ 0xFC) & 7
+    new_y = (y + sx8(simant_data_group.rb(8 + direction))) & 0xFFFF
+    new_x = (x + sx8(simant_data_group.rb(direction))) & 0xFFFF
+
+    if not in_nest_bounds(new_x, new_y):
+        return
+
+    simant_data_group.ww(0x8362, new_x & 0xFFFF)
+    simant_data_group.ww(0x8364, new_y & 0xFFFF)
+
+    if pack.rb(0x75FC) & 0x0F:
+        return
+
+    seed, roll128 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0x7F)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll128 > _sx16(dgroup.rw(0xAC86)):
+        return
+
+    place_egg_b(dgroup, simant_data_group, pack, new_x, new_y, 1)
+    dec_eat_b(dgroup, simant_data_group, pack)
+
+    def inc_dword(view, off: int) -> None:
+        v = (view.rw(off) | (view.rw(off + 2) << 16)) + 1
+        view.ww(off, v & 0xFFFF)
+        view.ww(off + 2, (v >> 16) & 0xFFFF)
+
+    inc_dword(pack, 0x9AF8)
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.

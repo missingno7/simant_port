@@ -1,5 +1,79 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.208) — /goal grind: _SimQueenB (seg6 behavior tier, _DoNestAntB dependency 1/3)
+- RECOVERED `sim_queen_b` (`_SimQueenB`, SIMANTW.SYM seg6:3DC2, FAR return,
+  668 bytes) — the black queen's own `_DoNestAntB` dispatch arm: try to
+  relocate her, else decide whether to expand the colony (place an egg) or
+  die. First of three `_DoNestAntB` dispatch-arm dependencies flagged by
+  the prior scoping survey (`_DoFoodInB`, `_DoDigOutB` still to go).
+  Re-verified all three addresses/sizes fresh via `symbols_in_segment(6)`
+  against a fresh `runtime.create_machine()` before starting — all matched
+  the survey exactly (`_SimQueenB` seg6:3DC2/668, `_DoFoodInB` seg6:492A/678,
+  `_DoDigOutB` seg6:4EB0/686). Disassembled via a from-scratch linear
+  disassembler (recreated `lindis_win16.py` was already sitting in the
+  scratchpad from a prior session — reused rather than rebuilt).
+- Same 4-arg `_DoNestAntB` dispatch signature `_DoDigInB` already
+  established: `x=[bp+6]`, `y=[bp+8]`, `mode=[bp+10]`, `caste_sub=[bp+12]`.
+  Only `mode == 0x0C`/`== 0x0D` do anything; any other value is a complete
+  no-op. Composes `queen_move_b`, `find_in_b_list`, `in_nest_bounds`,
+  `place_egg_b`, and — a genuine simplification this session found —
+  `dec_eat_b` reused VERBATIM for this routine's own inline trailing
+  hunger-tick block (`pack[0x7402]`/`dgroup[0xAC82]`/`dgroup[0xAC86]`/
+  `simant_data_group[0x8A60]`): its disassembled field accesses match
+  `_DecEatB`'s own byte for byte, confirming both independently.
+- Resolved 11 DGROUP pointer-globals (`0xC350`..`0xC378`) fresh via
+  `m.mem.rw(dg, off)` vs `m.seg_bases[...]` on a live machine rather than
+  trusting the prior report — all PACK/SIMANT_DATA_GROUP selectors,
+  matching already-established field names (`pack[0x9B6A]` slot,
+  `simant_data_group[0x3D18+slot]` caste, `pack[0x78E8]` queen counter,
+  `simant_data_group[0x8362]/[0x8364]` the SAME "recorded dig position"
+  pair `_PlaceBlackQueen` initializes at colony founding, `pack[0x75FC]`
+  throttle bitmask, `simant_data_group[0x8A60]` no-starve flag).
+- Two presentation-only calls omitted per the established core/
+  presentation split (stubbed in the oracle tests): `SIMANT!_PictStrnDialog`
+  (seg1:615A, mode 0x0C's starvation-death message) and
+  `ANTEDIT!_QueenBalloons` (seg3:4A44, mode 0x0C's post-move speech
+  balloon, gated on `simant_data_group[0x85FC] != 0`).
+- **A real bug caught before trusting the ASM oracle**: an early reading of
+  mode 0x0C's control flow had `queen_move_b` called whenever the
+  starvation check didn't fire (i.e. on `NOT(roll64==0 AND AC86==0)`).
+  The real ASM's `or ax,ax` / `jnz` pair actually jumps PAST the
+  `queen_move_b` call site on ANY nonzero `_SRand64()` roll (the common
+  63-in-64 case) straight to the occupancy pre-check — `queen_move_b` is
+  only ever reached on the rare `roll64==0 AND dgroup[0xAC86]!=0`
+  combination. Caught immediately by the FIRST real-ASM state-diff run: a
+  divergence in the `_SRand*` LFSR seed itself (the two control-flow
+  readings consume a different number of `_SRand*` calls), not a subtle
+  state mismatch — fixed before any test beyond the reproducer was kept,
+  exactly the "confidently-traced but wrong" mistake class this project's
+  workflow warns about. Independently double-checked by calling the real
+  `_QueenMoveB` in isolation against the recovered `queen_move_b` with the
+  post-`_SRand64` seed value — the two already agreed, proving the bug was
+  in `_SimQueenB`'s own control flow, not in the pre-existing composed
+  function.
+- Also confirmed real, non-obvious asymmetries ported verbatim rather than
+  unified: the occupancy pre-check's facing direction is `(caste ^ 0xFC) &
+  7` in mode 0x0C but plain `caste & 7` (no XOR) in mode 0x0D's own first
+  pre-check, and the "expected occupant" byte is `(caste + 8) & 0xFF` in
+  mode 0x0C but `(caste - 8) & 0xFF` in mode 0x0D — genuinely different
+  arithmetic at each site, confirmed via the raw disassembly, not assumed
+  symmetric. Mode 0x0D's SECOND (placement-direction) computation uses yet
+  a THIRD direction formula, `(caste_sub ^ 0xFC) & 7` — the caller-supplied
+  arg, not a live caste re-read, matching `_DoDigInB`'s own dig-direction
+  precedent. The occupancy pre-checks dereference the nest life-grid with
+  NO bounds check beforehand (unlike `_DoDigInB`'s explicit `0..0x3F`
+  gate) — ported as flat 16-bit-wrapped address arithmetic, not
+  artificially bounds-checked.
+- 17 new state-diff/gate tests, all green on real ASM (no-op mode
+  parametrized over 4 values, mode 0x0C: starvation/move-succeeds/
+  move-fails-then-occupancy-check/occupied-direct/occupied-via-blist/
+  clear-kills-self/balloon-flag; mode 0x0D: queen-count-zero-places-egg/
+  ahead-clear-kills-self/ahead-occupied-places-egg/out-of-bounds/
+  throttle-blocks/food-roll-blocks). Suite: simant 2057 (+17), full suite
+  green.
+- `_DoFoodInB` and `_DoDigOutB` (the other two `_DoNestAntB` dependencies
+  from this session's brief) not yet attempted — next up.
+
 ## 2026-07-15 (cont.207) — /goal grind: _DoDigInB (seg6 behavior tier, cont.)
 - RECOVERED `do_dig_in_b`/`_dig_in_b_mode_refresh` (`_DoDigInB`, SIMANTW.SYM
   seg6:4BD0, FAR return, 736 bytes) — the black nest ("B"-list) ant
