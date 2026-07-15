@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.202) — /goal grind: _PlaceDrop/_InitWater
+- RECOVERED `place_drop` (`_PlaceDrop`, SIMANTW.SYM seg5:0ACC, arg
+  slot=[bp+6]; FAR return, 170 bytes; composes the already-recovered
+  `r_rand`) and `init_water` (`_InitWater`, seg5:0B76, NO args; FAR
+  return, 20 bytes; composes `place_drop` 100 times) — a clean 2-for-1
+  from the fresh survey's "water micro-chain".
+- `place_drop` rolls a random yard cell via `_RRand` (the C-runtime
+  generator, NOT the `_SRand*` LFSR), records it into
+  `pack[0x79E6+slot]`/`[0x7A72+slot]` regardless of outcome, and — if
+  the cell is clear enough (`< 0x0E`) — stamps the water tile `0x74`
+  and washes away nearby scent at the SAME half-res (`>>1`, 64x32)
+  grid cell the alarm/scent family already established: zeroes the
+  alarm grid and its still-unrecovered companion field outright
+  (the SAME two fields `clr_arrays` already zeroes in bulk), zeroes
+  the trail-scent grids outright, but DECAYS (by `0x14`, floored at
+  `0`, not zeroed) the nest-scent grids — a genuine asymmetry
+  confirmed via the raw disassembly (two fields use `sub`+clamp, the
+  other four use a flat `mov ...,0`).
+- 4 cases (`place_drop`'s clear-cell decay and floor-to-zero
+  sub-branches, its blocked-cell no-op, and `init_water`'s full
+  100-iteration composition) — 3 of 4 hit a region-window bug (this
+  session's most common bug class) TWICE in a row: the SDG region's
+  upper bound needed widening first for a single clear-cell hit at a
+  high half-res index, then again for `init_water`'s 100 random rolls
+  eventually landing on the grid's own maximum index (`2047`) — no
+  code bug, both fixes were pure test-region widening, caught
+  immediately by the same `IndexError` pattern this bug class always
+  produces.
+- Suite: simant 1946 (+4), full suite green.
+
 ## 2026-07-15 (cont.201) — /goal grind: _IsLiftable
 - RECOVERED `is_liftable` (`_IsLiftable`, SIMANTW.SYM seg5:97CA, args
   plane=[bp+6], x=[bp+8], y=[bp+10]; FAR return, 276 bytes; composes

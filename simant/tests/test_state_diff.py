@@ -7815,3 +7815,72 @@ def test_isliftable_state_diff_matches_asm(plane, x, y, inside, map_tile,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _ISLIFTABLE_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _PlaceDrop/_InitWater (seg5:0ACC/0B76) — random water drops ----------
+# (x, y) per c_rand state precomputed offline (via the already-verified
+# r_rand): state 0x12345678 -> (105, 63), idx=1695; state 0xABCDEF01 ->
+# (60, 57), idx=988.
+_PLACEDROP_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xAE40),
+    (_PACK, 0x7900, 0x7B00),
+    (_SDG, 0x5200, 0x8300),
+]
+
+
+def _placedrop_seed(state_val, tile, nest_val):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        sdg = m.seg_bases[_SDG]
+        from simant.recovered.crt_math import RAND_STATE_OFF
+        m.mem.ww(dg, RAND_STATE_OFF, state_val & 0xFFFF)
+        m.mem.ww(dg, RAND_STATE_OFF + 2, (state_val >> 16) & 0xFFFF)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes([tile]) * span)
+        for base in (0x52D2, 0x5AD2, 0x62D2, 0x6AD2, 0x72D2, 0x7AD2):
+            for off in range(0x800):
+                m.mem.wb(sdg, base + off, 0x99)
+        for base in (0x62D2, 0x72D2):
+            m.mem.wb(sdg, base + 1695, nest_val)
+            m.mem.wb(sdg, base + 988, nest_val)
+    return seed
+
+
+@pytest.mark.parametrize("state_val,slot,tile,nest_val,label", [
+    (0x12345678, 3, 5, 0x20, "clear-cell-stamps-and-decays-nest-scent"),
+    (0x12345678, 3, 0x0E, 0x20, "blocked-cell-no-stamp-scent-untouched"),
+    (0xABCDEF01, 7, 0, 0x05, "clear-cell-nest-scent-floors-to-zero"),
+])
+def test_placedrop_state_diff_matches_asm(state_val, slot, tile, nest_val, label):
+    from simant.recovered.gameplay import place_drop
+    results = _run_and_diff_segs(
+        5, 0xACC, (slot,), lambda d, p, s: place_drop(d, p, s, slot),
+        _PLACEDROP_REGIONS, seed_fn=_placedrop_seed(state_val, tile, nest_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _PLACEDROP_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def _initwater_seed(state_val):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        sdg = m.seg_bases[_SDG]
+        from simant.recovered.crt_math import RAND_STATE_OFF
+        m.mem.ww(dg, RAND_STATE_OFF, state_val & 0xFFFF)
+        m.mem.ww(dg, RAND_STATE_OFF + 2, (state_val >> 16) & 0xFFFF)
+        span = 0x80 * 0x40
+        m.mem.load(dg, 0x28E8, bytes(span))
+        for base in (0x52D2, 0x5AD2, 0x62D2, 0x6AD2, 0x72D2, 0x7AD2):
+            for off in range(0x800):
+                m.mem.wb(sdg, base + off, 0x30)
+    return seed
+
+
+def test_initwater_state_diff_matches_asm():
+    from simant.recovered.gameplay import init_water
+    results = _run_and_diff_segs(
+        5, 0xB76, (), lambda d, p, s: init_water(d, p, s),
+        _PLACEDROP_REGIONS, seed_fn=_initwater_seed(0x12345678))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _PLACEDROP_REGIONS):
+        assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"

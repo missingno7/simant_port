@@ -9528,3 +9528,64 @@ def is_liftable(pack, simant_data_group, dgroup, plane: int, x: int, y: int) -> 
         return 1
 
     return 0
+
+
+def place_drop(dgroup, pack, simant_data_group, slot: int) -> None:
+    """Roll a random yard cell for water drop `slot`, record its
+    position, and — if the current tile is clear enough (`< 0x0E`) —
+    stamp it with the water tile `0x74` and wash away nearby scent at
+    the SAME half-res (`>>1`, 64x32) grid cell the alarm/scent family
+    already uses.
+
+    Recovered from `_PlaceDrop` (SIMANTW.SYM seg5:0ACC, arg
+    slot=[bp+6]; FAR return, 170 bytes; composes the already-recovered
+    `r_rand`). Rolls `x = _RRand(0x80)`, `y = _RRand(0x40)` (the `_RRand`
+    family's own C-runtime generator, NOT the `_SRand*` LFSR), recorded
+    into `pack[0x79E6+slot]`/`[0x7A72+slot]` regardless of whether the
+    stamp below actually happens. On a clear cell: stamps the water
+    tile, zeroes `simant_data_group[0x52D2+idx]` (the alarm grid) and
+    `[0x5AD2+idx]` (its still-unrecovered companion — the SAME two
+    fields `clr_arrays` already zeroes in bulk) and the trail-scent
+    grids `[0x6AD2+idx]`/`[0x7AD2+idx]` (`jam_scent_bt`/`rt`'s own
+    grids) outright, and DECAYS (by `0x14`, floored at `0`, rather
+    than zeroing) the nest-scent grids `[0x62D2+idx]`/`[0x72D2+idx]`
+    (`colony_smell_decay_bn`/`rn`'s own grids) — `idx = (x>>1)*32 +
+    (y>>1)`, the SAME half-resolution indexing the alarm grid's own
+    `alarm_update`/`alarm_decay` already use.
+    """
+    from .crt_math import RAND_STATE_OFF
+    from .simone import r_rand
+
+    state = dgroup.rw(RAND_STATE_OFF) | (dgroup.rw(RAND_STATE_OFF + 2) << 16)
+    state, x = r_rand(state, 0x80)
+    state, y = r_rand(state, 0x40)
+    dgroup.ww(RAND_STATE_OFF, state & 0xFFFF)
+    dgroup.ww(RAND_STATE_OFF + 2, (state >> 16) & 0xFFFF)
+
+    pack.wb(0x79E6 + slot, x & 0xFF)
+    pack.wb(0x7A72 + slot, y & 0xFF)
+
+    cell = MAP_PLANE_BASE[0] + (x << 6) + y
+    if dgroup.rb(cell) >= 0x0E:
+        return
+    dgroup.wb(cell, 0x74)
+
+    idx = ((x >> 1) << 5) + (y >> 1)
+    simant_data_group.wb(0x52D2 + idx, 0)
+    simant_data_group.wb(0x5AD2 + idx, 0)
+    nest_bn = simant_data_group.rb(0x62D2 + idx)
+    simant_data_group.wb(0x62D2 + idx, nest_bn - 0x14 if nest_bn >= 0x14 else 0)
+    simant_data_group.wb(0x6AD2 + idx, 0)
+    nest_rn = simant_data_group.rb(0x72D2 + idx)
+    simant_data_group.wb(0x72D2 + idx, nest_rn - 0x14 if nest_rn >= 0x14 else 0)
+    simant_data_group.wb(0x7AD2 + idx, 0)
+
+
+def init_water(dgroup, pack, simant_data_group) -> None:
+    """Place 100 random water drops (slots `0..99`).
+
+    Recovered from `_InitWater` (SIMANTW.SYM seg5:0B76, NO args; FAR
+    return, 20 bytes). Composes `place_drop`.
+    """
+    for slot in range(100):
+        place_drop(dgroup, pack, simant_data_group, slot)
