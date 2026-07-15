@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.197) — /goal grind: _GstrR
+- RECOVERED `gstr_r` (`_GstrR`, SIMANTW.SYM seg7:03C2, NO args; FAR
+  return, 332 bytes; calls `_SRand32`, `_SRand128`). The red colony's
+  "should we attack?" strategy pick — returns a threat-tier code
+  `1..5`, or `0` whenever it decides to fire an attack this tick.
+  Previously deferred because it fires `GR!_myBeginSong`/
+  `SIMANT!_EditMessage` — re-examined now that `_StartAttack` (cont.189)
+  already proved those two calls are presentation-only and stubbable;
+  confirmed the inlined firing sequence is byte-identical to
+  `_StartAttack`'s own body, so it composes `start_attack` instead of
+  re-deriving it (the same "compiler inlined it, we compose it"
+  pattern used throughout this session's pillar cluster).
+- The whole function runs with `DS` explicitly overridden to the raw
+  PACK selector (`5EF3h` literal, matching `_StartAttack`'s own
+  precedent), reaching DGROUP fields via explicit `SS:` prefixes
+  instead (SS == DGROUP in this small-model app) — independently
+  confirmed both segments are genuinely in play, not a transcription
+  slip. Logic: an idle "attack timer" gate (`pack[0x78DC]`, the SAME
+  field `start_attack` sets) short-circuits to `0` while cooling down;
+  otherwise a tick counter (`dgroup[0xAC88]`) selects a tier, with two
+  independent chances to fire an attack early (a threshold check when
+  the tier is fresh, and a randomized `_SRand32()`/`_SRand128()`
+  double-longshot check when the tier is stale) before falling back to
+  a plain tier-code return.
+- 10 cases (using a new test helper, `_run_and_diff_segs_with_ax`,
+  since this is the session's first multi-segment-mutating function
+  that ALSO returns a meaningful value — covering the timer gate, both
+  attack-firing paths including the exact SRand32/128 double-hit,
+  every tier boundary, and the near-miss/condition-failure returns) —
+  all green on the FIRST real-ASM run, no bugs this time.
+- Suite: simant 1878 (+10), full suite green.
+
 ## 2026-07-15 (cont.196) — /goal grind: _DoPillar (cluster complete)
 - RECOVERED `do_pillar` (`_DoPillar`, SIMANTW.SYM seg7:4CDC, NO args;
   FAR return, 1576 bytes — the largest single recovery this session;

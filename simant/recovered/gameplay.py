@@ -9115,3 +9115,101 @@ def clr_arrays(dgroup, simant_data_group) -> None:
     for off in range(0xC0):
         simant_data_group.wb(0xA4 + off, 0)
         simant_data_group.wb(0x164 + off, 0)
+
+
+def gstr_r(dgroup, pack) -> int:
+    """The red colony's "should we attack?" strategy pick. Returns a
+    threat-tier code `1..5`, or `0` whenever it decides to actually
+    fire an attack this tick (composing `start_attack`, inlined
+    byte-identically in the real ASM rather than called).
+
+    Recovered from `_GstrR` (SIMANTW.SYM seg7:03C2, NO args; FAR
+    return, 332 bytes; calls `_SRand32`, `_SRand128`). The whole
+    function runs with `DS` explicitly overridden to the raw PACK
+    selector (`5EF3h`, a literal immediate, not a pointer-global —
+    same precedent as `_StartAttack`'s own literal `ds=5EF3h`), so it
+    reaches DGROUP fields via explicit `SS:` prefixes instead (SS ==
+    DGROUP in this small-model app) — both segments are read here.
+
+    First, an idle "attack timer" gate: if `pack[0x8078] == 0` and
+    `dgroup[0xACA6] + dgroup[0xACA8] > 0x14`, seeds
+    `pack[0x8078] = 0xC8`. Then, if `pack[0x78DC]` (the SAME timer
+    `start_attack` sets) is nonzero, decrements it and returns `0`
+    immediately (no attack fires — a pending attack is already
+    cooling down).
+
+    Otherwise, `cx = dgroup[0xAC88]` selects a tier:
+    - `cx < 10`: if `(dgroup[0xAC84] >> 1) > dgroup[0xAC82] > 0` and
+      `pack[0x78E8] > 0`, fires `start_attack` and returns `0`.
+      Otherwise falls through to the tier checks below (so `cx < 10`
+      without a fired attack still returns `5`, since `cx < 30`).
+    - `cx < 30`: returns `5`.
+    - `cx < 50`: returns `4`.
+    - Otherwise (`cx >= 50`): `di = dgroup[0xAC84]`. Returns `3` if
+      `pack[0x7A56] < di`, or `2` if `pack[0x7A56] < di*2` (the SHL
+      truncates to 16 bits, same as the raw ASM register op, before
+      the signed compare). Otherwise, if `di > 100` and
+      `dgroup[0xAC82] > 0` and `pack[0x78E8] > 0` and
+      `(di // 3, C-style truncating) > dgroup[0xAC82]`: fires
+      `start_attack`, returns `0`. Otherwise (or whenever `di <= 100`):
+      rolls `_SRand32()` and `_SRand128()` (each `== 0` is a
+      long-odds hit) — if `_SRand32() == 0` AND `dgroup[0xAC84] > 20`
+      AND `dgroup[0xAC82] < dgroup[0xAC84]` AND `_SRand128() == 0`:
+      fires `start_attack`, returns `0`. Otherwise returns `1`.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def tdiv(v, d):
+        q = abs(v) // d
+        return -q if v < 0 else q
+
+    if _sx16(pack.rw(0x8078)) == 0:
+        if _sx16(dgroup.rw(0xACA6)) + _sx16(dgroup.rw(0xACA8)) > 0x14:
+            pack.ww(0x8078, 0xC8)
+
+    timer = _sx16(pack.rw(0x78DC))
+    if timer != 0:
+        pack.ww(0x78DC, (timer - 1) & 0xFFFF)
+        return 0
+
+    cx = _sx16(dgroup.rw(0xAC88))
+    if cx < 10:
+        ac84 = _sx16(dgroup.rw(0xAC84))
+        ac82 = _sx16(dgroup.rw(0xAC82))
+        if (ac84 >> 1) > ac82 and ac82 > 0 and _sx16(pack.rw(0x78E8)) > 0:
+            start_attack(dgroup, pack)
+            return 0
+
+    if cx < 30:
+        return 5
+    if cx < 50:
+        return 4
+
+    di_raw = dgroup.rw(0xAC84)
+    di = _sx16(di_raw)
+    a7a56 = _sx16(pack.rw(0x7A56))
+    if a7a56 < di:
+        return 3
+    if a7a56 < _sx16((di_raw << 1) & 0xFFFF):
+        return 2
+
+    if di > 100:
+        ac82 = _sx16(dgroup.rw(0xAC82))
+        if ac82 > 0 and _sx16(pack.rw(0x78E8)) > 0 and tdiv(di, 3) > ac82:
+            start_attack(dgroup, pack)
+            return 0
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll32 = srand_pow2(seed, 31)
+    if roll32 == 0:
+        ac84 = _sx16(dgroup.rw(0xAC84))
+        ac82 = _sx16(dgroup.rw(0xAC82))
+        if ac84 > 20 and ac82 < ac84:
+            seed, roll128 = srand_pow2(seed, 127)
+            dgroup.ww(SRAND_SEED_OFF, seed)
+            if roll128 == 0:
+                start_attack(dgroup, pack)
+                return 0
+            return 1
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    return 1

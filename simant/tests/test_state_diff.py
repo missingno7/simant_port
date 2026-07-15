@@ -194,6 +194,52 @@ def _run_and_get_ax(seg, off, args, *, seed_fn=None, near=False):
     return s.ax, m
 
 
+def _run_and_diff_segs_with_ax(seg, off, args, apply_recovered, regions, *,
+                               seed_fn=None, stubs=()):
+    """Like `_run_and_diff_segs`, but for a routine that BOTH mutates
+    multiple segments AND returns a meaningful value in AX (e.g.
+    `gstr_r`'s tier code). `apply_recovered` is called the same way and
+    must return the recovered function's own return value. Returns
+    ((asm_ax, rec_ax), [(label, asm_window, rec_window), ...])."""
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    s = m.cpu.s
+    dg = m.seg_bases[hooks.DG_SEG_INDEX]
+    s.ds = dg
+    if seed_fn is not None:
+        seed_fn(m)
+    for stub_seg, stub_off in stubs:
+        m.cpu.replacement_hooks[(m.seg_bases[stub_seg], stub_off)] = _far_return_stub
+
+    befores = [bytes(m.mem.block(m.seg_bases[si], lo, hi - lo))
+              for si, lo, hi in regions]
+
+    s.sp = 0xFF00
+    s.cs, s.ip = m.seg_bases[seg], off
+    sp = s.sp
+    for v in (*reversed(args), SENT_CS, SENT_IP):
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(200_000):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError(f"ASM {seg}:{off:#06x} did not return")
+    asm_ax = s.ax
+    asm_afters = [bytes(m.mem.block(m.seg_bases[si], lo, hi - lo))
+                  for si, lo, hi in regions]
+
+    recs = [bytearray(b) for b in befores]
+    views = [ByteBackend(rec, -lo) for rec, (_si, lo, _hi) in zip(recs, regions)]
+    rec_ax = apply_recovered(*views)
+
+    return ((asm_ax & 0xFFFF, rec_ax & 0xFFFF),
+            [(f"seg{si}[{lo:#06x}:{hi:#06x}]", asm_after, bytes(rec))
+             for (si, lo, hi), asm_after, rec in zip(regions, asm_afters, recs)])
+
+
 # ---- _SetMap (seg5:617A) — one map-cell write ------------------------------
 # _SetMap's screen redraw (_ZapEuMapAt, seg3:0) is stubbed; only the map byte
 # changes.
@@ -7475,4 +7521,59 @@ def test_dopillar_state_diff_matches_asm(inside, active, mode, px, py, counter,
         seed_fn=_dopillar_seed(0x1234, inside, active, mode, px, py, counter, occupied))
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _DOPILLAR_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _GstrR (seg7:03C2) — red colony "should we attack?" strategy pick ----
+# seed 0x20 gives BOTH SRand32()==0 and SRand128()==0 (a hit); seed 0x10
+# gives SRand32()==0 but SRand128()!=0 (a near-miss) -- both precomputed
+# offline via the already-verified srand_pow2.
+_GSTRR_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC00, 0xCC00),
+    (_PACK, 0x7800, 0x8100),
+]
+_GSTRR_STUBS = [(2, 0x858E), (1, 0x92C0)]   # GR!_myBeginSong, SIMANT!_EditMessage
+
+
+def _gstrr_seed(seed_val, timer, aca6, aca8, ac88, ac84, ac82, a78e8, a7a56, a8078):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        m.mem.ww(pack, 0x78DC, timer & 0xFFFF)
+        m.mem.ww(dg, 0xACA6, aca6 & 0xFFFF)
+        m.mem.ww(dg, 0xACA8, aca8 & 0xFFFF)
+        m.mem.ww(dg, 0xAC88, ac88 & 0xFFFF)
+        m.mem.ww(dg, 0xAC84, ac84 & 0xFFFF)
+        m.mem.ww(dg, 0xAC82, ac82 & 0xFFFF)
+        m.mem.ww(pack, 0x78E8, a78e8 & 0xFFFF)
+        m.mem.ww(pack, 0x7A56, a7a56 & 0xFFFF)
+        m.mem.ww(pack, 0x8078, a8078 & 0xFFFF)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "timer,aca6,aca8,ac88,ac84,ac82,a78e8,a7a56,a8078,seed_val,expect_ax,label", [
+    (5, 0, 0, 0, 0, 0, 0, 0, 0, 0x1234, 0, "timer-nonzero-decrements-returns-0"),
+    (0, 15, 10, 5, 100, 10, 1, 0, 0, 0x1234, 0, "cx-lt-10-attack-conditions-met-fires"),
+    (0, 0, 0, 5, 0, 0, 0, 0, 0, 0x1234, 5, "cx-lt-10-conditions-fail-falls-to-tier5"),
+    (0, 0, 0, 35, 0, 0, 0, 0, 0, 0x1234, 4, "cx-in-30-49-returns-4"),
+    (0, 0, 0, 60, 50, 0, 0, 10, 0, 0x1234, 3, "cx-ge-50-a7a56-below-di-returns-3"),
+    (0, 0, 0, 60, 50, 0, 0, 60, 0, 0x1234, 2, "cx-ge-50-a7a56-below-2di-returns-2"),
+    (0, 0, 0, 60, 150, 10, 1, 1000, 0, 0x1234, 0, "cx-ge-50-di-over-100-attack-fires"),
+    (0, 0, 0, 60, 50, 5, 0, 1000, 0, 0x20, 0, "cx-ge-50-srand32-and-srand128-both-hit-fires"),
+    (0, 0, 0, 60, 50, 5, 0, 1000, 0, 0x10, 1, "cx-ge-50-srand32-hit-srand128-miss-returns-1"),
+    (0, 0, 0, 60, 50, 60, 0, 1000, 0, 0x10, 1, "cx-ge-50-ac82-not-below-ac84-returns-1"),
+])
+def test_gstrr_state_diff_matches_asm(timer, aca6, aca8, ac88, ac84, ac82, a78e8,
+                                      a7a56, a8078, seed_val, expect_ax, label):
+    from simant.recovered.gameplay import gstr_r
+    (asm_ax, rec_ax), results = _run_and_diff_segs_with_ax(
+        7, 0x03C2, (), lambda d, p: gstr_r(d, p),
+        _GSTRR_REGIONS,
+        seed_fn=_gstrr_seed(seed_val, timer, aca6, aca8, ac88, ac84, ac82,
+                            a78e8, a7a56, a8078),
+        stubs=_GSTRR_STUBS)
+    assert asm_ax == rec_ax == expect_ax, f"{label}: asm_ax={asm_ax:#x} rec_ax={rec_ax:#x} expect={expect_ax:#x}"
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GSTRR_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
