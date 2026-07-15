@@ -3893,6 +3893,153 @@ def test_dorecruitant_dotroph_gate_raises():
         do_recruit_ant(dg_view, sdg_view, pack_view, 0)
 
 
+# ---- _DoAttackAnt (seg6:0x2A40) — yard ant enemy-nest invasion tick -------
+# Composes is_valid_a, go_in_nest, get_nest_dir, is_yellow_ant,
+# find_in_a_list, get_winner, alarm_here2, _forage_jitter. One gated branch
+# (_YellowFight) deliberately not recovered. Direction follows the ENEMY
+# colony's own NEST scent grid (colony bit flipped), so the seed writes the
+# OPPOSITE grid from the acting ant's own caste.
+_DOATTACKANT_REGIONS = _DORANDANTA_REGIONS
+
+
+def _doattackant_seed(x, y, caste, dest_tile, threshold, occupant,
+                      at_entrance=False, sub_flag=0, sub_table_val=0,
+                      direction=2):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4, x)
+        m.mem.wb(sdg, 0x278E, y)
+        m.mem.wb(sdg, 0x2F62, caste)
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.wb(pack, 0x9B6E, 0)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        for i in range(64):
+            m.mem.wb(sdg, 0x24 + i, i % 8)
+        # zero the whole per-caste_sub substitution-flag table (0x74..0x74+
+        # 0x28) then optionally set THIS caste_sub's own entry
+        for i in range(0x14):
+            m.mem.ww(sdg, 0x74 + 2 * i, 0)
+        caste_sub = (caste & 0x78) >> 3
+        m.mem.ww(sdg, 0x74 + 2 * caste_sub, sub_flag)
+        m.mem.wb(sdg, 0x94 + caste_sub, sub_table_val)
+        # the EFFECTIVE (possibly-substituted) caste picks which colony's
+        # NEST grid get_nest_dir(..., colony_flag=effective^0x80) reads
+        eff_sub_low = ((((sub_table_val - 0x100 if sub_table_val & 0x80
+                          else sub_table_val) << 3) & 0xFF)
+                      if sub_flag == 1 else (caste & 0x78))
+        effective = (eff_sub_low | (caste & 0x87)) & 0xFF if sub_flag == 1 else caste
+        colony_flag = effective ^ 0x80
+        nest_base = 0x72D2 if (colony_flag & 0x80) else 0x62D2
+        hx, hy = x >> 1, y >> 1
+        m.mem.data[sdg + nest_base:sdg + nest_base + 0x800] = bytes(0x800)
+        m.mem.wb(sdg, nest_base + (hx << 5) + hy, 10)
+        nhx = (hx + GET_BEST_DIR_DX[direction]) & 0x3F
+        nhy = (hy + GET_BEST_DIR_DY[direction]) & 0x1F
+        m.mem.wb(sdg, nest_base + (nhx << 5) + nhy, 50)
+        own_tile = (0x80 if False else 0x50) if at_entrance else 0x00
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, own_tile)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F and (nx, ny) != (x, y):
+                    m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+                    m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, occupant)
+        m.mem.ww(pack, 0x7604, threshold)
+        m.mem.wb(dg, 0xCE98, 0)
+        m.mem.wb(sdg, 0x8A5C, 0)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,caste,dest_tile,threshold,occupant,at_entrance,sub_flag,"
+    "sub_table_val,label", [
+    (20, 25, 0x03, 0x00, 0, 0, True, 0, 0, "at-entrance"),
+    (20, 25, 0x12, 0x10, 0x30, 0x00, False, 0, 0, "move-empty-black-no-sub"),
+    (20, 25, 0x92, 0x10, 0x30, 0x00, False, 0, 0, "move-empty-red-no-sub"),
+    (20, 25, 0x12, 0x10, 0x30, 0x00, False, 1, 3, "move-empty-substituted"),
+    (20, 25, 0x12, 0x50, 0x05, 0x00, False, 0, 0, "crowded-jitter"),
+    (20, 25, 0x12, 0x10, 0x30, 0x13, False, 0, 0, "occupied-same-colony"),
+    (1, 1, 0x12, 0x10, 0x30, 0x00, False, 0, 0, "near-origin-edge"),
+])
+def test_doattackant_state_diff_matches_asm(x, y, caste, dest_tile,
+                                            threshold, occupant, at_entrance,
+                                            sub_flag, sub_table_val, label):
+    from simant.recovered.gameplay import do_attack_ant
+    results = _run_and_diff_segs(
+        6, 0x2A40, (0,),
+        lambda d, s, p: do_attack_ant(d, s, p, 0),
+        _DOATTACKANT_REGIONS, near=True,
+        seed_fn=_doattackant_seed(x, y, caste, dest_tile, threshold, occupant,
+                                  at_entrance=at_entrance, sub_flag=sub_flag,
+                                  sub_table_val=sub_table_val))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOATTACKANT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_doattackant_fight_found_matches_asm():
+    from simant.recovered.gameplay import do_attack_ant
+    x, y, caste = 20, 25, 0x12
+    direction = 2
+    new_x = x + GET_BEST_DIR_DX[direction]
+    new_y = y + GET_BEST_DIR_DY[direction]
+
+    def seed(m):
+        _doattackant_seed(x, y, caste, 0x10, 0x30, 0x93)(m)
+        sdg, pack = m.seg_bases[_SDG], m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x80F0, 2)
+        m.mem.wb(sdg, 0x23A4 + 1, new_x & 0xFF)
+        m.mem.wb(sdg, 0x278E + 1, new_y & 0xFF)
+        m.mem.wb(sdg, 0x2F62 + 1, 0x93)
+
+    results = _run_and_diff_segs(
+        6, 0x2A40, (0,), lambda d, s, p: do_attack_ant(d, s, p, 0),
+        _DOATTACKANT_REGIONS, near=True, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOATTACKANT_REGIONS):
+        assert asm_after == rec_after, f"fight-found {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_doattackant_yellowfight_gate_raises():
+    from simant.recovered.gameplay import do_attack_ant
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, caste = 20, 25, 0x12
+    direction = 2
+    new_x, new_y = x + GET_BEST_DIR_DX[direction], y + GET_BEST_DIR_DY[direction]
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(64):
+        sdg[0x24 + i] = i % 8
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    hx, hy = x >> 1, y >> 1
+    nhx = (hx + GET_BEST_DIR_DX[direction]) & 0x3F
+    nhy = (hy + GET_BEST_DIR_DY[direction]) & 0x1F
+    sdg[0x72D2 + (hx << 5) + hy] = 10     # enemy (red) nest grid -- caste is black
+    sdg[0x72D2 + (nhx << 5) + nhy] = 50
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, x)
+    sdg_view.wb(0x278E, y)
+    sdg_view.wb(0x2F62, caste)
+    dg_view.wb(0x28E8 + (x << 6) + y, 0x00)
+    dg_view.wb(0x28E8 + (new_x << 6) + new_y, 0x10)
+    dg_view.wb(0x68E8 + (new_x << 6) + new_y, 0xFE)     # yellow ant occupant
+    pack_view.ww(0x7604, 0x30)
+    dg_view.wb(0xCE98, 0x80)      # (caste ^ 0x80) & 0x80 -> nonzero -> gate fires
+    with pytest.raises(NotImplementedError):
+        do_attack_ant(dg_view, sdg_view, pack_view, 0)
+
+
 # ---- _DoDigInB (seg6:4BD0) — black nest ant dig-forward tick -------------
 # Composes get_new_mode_b, get_enter_dir_b, is_it_dirt, dig_tile_them_b,
 # is_yellow_ant, find_in_b_list, get_out_b, get_winner, _try_eat_food,

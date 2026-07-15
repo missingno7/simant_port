@@ -1,5 +1,42 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.217) — /goal grind: _DoAttackAnt (A-list "_DoAntSimA" dependency batch, 7/8)
+- RECOVERED `do_attack_ant` (`_DoAttackAnt`, seg6:0x2A40, NEAR return, 640
+  bytes) — a yard ant invading the ENEMY colony: heads toward the
+  OPPOSITE colony's own NEST scent (`get_nest_dir` called with the colony
+  bit FLIPPED — `colony_flag = effective_caste ^ 0x80`, independently
+  confirmed via the raw disassembly's own `xor al, 80h` right before the
+  push). Composed entirely from already-recovered leaves.
+- A genuinely NEW mechanic this routine alone has: a per-caste-sub "mode
+  substitution" front, indexing two SIMANT_DATA_GROUP tables with no
+  prior codebase precedent (`[0x74 + caste_sub*2]` a per-sub flag,
+  `[0x94 + caste_sub]` a per-sub signed-byte replacement) — a flag of
+  exactly `1` replaces the caste's own middle "sub" nibble with the
+  table's (sign-extended, shifted back into position) value, preserving
+  the colony bit and low-3 direction bits. This EFFECTIVE caste (not a
+  fresh field re-read) is what every subsequent `high_bits`/`caste_low3`/
+  colony-bit check in the routine uses — described purely mechanically
+  in the docstring since its broader game-design purpose (what game
+  event sets that flag) is out of this session's scope.
+- One independently-confirmed asymmetry within the SAME routine: the
+  fight branch's `acting_caste` (fed to `get_winner`) is a FRESH re-read
+  of `simant_data_group[0x2F62+slot]`, NOT the effective (possibly-
+  substituted) caste the yellow-fight/same-colony checks just used —
+  matching `do_to_nest_ant`'s own established fresh-re-read precedent at
+  exactly this site, verified independently rather than assumed.
+- Unlike `_DoRecruitAnt`, this routine's crowd-jitter and same-colony
+  jitter share the IDENTICAL mode-table-based `_forage_jitter` landing
+  code (confirmed via the raw disassembly's own shared jump target) — no
+  trophallaxis gate at all (no `pack[0x9AF2]` read, no `_DoTroph` call).
+- Tests: 9 new cases (at-entrance, move-empty black/red, a substituted-
+  caste move, crowded-jitter, occupied-same-colony, edge) plus dedicated
+  fight-found and yellowfight-gate tests — all passed on the first run.
+  Full suite: 2193 passed (was 2184).
+- Commit: (pending).
+- Still missing (1/8): `_DoRedInitiator` — the last one, a genuinely
+  different shape (calls `SIMTWO!_RecruitRed`/`_UnRecruitRed`, not the
+  shared A-list move/fight tail every other routine in this batch has).
+
 ## 2026-07-15 (cont.216) — /goal grind: _DoRecruitAnt (A-list "_DoAntSimA" dependency batch, 6/8)
 - RECOVERED `do_recruit_ant` (`_DoRecruitAnt`, seg6:0x22A8, NEAR return,
   722 bytes) — a defending/recruited yard ant: flees via `get_alarm_dir`
