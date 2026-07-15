@@ -1,5 +1,20 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.203) — /goal grind: _AddWater
+- RECOVERED `add_water` (`_AddWater`, SIMANTW.SYM seg5:0B8A, arg
+  col=[bp+6]; FAR return, 202 bytes; composes the already-recovered
+  `drown_b_list`/`drown_r_list`; far-calls `ANTEDIT!_ZapEuMapAt` twice
+  per row — screen-redraw invalidation, presentation-only, stubbed in
+  the oracle test rather than modeled). Floods one full nest column
+  `y=col`: marks any black/red ants standing there as drowning, then
+  erodes every cell's tile on BOTH nest planes 2 and 3 across the
+  whole `x=0..63` range — a tile `< 0x20` becomes the fixed `0x4E`;
+  otherwise `tile + 0x2F` (truncated to a byte).
+- 4 cases (erosion below/above the `0x20` threshold, drowning marks
+  on both colonies, and the column-index boundaries `0`/`0x3F`) — all
+  green on the first real-ASM run.
+- Suite: simant 1950 (+4), full suite green.
+
 ## 2026-07-15 (cont.202) — /goal grind: _PlaceDrop/_InitWater
 - RECOVERED `place_drop` (`_PlaceDrop`, SIMANTW.SYM seg5:0ACC, arg
   slot=[bp+6]; FAR return, 170 bytes; composes the already-recovered

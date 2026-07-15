@@ -7884,3 +7884,53 @@ def test_initwater_state_diff_matches_asm():
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _PLACEDROP_REGIONS):
         assert asm_after == rec_after, f"{rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _AddWater (seg5:0B8A) — flood one nest column ------------------------
+_ADDWATER_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x4800, 0x6900),
+    (_PACK, 0x7200, 0x9D00),
+    (_SDG, 0x2300, 0x4B00),
+]
+_ADDWATER_STUBS = [(3, 0x0000)]   # ANTEDIT!_ZapEuMapAt
+
+
+def _addwater_seed(col, tile2_at, tile3_at, b_slots, r_slots):
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        sdg = m.seg_bases[_SDG]
+        pack = m.seg_bases[_PACK]
+        for x in range(0x40):
+            m.mem.wb(dg, 0x48E8 + (x << 6) + col, tile2_at.get(x, 0x10))
+            m.mem.wb(dg, 0x58E8 + (x << 6) + col, tile3_at.get(x, 0x10))
+        m.mem.ww(pack, 0x99D4, len(b_slots))
+        for i, (sx, caste) in enumerate(b_slots):
+            m.mem.wb(sdg, 0x392C + i, sx)
+            m.mem.wb(sdg, 0x3D18 + i, caste)
+            m.mem.wb(sdg, 0x3B22 + i, 0)
+        m.mem.ww(pack, 0x72CC, len(r_slots))
+        for i, (sx, caste) in enumerate(r_slots):
+            m.mem.wb(sdg, 0x42FA + i, sx)
+            m.mem.wb(sdg, 0x46E6 + i, caste)
+            m.mem.wb(sdg, 0x44F0 + i, 0)
+    return seed
+
+
+@pytest.mark.parametrize("col,tile2_at,tile3_at,b_slots,r_slots,label", [
+    (5, {3: 0x10, 20: 0x30}, {3: 0x10, 20: 0x30}, [], [],
+     "erodes-both-below-and-above-threshold"),
+    (5, {}, {}, [(5, 0x08)], [(5, 0x08)], "marks-both-colonies-drowning"),
+    (0, {}, {}, [], [], "column-zero-boundary"),
+    (0x3F, {}, {}, [], [], "column-max-boundary"),
+])
+def test_addwater_state_diff_matches_asm(col, tile2_at, tile3_at, b_slots,
+                                         r_slots, label):
+    from simant.recovered.gameplay import add_water
+    results = _run_and_diff_segs(
+        5, 0xB8A, (col,), lambda d, p, s: add_water(d, p, s, col),
+        _ADDWATER_REGIONS,
+        seed_fn=_addwater_seed(col, tile2_at, tile3_at, b_slots, r_slots),
+        stubs=_ADDWATER_STUBS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _ADDWATER_REGIONS):
+        assert asm_after == rec_after, f"col={col} {label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

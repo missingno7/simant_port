@@ -9589,3 +9589,29 @@ def init_water(dgroup, pack, simant_data_group) -> None:
     """
     for slot in range(100):
         place_drop(dgroup, pack, simant_data_group, slot)
+
+
+def add_water(dgroup, pack, simant_data_group, col: int) -> None:
+    """Flood one full nest column `y=col`: mark any black/red ants
+    standing there as drowning, then erode every cell's tile on BOTH
+    nest planes 2 and 3 (`x` ranging the whole `0..63` column).
+
+    Recovered from `_AddWater` (SIMANTW.SYM seg5:0B8A, arg col=[bp+6];
+    FAR return, 202 bytes; composes the already-recovered
+    `drown_b_list`/`drown_r_list`; far-calls `ANTEDIT!_ZapEuMapAt`
+    twice per row (screen-redraw invalidation, presentation-only —
+    stubbed in the oracle test rather than modeled, same convention as
+    `_StartAttack`'s `GR!` calls)). For each `x` in `0..63`: a tile
+    `< 0x20` becomes the fixed `0x4E`; otherwise it becomes
+    `tile + 0x2F` (an "erosion" transform — both nest planes get the
+    SAME formula independently applied).
+    """
+    drown_b_list(pack, simant_data_group, col)
+    drown_r_list(pack, simant_data_group, col)
+
+    for x in range(0x40):
+        for plane in (2, 3):
+            cell = MAP_PLANE_BASE[plane] + (x << 6) + col
+            tile = dgroup.rb(cell)
+            new_tile = 0x4E if tile < 0x20 else (tile + 0x2F) & 0xFF
+            dgroup.wb(cell, new_tile)
