@@ -7577,3 +7577,78 @@ def test_gstrr_state_diff_matches_asm(timer, aca6, aca8, ac88, ac84, ac82, a78e8
     assert asm_ax == rec_ax == expect_ax, f"{label}: asm_ax={asm_ax:#x} rec_ax={rec_ax:#x} expect={expect_ax:#x}"
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(results, _GSTRR_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _GetStrategy (seg7:0000) — top-level per-tick strategy update --------
+# Wide regions since this composes gstr_r (which may itself fire
+# start_attack) plus set_caste_prod/set_mode_prod (each already verified
+# standalone) -- their own fields are seeded with fixed, non-degenerate
+# values common to every case, so this test only needs to prove the
+# COMPOSITION (right calls, right args), not re-verify their own logic.
+_GETSTRATEGY_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xAC00, 0xCF00),
+    (_PACK, 0x7200, 0xA000),
+    (_SDG, 0x8600, 0x8A60),
+]
+_GETSTRATEGY_STUBS = [(2, 0x858E), (1, 0x92C0)]   # GR!_myBeginSong, SIMANT!_EditMessage
+
+
+def _getstrategy_seed(ce80, bd2, ac7c, ac7e, cd88, ce7e, ac86, ac84, ac82, a79dc, a72c8):
+    def seed(m):
+        dg, pack, sdg = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_PACK],
+                          m.seg_bases[_SDG])
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(dg, 0xCE80, ce80 & 0xFFFF)
+        m.mem.ww(pack, 0x9BD2, bd2 & 0xFFFF)
+        m.mem.ww(dg, 0xAC7C, ac7c & 0xFFFF)
+        m.mem.ww(dg, 0xAC7E, ac7e & 0xFFFF)
+        m.mem.ww(dg, 0xCD88, cd88 & 0xFFFF)
+        m.mem.ww(dg, 0xCE7E, ce7e & 0xFFFF)
+        m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
+        m.mem.ww(dg, 0xAC84, ac84 & 0xFFFF)
+        m.mem.ww(dg, 0xAC82, ac82 & 0xFFFF)
+        m.mem.ww(pack, 0x79DC, a79dc & 0xFFFF)
+        m.mem.ww(pack, 0x72C8, a72c8 & 0xFFFF)
+        # _GstrR's own fields, fixed to a simple non-attacking outcome
+        # (already independently verified -- this test only proves
+        # get_strategy composes it, not that gstr_r itself is right).
+        m.mem.ww(pack, 0x78DC, 0)
+        m.mem.ww(dg, 0xAC88, 100)
+        m.mem.ww(pack, 0x7A56, 0)
+        m.mem.ww(pack, 0x8078, 1)
+        # _SetCasteProd/_SetModeProd's own fields, a fixed valid state.
+        for i, v in enumerate((10, 20, 30, 40)):
+            m.mem.ww(dg, 0xAC96 + i * 2, v)
+        for i, v in enumerate((40, 30, 20, 10)):
+            m.mem.ww(sdg, 0x8622 + i * 2, v)
+        for i, v in enumerate((0x11, 0x22, 0x33, 0x44)):
+            m.mem.ww(sdg, 0x89AE + i * 2, v)
+        for i, v in enumerate((10, 20, 30)):
+            m.mem.ww(pack, 0x9E70 + i * 2, v)
+        for i, v in enumerate((0x1000, 0x4000, 0x8000)):
+            m.mem.ww(pack, 0x9C74 + i * 2, v)
+        for i, v in enumerate((0x55, 0x66, 0x77)):
+            m.mem.ww(sdg, 0x89B6 + i * 2, v)
+    return seed
+
+
+@pytest.mark.parametrize("ce80,bd2,ac7c,ac7e,cd88,ce7e,ac86,ac84,ac82,a79dc,a72c8,label", [
+    (0, 0, 0, 0, 5, 5, 5, 0, 0, 0, 0, "ce80-not-1-skips-jitter-block"),
+    (1, 0, 0, 0, 5, 5, 5, 0, 0, 0, 0, "ce80-1-bd2-zero-skips-getdis"),
+    (1, 1, 0, 0, 5, 5, 5, 0, 0, 0, 0, "ce80-1-bd2-nonzero-close-sets-danger"),
+    (1, 1, 1000, 1000, 5, 5, 5, 0, 0, 0, 0, "ce80-1-bd2-nonzero-far-no-danger"),
+    (0, 0, 0, 0, 5, 5, 60, 10, 5, 1, 20, "ac86-ge-50-strategy-3"),
+    (0, 0, 0, 0, 5, 5, 60, 10, 200, 1, 20, "ac86-ge-50-di-over-100-strategy-0"),
+])
+def test_getstrategy_state_diff_matches_asm(ce80, bd2, ac7c, ac7e, cd88, ce7e,
+                                            ac86, ac84, ac82, a79dc, a72c8, label):
+    from simant.recovered.gameplay import get_strategy
+    results = _run_and_diff_segs(
+        7, 0x0000, (), lambda d, p, s: get_strategy(d, s, p),
+        _GETSTRATEGY_REGIONS,
+        seed_fn=_getstrategy_seed(ce80, bd2, ac7c, ac7e, cd88, ce7e, ac86, ac84,
+                                  ac82, a79dc, a72c8),
+        stubs=_GETSTRATEGY_STUBS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _GETSTRATEGY_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

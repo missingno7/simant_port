@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.198) — /goal grind: _GetStrategy
+- RECOVERED `get_strategy` (`_GetStrategy`, SIMANTW.SYM seg7:0000, NO
+  args; FAR return, 460 bytes; calls `_SRand1(5)` x2, `_GetDis`,
+  near-calls `_GstrR`/`_SetCasteProd`/`_SetModeProd`). The top-level
+  per-tick strategy update — this closes out the `_GstrR`/
+  `_GetStrategy` pair the survey flagged as newly tractable.
+- Composes ALL THREE near-callees plus `get_dis`. Structure: zeroes a
+  "danger nearby" flag (`pack[0x72EC]`); if `dgroup[0xCE80]==1` (the
+  SAME world-state "mode" flag `is_it_yellow` reads), jitters two
+  marker fields via `_SRand1(5)`, clamps to the yard bounds, and
+  stores them — genuinely CONFIRMED dead-but-executed work for
+  `pack[0x9FE4]` specifically, since it's unconditionally overwritten
+  moments later regardless of this branch (kept faithfully because the
+  `_SRand1` draws it consumes are observable via the shared LFSR
+  seed); if `pack[0x9BD2]` is nonzero, composes `get_dis` and sets the
+  danger flag on a close threat. Then mirrors `gstr_r`'s own tier
+  logic but over swapped fields (`dgroup[0xAC86]` not `[0xAC88]`, no
+  `_SRand32`/`_SRand128` longshot, a plain stored code instead of a
+  fired attack) into `pack[0x9B8A]`. Finally composes `gstr_r` itself
+  (storing ITS result into `pack[0x7690]`) then `set_caste_prod`/
+  `set_mode_prod`.
+- 6 cases (the `dgroup[0xCE80]` gate both ways, the `pack[0x9BD2]`
+  danger-distance gate both ways, and two `dgroup[0xAC86]>=50` tier
+  outcomes) — all green on the SECOND real-ASM run (two region-window
+  bugs caught and fixed on the first: `0xCE80`/`0xCE7E` above the
+  DGROUP region's upper bound, then `0x9FE4` above the PACK region's —
+  this session's most common bug class, now recurring after several
+  clean runs).
+- Suite: simant 1884 (+6), full suite green.
+
 ## 2026-07-15 (cont.197) — /goal grind: _GstrR
 - RECOVERED `gstr_r` (`_GstrR`, SIMANTW.SYM seg7:03C2, NO args; FAR
   return, 332 bytes; calls `_SRand32`, `_SRand128`). The red colony's

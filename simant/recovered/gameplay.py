@@ -9213,3 +9213,113 @@ def gstr_r(dgroup, pack) -> int:
             return 1
     dgroup.ww(SRAND_SEED_OFF, seed)
     return 1
+
+
+def get_strategy(dgroup, simant_data_group, pack) -> None:
+    """Per-tick top-level strategy update: jitters a "last known threat"
+    marker, sets a nearby-danger flag, picks the black colony's own
+    threat-tier code, and composes `gstr_r` (the red colony's own pick,
+    which may itself fire an attack) plus `set_caste_prod`/
+    `set_mode_prod`.
+
+    Recovered from `_GetStrategy` (SIMANTW.SYM seg7:0000, NO args; FAR
+    return, 460 bytes; calls `_SRand1(5)` x2, `_GetDis`, near-calls
+    `_GstrR`/`_SetCasteProd`/`_SetModeProd`). Zeroes `pack[0x72EC]`
+    (a "danger nearby" flag). If `dgroup[0xCE80] == 1` (the SAME
+    world-state "mode" flag `is_it_yellow` reads): jitters two marker
+    fields via `_SRand1(5) + dgroup[0xCD88 or 0xCE7E] - 2`, clamps them
+    to the yard bounds (`0..0x7F`, `0..0x3F`), and stores them into
+    `pack[0x9FE4]`/`[0x9FEA]` — genuinely CONFIRMED dead-but-executed
+    work for `[0x9FE4]` specifically (it gets unconditionally
+    overwritten below regardless of this branch), kept here only
+    because the `_SRand1` draws it consumes are observable via the
+    shared LFSR seed. Then, if `pack[0x9BD2]` is nonzero, composes
+    `get_dis` on `(dgroup[0xAC7C]>>4, dgroup[0xAC7E]>>4)` (a signed
+    arithmetic shift, i.e. `//16` toward zero) vs
+    `(dgroup[0xCD88], dgroup[0xCE7E])`; a distance `< 100` sets the
+    danger flag.
+
+    Unconditionally sets `pack[0x9FE4] = dgroup[0xCD88]` (the dead-code
+    overwrite above). Then, MIRRORING `gstr_r`'s own tier logic but
+    over different fields (no `_SRand32`/`_SRand128` longshot here, and
+    the "attack fires" result is just a plain code, not a call) —
+    `dgroup[0xAC86]` selects a tier: `< 10` and `(dgroup[0xAC82]>>1) >
+    dgroup[0xAC84] > 0` and `pack[0x79DC] > 0` picks code `0`;
+    otherwise `< 30` -> `5`, `< 50` -> `4`; otherwise
+    `dgroup[0xAC82]` vs `pack[0x72C8]` (code `3`/`2`, same `< di` /
+    `< di*2` shape as `gstr_r`'s `[0x7A56]` checks) or, past that,
+    `dgroup[0xAC82] > 100` and `dgroup[0xAC84] > 0` and
+    `pack[0x79DC] > 0` and `(dgroup[0xAC82] // 3, C-style truncating)
+    > dgroup[0xAC84]` picks code `0`, else code `1`. Stores the result
+    into `pack[0x9B8A]`.
+
+    Finally composes `gstr_r` (storing its own result into
+    `pack[0x7690]`) then `set_caste_prod`/`set_mode_prod`.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    def tdiv(v, d):
+        q = abs(v) // d
+        return -q if v < 0 else q
+
+    pack.ww(0x72EC, 0)
+
+    if dgroup.rw(0xCE80) == 1:
+        seed = dgroup.rw(SRAND_SEED_OFF)
+        seed, r1 = srand1(seed, 5)
+        v1 = _sx16((r1 + dgroup.rw(0xCD88) - 2) & 0xFFFF)
+        seed, r2 = srand1(seed, 5)
+        v2 = _sx16((r2 + dgroup.rw(0xCE7E) - 2) & 0xFFFF)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+
+        v1 = max(0, min(v1, 0x7F))
+        pack.ww(0x9FE4, v1 & 0xFFFF)
+        v2 = max(0, min(v2, 0x3F))
+        pack.ww(0x9FEA, v2 & 0xFFFF)
+
+        if pack.rw(0x9BD2) != 0:
+            x1 = _sx16(dgroup.rw(0xAC7C)) >> 4
+            y1 = _sx16(dgroup.rw(0xAC7E)) >> 4
+            x2 = _sx16(dgroup.rw(0xCD88))
+            y2 = _sx16(dgroup.rw(0xCE7E))
+            if get_dis(x1, y1, x2, y2) < 0x64:
+                pack.ww(0x72EC, 1)
+
+    pack.ww(0x9FE4, dgroup.rw(0xCD88))
+
+    ac86 = _sx16(dgroup.rw(0xAC86))
+    strategy = None
+    if ac86 < 10:
+        ac84 = _sx16(dgroup.rw(0xAC84))
+        ac82 = _sx16(dgroup.rw(0xAC82))
+        if (ac82 >> 1) > ac84 and ac84 > 0 and _sx16(pack.rw(0x79DC)) > 0:
+            strategy = 0
+
+    if strategy is None:
+        if ac86 < 30:
+            strategy = 5
+        elif ac86 < 50:
+            strategy = 4
+        else:
+            di_raw = dgroup.rw(0xAC82)
+            di = _sx16(di_raw)
+            a72c8 = _sx16(pack.rw(0x72C8))
+            if a72c8 < di:
+                strategy = 3
+            elif a72c8 < _sx16((di_raw << 1) & 0xFFFF):
+                strategy = 2
+            else:
+                fire = False
+                if di > 0x64:
+                    ac84 = _sx16(dgroup.rw(0xAC84))
+                    if ac84 > 0 and _sx16(pack.rw(0x79DC)) > 0 and tdiv(di, 3) > ac84:
+                        fire = True
+                strategy = 0 if fire else 1
+
+    pack.ww(0x9B8A, strategy & 0xFFFF)
+
+    red_result = gstr_r(dgroup, pack)
+    pack.ww(0x7690, red_result & 0xFFFF)
+
+    set_caste_prod(dgroup, simant_data_group)
+    set_mode_prod(simant_data_group, pack)
