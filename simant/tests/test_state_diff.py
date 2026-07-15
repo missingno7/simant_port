@@ -7132,3 +7132,27 @@ def test_initpillar_state_diff_matches_asm(seed_val, inside, all_clear,
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _INITPILLAR_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _StartAttack (seg7:050E) — roll an attack timer, stub the presentation
+# calls (GR!_myBeginSong, SIMANT!_EditMessage) out entirely.
+_STARTATTACK_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0xCB00, 0xCC00),   # SRand seed (0xCBF2)
+    (_PACK, 0x78D0, 0x78E0),
+]
+_STARTATTACK_STUBS = [(2, 0x858E), (1, 0x92C0)]   # GR!_myBeginSong, SIMANT!_EditMessage
+
+
+@pytest.mark.parametrize("seed_val", [0x1234, 0xABCD, 0x0000, 0x7ACE])
+def test_startattack_state_diff_matches_asm(seed_val):
+    from simant.recovered.gameplay import start_attack
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+
+    results = _run_and_diff_segs(
+        7, 0x050E, (), lambda d, p: start_attack(d, p),
+        _STARTATTACK_REGIONS, seed_fn=seed, stubs=_STARTATTACK_STUBS)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _STARTATTACK_REGIONS):
+        assert asm_after == rec_after, f"seed={seed_val:#x} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

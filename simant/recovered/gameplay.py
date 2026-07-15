@@ -8589,3 +8589,26 @@ def init_pillar(dgroup, pack, simant_data_group) -> None:
             dgroup.wb(off, new_tile)
             break
     dgroup.ww(SRAND_SEED_OFF, seed)
+
+
+def start_attack(dgroup, pack) -> None:
+    """Roll a random attack-duration/timer value into `pack[0x78DC]`.
+
+    Recovered from `_StartAttack` (SIMANTW.SYM seg7:050E, NO args; FAR
+    return, 66 bytes). The ASM's only sim-state mutation is
+    `pack[0x78DC] = _SRand1(100) + 0x1E` (a value in `0x1E..0x81`); the
+    rest of the routine is two confirmed presentation-only far calls —
+    `GR!_myBeginSong` (a fixed song-index/volume pair) and
+    `SIMANT!_EditMessage` (two fields read from a far-pointer struct at
+    `pack[0x7C94]`, plus three fixed args) — neither of which touches
+    any sim state this session tracks (matching `set_map`'s own "the
+    original then redraws the tile, a rendering side effect, not sim
+    state" precedent). The oracle test stubs both calls out rather
+    than modeling them.
+    """
+    from .simone import SRAND_SEED_OFF, srand1
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    seed, roll = srand1(seed, 100)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    pack.ww(0x78DC, (roll + 0x1E) & 0xFFFF)

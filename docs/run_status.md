@@ -1,5 +1,29 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.189) — /goal grind: _StartAttack
+- RECOVERED `start_attack` (`_StartAttack`, SIMANTW.SYM seg7:050E, NO
+  args; FAR return, 66 bytes). Confirmed by resolving both far-call
+  targets against real machine segment bases: the routine's ONLY
+  sim-state mutation is `pack[0x78DC] = _SRand1(100) + 0x1E`; the rest
+  is two presentation-only calls — `GR!_myBeginSong` (fixed
+  song-index/volume) and `SIMANT!_EditMessage` (fields from a
+  far-pointer struct at `pack[0x7C94]`) — neither touching any sim
+  state this session tracks, matching `set_map`'s own established
+  "rendering side effect, not sim state" precedent. Rather than a
+  `NotImplementedError` gate (reserved for calls into genuinely
+  UNRECOVERED sim logic, per the `_YellowFight`/`_AddFood` precedent),
+  this is the session's FIRST use of `_run_and_diff_segs`'s existing
+  `stubs=` mechanism: the oracle test neutralizes both far calls with
+  a plain far return so the byte-exact diff covers only the one
+  genuine sim-state write, since these are confirmed-presentation
+  calls rather than unknown ones.
+- 4 cases (varied seeds, exercising the full `_SRand1(100)` roll
+  range) — all green on the first real-ASM run, including the
+  `les`-loaded far-pointer struct dereference (whose target segment is
+  uninitialized on a fresh test machine) resolving safely since its
+  read values are only ever pushed as args to the now-stubbed callee.
+- Suite: simant 1838 (+4), full suite green.
+
 ## 2026-07-15 (cont.188) — /goal grind: _InitPillar
 - RECOVERED `init_pillar` (`_InitPillar`, SIMANTW.SYM seg7:4BF8, NO
   args; FAR return, 228 bytes). Always zeroes the tracked pillar's own
