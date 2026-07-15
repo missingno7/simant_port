@@ -3886,6 +3886,373 @@ def test_dodigoutb_yellowfight_gate_raises():
         do_dig_out_b(dg_view, sdg_view, pack_view, x, y, mode)
 
 
+# ---- _DoNestAntB (seg6:2DAE) — the ~18-arm B-list per-tick dispatcher -----
+# Composes get_new_mode_b/get_new_mode, try_move_dir_b, find_in_b_list,
+# get_winner, is_yellow_ant, do_nesting_b, do_dig_out_b, do_food_in_b,
+# do_dig_in_b, sim_egg_b, sim_queen_b, do_nest_fight_b, do_drown_b,
+# raid_in_b, raid_out_b -- all already recovered.  A GENUINE surprise this
+# session found: the routine is really TWO top-level bodies gated on
+# `mode & 0x80` (own-colony 18-arm dispatch vs. a foreign-caste "raider in
+# the B-list" body, `_do_nest_ant_b_foreign`) -- both covered below.
+_DONESTANTB_REGIONS = _DODIGINB_REGIONS
+
+
+def _donestantb_seed(x, y, mode, srand, *, field_c=0, ce80=0, ce98=0,
+                     ac86=50, extra=None):
+    """Common ground for _DoNestAntB scenarios: a fully-clear 5x5
+    neighborhood (tile 0x05, empty life) around `(x, y)` so the composed
+    dispatch targets run deterministically, matching this tier's own
+    established `_dodiginb_seed`-style convention. `extra(m)` layers
+    scenario-specific state (B-list slots, occupant bytes, ...) on top.
+    """
+    from simant.recovered.gameplay import GET_BEST_DIR_DX, GET_BEST_DIR_DY
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(pack, 0x9B6A, 0)
+        m.mem.wb(sdg, 0x3D18, mode)
+        m.mem.wb(sdg, 0x3B22, field_c)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)     # pin get_winner's C-runtime rand state
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+        m.mem.wb(sdg, 0x8A5C, 0)            # get_winner: no cheat gate
+        m.mem.ww(dg, 0xAC86, ac86 & 0xFFFF)
+        m.mem.ww(dg, 0xCE80, ce80)
+        m.mem.wb(dg, 0xCE98, ce98)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        m.mem.wb(sdg, 0x3A4 + (x << 6) + y, 0)
+        m.mem.ww(pack, 0x99D4, 0)
+        m.mem.ww(pack, 0x9EA4, 3)
+        m.mem.ww(pack, 0x7402, 5)
+        m.mem.ww(dg, 0xAC82, 20)
+        m.mem.ww(dg, 0xAC98, 10)
+        m.mem.ww(pack, 0x78E8, 0)
+        m.mem.wb(pack, 0x75FC, 0)
+        m.mem.ww(pack, 0x7C48, (x + 30) & 0xFFFF)
+        m.mem.ww(pack, 0x7C90, y & 0xFFFF)
+        m.mem.wb(pack, 0x9B6E, 1)
+        m.mem.ww(sdg, 0x85FC, 0)
+        m.mem.wb(sdg, 0x8A60, 0)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x48E8 + (nx << 6) + ny, 0x05)
+                    m.mem.wb(dg, 0x88E8 + (nx << 6) + ny, 0x00)
+        m.mem.wb(dg, 0x88E8 + (x << 6) + y, mode)   # own cell shows own caste
+        if extra is not None:
+            extra(m)
+    return seed
+
+
+def _donestantb_run(x, y, mode, seed_fn):
+    from simant.recovered.gameplay import do_nest_ant_b
+    return _run_and_diff_segs(
+        6, 0x2DAE, (x, y, mode),
+        lambda d, s, p: do_nest_ant_b(d, s, p, x, y, mode),
+        _DONESTANTB_REGIONS, seed_fn=seed_fn)
+
+
+def _donestantb_assert(results, label):
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DONESTANTB_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+@pytest.mark.parametrize("field_c,mode,label", [
+    (0, 0x12, "fc0-selfcheck-and-move"),
+    (1, 0x12, "fc1-donestingb"),
+    (2, 0x12, "fc2-dodigoutb-unconditional"),
+    (3, 0x12, "fc3-dofoodinb"),
+    (4, 0x12, "fc4-dodiginb"),
+    (5, 0x12, "fc5-dodigoutb-unconditional"),
+    (7, 0x12, "fc7-dodigoutb-unconditional"),
+    (8, 0x12, "fc8-simeggb"),
+    (0xA, 0x12, "fcA-donestfightb"),
+    (0xB, 0x12, "fcB-dodigoutb-unconditional"),
+    (0xC, 0x12, "fcC-dodigoutb-unconditional"),
+    (0xD, 0x12, "fcD-selfcheck-and-refresh"),
+    (0xE, 0x12, "fcE-refresh-move-popcap"),
+    (0xF, 0x12, "fcF-dodigoutb-unconditional"),
+    (0x10, 0x12, "fc10-dodigoutb-unconditional"),
+    (0x11, 0x12, "fc11-do-drown-b"),
+    (0x99, 0x12, "fc-out-of-range-fallback-same-as-fc0"),
+])
+def test_donestantb_own_colony_dispatch_matches_asm(field_c, mode, label):
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, mode, _donestantb_seed(x, y, mode, 0x1234, field_c=field_c))
+    _donestantb_assert(results, label)
+
+
+def test_donestantb_fc6_ce80_not2_dodigoutb_matches_asm():
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x12, _donestantb_seed(x, y, 0x12, 0x1234, field_c=6, ce80=0))
+    _donestantb_assert(results, "fc6-ce80-not2-dodigoutb")
+
+
+def test_donestantb_fc6_ce80_is2_selfcheck_matches_asm():
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x12, _donestantb_seed(x, y, 0x12, 0x1234, field_c=6, ce80=2))
+    _donestantb_assert(results, "fc6-ce80-is2-selfcheck")
+
+
+def test_donestantb_fc9_simqueenb_arg_swap_matches_asm():
+    # The genuine surprise this session found: arm 9's push order puts
+    # `sub` at SimQueenB's [bp+10] and the raw `mode` at [bp+12] -- the
+    # OPPOSITE of sim_queen_b's own parameter NAMES.  caste=0x6C ->
+    # sub=(0x6C&0x78)>>3=0x0D, one of the two mode values SimQueenB's body
+    # actually acts on -- a byte-exact match here is strong independent
+    # confirmation of the swapped call convention.
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x6C, _donestantb_seed(x, y, 0x6C, 0x1234, field_c=9))
+    _donestantb_assert(results, "fc9-simqueenb-swap")
+
+
+def test_donestantb_starvation_death_matches_asm():
+    # SRand256() rolls exactly 0 (1-in-256) and field_c != 9, then
+    # SRand32() exceeds the food supply -> kills the acting ant outright,
+    # no dispatch at all.
+    from simant.recovered.simone import srand_pow2
+
+    def find_seed_for(mask, target, start=1):
+        s = start
+        for _ in range(200_000):
+            _, r = srand_pow2(s, mask)
+            if r == target:
+                return s
+            s = (s + 1) & 0xFFFF
+        raise AssertionError("seed not found")
+
+    seed256_0 = find_seed_for(0xFF, 0)
+    after256, _ = srand_pow2(seed256_0, 0xFF)
+    _, roll32 = srand_pow2(after256, 0x1F)
+
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x12, _donestantb_seed(x, y, 0x12, seed256_0, field_c=0,
+                                     ac86=max(0, roll32 - 1)))
+    _donestantb_assert(results, "starvation-death")
+
+
+def test_donestantb_fc9_starvation_exempt_matches_asm():
+    # field_c == 9 is EXEMPT from the starvation check even when SRand256()
+    # rolls 0 -- the SRand32 roll must never even be consumed.
+    from simant.recovered.simone import srand_pow2
+
+    def find_seed_for(mask, target, start=1):
+        s = start
+        for _ in range(200_000):
+            _, r = srand_pow2(s, mask)
+            if r == target:
+                return s
+            s = (s + 1) & 0xFFFF
+        raise AssertionError("seed not found")
+
+    seed256_0 = find_seed_for(0xFF, 0)
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x12, _donestantb_seed(x, y, 0x12, seed256_0, field_c=9,
+                                     ac86=0))
+    _donestantb_assert(results, "fc9-starvation-exempt")
+
+
+def test_donestantb_yellowfight_gate_raises():
+    # Own-colony branch: a yellow-ant occupant on the ACTING ant's own
+    # (x, y) cell with dgroup[0xCE98] != 0 -> the UNRECOVERED
+    # _YellowFight(2, slot) branch would fire.  Direct recovered-function
+    # call (no ASM oracle), matching this tier's established pattern.
+    from simant.recovered.gameplay import do_nest_ant_b
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, mode = 20, 20, 0x12
+    dg_view = ByteBackend(bytearray(0x10000), 0)
+    sdg_view = ByteBackend(bytearray(0x10000), 0)
+    pack_view = ByteBackend(bytearray(0x10000), 0)
+    pack_view.ww(0x9B6A, 0)
+    dg_view.wb(0x88E8 + (x << 6) + y, 0xFE)   # own cell shows a yellow ant
+    dg_view.ww(0xCE98, 1)
+    with pytest.raises(NotImplementedError):
+        do_nest_ant_b(dg_view, sdg_view, pack_view, x, y, mode)
+
+
+# ---- `_do_nest_ant_b_foreign` (seg6:335C) — the `mode & 0x80` branch ------
+_DONESTANTB_FOREIGN_REGIONS = _DODIGINB_REGIONS
+
+
+def test_donestantb_foreign_mode_gt_0xef_donestfightb_matches_asm():
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0xF5, _donestantb_seed(x, y, 0xF5, 0x1234, field_c=0))
+    _donestantb_assert(results, "foreign-mode-gt-0xef-donestfightb")
+
+
+def test_donestantb_foreign_clear_raid_out_matches_asm():
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x92, _donestantb_seed(x, y, 0x92, 0x1234, field_c=3))
+    _donestantb_assert(results, "foreign-clear-raid-out")
+
+
+def test_donestantb_foreign_clear_fc7_raid_in_matches_asm():
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x92, _donestantb_seed(x, y, 0x92, 0x1234, field_c=7))
+    _donestantb_assert(results, "foreign-clear-fc7-raid-in")
+
+
+def _donestantb_foreign_blist_extra(x, y, occupant, mode):
+    def extra(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(dg, 0x88E8 + (x << 6) + y, occupant)
+        m.mem.ww(pack, 0x99D4, 2)
+        m.mem.ww(pack, 0x9B6A, 0)
+        m.mem.wb(sdg, 0x3D18 + 0, mode)
+        m.mem.wb(sdg, 0x3736 + 1, x & 0xFF)
+        m.mem.wb(sdg, 0x392C + 1, y & 0xFF)
+        m.mem.wb(sdg, 0x3D18 + 1, occupant)
+        m.mem.ww(pack, 0x7C1E, 10)
+        m.mem.ww(pack, 0x7C20, 0)
+    return extra
+
+
+def test_donestantb_foreign_egg_kill_matches_asm():
+    # A found B-list occupant in 1..7 (sim_egg_b's own unhatched-egg range):
+    # the raider eats it -- pack[0x7C1E:0x7C20] (the SAME "egg lost"
+    # accumulator sim_egg_b's own failed-hatch branch bumps) increments.
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x92, _donestantb_seed(
+            x, y, 0x92, 0x1234, field_c=0,
+            extra=_donestantb_foreign_blist_extra(x, y, 5, 0x92)))
+    _donestantb_assert(results, "foreign-egg-kill")
+
+
+def test_donestantb_foreign_queen_kill_matches_asm():
+    # A found B-list occupant in 0x60..0x67 (make_blk_queen's own queen
+    # caste range): the queen's own recorded position ALSO gets cleared,
+    # then falls through into the normal fight resolution.
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x92, _donestantb_seed(
+            x, y, 0x92, 0x1234, field_c=0,
+            extra=_donestantb_foreign_blist_extra(x, y, 0x62, 0x92)))
+    _donestantb_assert(results, "foreign-queen-kill")
+
+
+def test_donestantb_foreign_normal_fight_matches_asm():
+    x, y = 20, 20
+    results = _donestantb_run(
+        x, y, 0x92, _donestantb_seed(
+            x, y, 0x92, 0x1234, field_c=0,
+            extra=_donestantb_foreign_blist_extra(x, y, 0x20, 0x92)))
+    _donestantb_assert(results, "foreign-normal-fight")
+
+
+def test_donestantb_foreign_yellowfight_gate_raises():
+    # Foreign branch: the _YellowFight gate polarity is INVERTED relative
+    # to every other yellow-fight site in this tier (fires when
+    # dgroup[0xCE98] == 0, not != 0 -- matching the established R-flavored
+    # inversion check_nest_fight_r/do_rest_r/do_rand_r already document).
+    from simant.recovered.gameplay import do_nest_ant_b
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, mode = 20, 20, 0x92
+    dg_view = ByteBackend(bytearray(0x10000), 0)
+    sdg_view = ByteBackend(bytearray(0x10000), 0)
+    pack_view = ByteBackend(bytearray(0x10000), 0)
+    pack_view.ww(0x9B6A, 0)
+    dg_view.wb(0x88E8 + (x << 6) + y, 0xFE)   # own cell shows a yellow ant
+    dg_view.ww(0xCE98, 0)                      # INVERTED: fires on == 0
+    with pytest.raises(NotImplementedError):
+        do_nest_ant_b(dg_view, sdg_view, pack_view, x, y, mode)
+
+
+# ---- _DoAntSimB (seg6:2D4E) — loop the B-list, tick each ant -------------
+# Composes do_nest_ant_b. NEAR call site (established `push cs; call near`
+# far-call-emulation idiom -- confirmed by its OWN `ret far` epilogue, so
+# the oracle harness needs near=False despite it taking zero arguments).
+_DOANTSIMB_REGIONS = _DODIGINB_REGIONS
+
+
+def test_doantsimb_empty_list_noop_matches_asm():
+    def seed(m):
+        pack = m.seg_bases[_PACK]
+        m.mem.ww(pack, 0x99D4, 0)
+
+    from simant.recovered.gameplay import do_ant_sim_b
+    results = _run_and_diff_segs(
+        6, 0x2D4E, (), lambda d, s, p: do_ant_sim_b(d, s, p),
+        _DOANTSIMB_REGIONS, seed_fn=seed, near=False)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOANTSIMB_REGIONS):
+        assert asm_after == rec_after, f"empty-list {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_doantsimb_ticks_nonzero_caste_slots_reverse_order_matches_asm():
+    # 3 slots: caste 0 (dead, skipped), a live caste (field_c=2 ->
+    # do_dig_out_b unconditional), caste 0 (dead, skipped) -- proves both
+    # the "skip caste==0" gate and the reverse-order/pack[0x9B6A] loop
+    # counter wiring against the real ASM.
+    from simant.recovered.gameplay import (do_ant_sim_b, GET_BEST_DIR_DX,
+                                            GET_BEST_DIR_DY)
+
+    x, y = 20, 20
+
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.ww(dg, RAND_STATE_OFF, 0)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+        m.mem.wb(sdg, 0x8A5C, 0)
+        m.mem.ww(dg, 0xCBF2, 0x1234)
+        m.mem.ww(dg, 0xAC86, 50)
+        m.mem.ww(dg, 0xCE80, 0)
+        m.mem.wb(dg, 0xCE98, 0)
+        for i in range(8):
+            m.mem.wb(sdg, i, GET_BEST_DIR_DX[i] & 0xFF)
+            m.mem.wb(sdg, 8 + i, GET_BEST_DIR_DY[i] & 0xFF)
+        m.mem.ww(pack, 0x99D4, 3)
+        positions = [(10, 10), (x, y), (30, 30)]
+        castes = [0, 0x12, 0]
+        for i, ((px, py), c) in enumerate(zip(positions, castes)):
+            m.mem.wb(sdg, 0x3736 + i, px & 0xFF)
+            m.mem.wb(sdg, 0x392C + i, py & 0xFF)
+            m.mem.wb(sdg, 0x3D18 + i, c)
+            m.mem.wb(sdg, 0x3B22 + i, 2)   # field_c=2 -> do_dig_out_b unconditional
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x3F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x48E8 + (nx << 6) + ny, 0x05)
+                    m.mem.wb(dg, 0x88E8 + (nx << 6) + ny, 0x00)
+        m.mem.wb(dg, 0x88E8 + (x << 6) + y, 0x12)
+        m.mem.wb(sdg, 0x3A4 + (x << 6) + y, 0)
+        m.mem.ww(pack, 0x9EA4, 3)
+        m.mem.ww(pack, 0x7402, 5)
+        m.mem.ww(dg, 0xAC82, 20)
+        m.mem.ww(dg, 0xAC98, 10)
+        m.mem.ww(pack, 0x78E8, 0)
+        m.mem.wb(pack, 0x75FC, 0)
+        m.mem.ww(pack, 0x9B6E, 1)
+        m.mem.ww(sdg, 0x85FC, 0)
+        m.mem.wb(sdg, 0x8A60, 0)
+
+    results = _run_and_diff_segs(
+        6, 0x2D4E, (), lambda d, s, p: do_ant_sim_b(d, s, p),
+        _DOANTSIMB_REGIONS, seed_fn=seed, near=False)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOANTSIMB_REGIONS):
+        assert asm_after == rec_after, f"3-slot-list {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.

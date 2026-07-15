@@ -1,5 +1,112 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.211) — /goal grind: _DoNestAntB + _DoAntSimB (seg6 behavior tier — the dispatcher itself, COMPLETE)
+- RECOVERED `do_nest_ant_b` (`_DoNestAntB`, SIMANTW.SYM seg6:2DAE, FAR
+  return, 1910 bytes, args `x=[bp+6]`, `y=[bp+8]`, `mode=[bp+10]`) — the
+  per-tick orchestrator the five prior sessions' routines
+  (`do_forage_ant`/`do_dig_in_b`/`sim_queen_b`/`do_food_in_b`/
+  `do_dig_out_b`) exist to unblock, plus `do_ant_sim_b` (`_DoAntSimB`,
+  seg6:2D4E, NEAR return via the established `push cs; call near`
+  far-call-emulation idiom — confirmed by its OWN `ret far` epilogue), the
+  trivial B-list loop that calls it. Located a fresh linear disassembly
+  already sitting in the scratchpad from a prior scoping pass
+  (`donestantb.txt`); this session decoded the raw jump-table bytes at
+  seg6:0x2E4E (18 words, NOT trusted from the prior pass's own
+  terminal-call summary) and cross-referenced every unique `call`/`jmp`
+  target via `symbols.nearest_symbol` before writing a line of Python.
+- TWO genuine surprises beyond the pre-existing scoping table, both fully
+  recovered (not stubbed) after independent verification:
+  1. The routine is NOT a single 18-arm dispatcher — `mode & 0x80` gates a
+     SEPARATE ~450-byte body (`_do_nest_ant_b_foreign`) for a
+     foreign-colony "raider" ant occupying a B-list slot (a genuine
+     mechanic: raiders get added to the black nest's own B-list with a
+     foreign-flavored caste byte and ticked here in the same coordinate
+     space). Its own valid-caste range (`1..0x67`), inverted `_YellowFight`
+     gate polarity (matching the SAME inversion `check_nest_fight_r`/
+     `do_rest_r`/`do_rand_r` already established for red-flavored logic),
+     egg-kill (`1..7`, bumps the SAME `pack[0x7C1E:0x7C20]` accumulator
+     `sim_egg_b`'s own failed-hatch branch bumps) and queen-kill
+     (`0x60..0x67`, the established `make_blk_queen` caste range) special
+     cases, and its `raid_in_b`/`raid_out_b` clear-tail dispatch were all
+     traced from the raw bytes and confirmed via a real-ASM state-diff
+     oracle (8 scenarios covering every branch, including a raise-loudly
+     yellow-fight-gate test).
+  2. `_SimQueenB`'s prior recovery (`5aa2d91`) documented its signature
+     BY ANALOGY to `_DoDigInB`'s (`mode=[bp+10], caste_sub=[bp+12]`)
+     rather than independently re-verifying it. This session's own
+     push-order analysis of arm `9`'s call (cross-checked against TWO
+     independently-correct call shapes in the SAME function — arm `1`'s
+     `_DoNestingB` and arm `4`'s `_DoDigInB`, both of which push `sub`
+     before `mode`) found arm `9` pushes `mode` BEFORE `sub` — the
+     OPPOSITE order. `_SimQueenB`'s REAL frame is `[bp+10]=sub,
+     [bp+12]=mode` — swapped relative to `sim_queen_b`'s own parameter
+     NAMES (though NOT a bug in that already-shipped, oracle-verified
+     function — it's proven positionally, and its own internal logic
+     independently confirms the swap: the value checked against literal
+     `0x0C`/`0x0D` is far more naturally a `sub`, and the value
+     XOR'd/masked for a compass direction is far more naturally a full
+     caste). Ported by calling `sim_queen_b(x, y, sub, mode)` — a
+     deliberately confusing-looking but real-ASM-verified swap, called
+     out at length in `do_nest_ant_b`'s own docstring so no future session
+     "corrects" it back.
+- Every unique `call far`/`call near` target across the WHOLE 1910-byte
+  body was audited (both branches): all resolve to an already-recovered
+  sibling, an inline `_SRand256`/`32`/`8`/`1`/`_GetNewMode(B)`/
+  `_IsYellowAnt`/`_FindInBList`/`_GetWinner` primitive, the established
+  `_YellowFight` raise-loudly gate (TWO call sites this routine — one per
+  branch, with genuinely different gate polarities), or the
+  presentation-only `ANTEDIT!_RestBalloons`-family balloon call (omitted,
+  core/presentation split) — no NEW unrecovered dependency, so the whole
+  routine landed in one slice rather than a partial/gated stub.
+- The own-colony branch's 18-arm table itself: a starvation-gate prologue
+  (`_SRand256()==0` AND `field_c!=9` AND `_SRand32() > dgroup[0xAC86]` ->
+  kill outright, no dispatch at all — ported with the conditional-
+  `_SRand32`-call-count discipline this tier's sessions keep
+  re-discovering as a bug class); SEVEN of the eighteen arms
+  (`2,5,7,0xB,0xC,0xF,0x10`) share one identical jump-table cell, an
+  unconditional `do_dig_out_b` call; arm `6` is the ONLY `dgroup[0xCE80]`-
+  gated one (`!=2` -> `do_dig_out_b`, `==2` -> a same-tick self-fight
+  re-check + move); arms `0`/`>0x11`(fallback)/`6`-gated/`0xD`/`0xE` all
+  share a "did a fight already land on my own cell this tick?" pattern
+  (factored as `_nest_ant_b_selfcheck`, verified byte-identical at all
+  five call sites) — a genuine same-tick race check since every acting
+  ant's turn writes through the SAME shared life-grid within one frame;
+  arm `0x11` is `do_drown_b`'s own established body FULLY INLINED (no
+  `call` instruction at all, confirmed via the raw disassembly) rather
+  than called, composed here as `do_drown_b(x, y, mode)` directly.
+- New PACK fields resolved fresh (never assumed): `0xC354`/`0xC35A`/
+  `0xC35C`/`0xC35E`/`0xC360` all resolve to the PACK selector (confirmed
+  via `m.mem.rw(dg, off)` on a fresh machine), same as the already-
+  established `0xC350`/`0xC356`; `0xC352`/`0xC358` resolve to
+  SIMANT_DATA_GROUP. `pack[0x786A + 2*field_c]`/`pack[0x7BE4 + 2*field_c]`
+  are the SAME "mode population" tally arrays `tally_mode_pop`/
+  `clr_mode_pop` already established (own-colony vs. foreign-caste counts
+  respectively — confirmed by the overlapping address ranges);
+  `pack[0x7C44]` is a threshold gate (own-colony arm `0xE`'s population
+  cap, `> 0x64` -> `field_c=0x0F`) that `clr_mode_pop` already decrements
+  each tick — its producer/consumer chain is left unresolved (same
+  "unclear ultimate meaning" caveat several tally-table fields already
+  carry) but the byte-level behavior is fully verified regardless.
+- 32 new state-diff tests (`test_donestantb_*` x30, `test_doantsimb_*` x2)
+  covering all 18 own-colony arms, both `field_c=6` gate outcomes, the
+  `_SimQueenB` arg-swap arm specifically, starvation death (+ `field_c=9`
+  exemption), both yellow-fight raise gates (own-colony AND the inverted
+  foreign one), all four foreign-branch outcomes (mode>0xEF, egg-kill,
+  queen-kill, normal fight), both foreign clear-tail dispatches, and
+  `_DoAntSimB`'s empty-list no-op + reverse-order/skip-dead-slot wiring —
+  every scenario verified against the real ASM via `_run_and_diff_segs`
+  (discovered mid-session that `_DoAntSimB`, despite zero args, needs
+  `near=False` in the oracle harness: it's reached via the same
+  far-call-emulation idiom every OTHER seg6-internal call in this tier
+  uses, so it executes a genuine `ret far` epilogue — `near=True` pops two
+  bytes short and sends IP/CS into garbage stack memory, the exact
+  "region window"/stack-shape bug class this project's own workflow notes
+  warn about, just manifesting as a wild INT3 instead of a silent
+  mismatch this time). Full suite: 2121 passed.
+- seg6's `_DoNestAntB`/`_DoAntSimB` cluster is now fully closed out — the
+  whole B-list per-tick behavior chain from the top-level loop down
+  through every dispatch arm is real, byte-exact Python.
+
 ## 2026-07-15 (cont.210) — /goal grind: _DoDigOutB (seg6 behavior tier, _DoNestAntB dependency 3/3 — COMPLETE)
 - RECOVERED `do_dig_out_b` (`_DoDigOutB`, SIMANTW.SYM seg6:4EB0, FAR
   return, 686 bytes) — the black nest ant heading OUT of the nest through

@@ -39,9 +39,10 @@ recovered logic on a copy of the pre-state → diff against the ASM's mutation)
 instead of the return-value oracle the foundation was built with. The first genuine
 top-level `_Do*Ant*` routine is now also byte-exact: `_DoFightA` (yard combat
 resolution, composed with the newly-recovered `_GetNewMode` caste mode-transition
-lookup) — followed by two full per-ant **behavior** routines, `_DoForageAnt` and
-`_DoDigInB`. What remains is `_DoNestAntB` and the **orchestrators** above them,
-which compose the now-recovered mutator tier. The graph below is a real slice of the `seg5`/`seg6`/`seg7` call
+lookup) — followed by the full black-nest per-ant **behavior tier**
+(`_DoForageAnt`, `_DoDigInB`, `_SimQueenB`, `_DoFoodInB`, `_DoDigOutB`) and its
+own dispatcher, `_DoNestAntB`/`_DoAntSimB`. What remains is the `_DoAntSim`/
+`_DoAntSimA` **orchestration** above it. The graph below is a real slice of the `seg5`/`seg6`/`seg7` call
 graph (every edge is an actual call); green nodes are proven byte-exact against the
 original ASM, an amber ring marks the most-called routines, dashed nodes are the
 not-yet-recovered frontier.
@@ -139,7 +140,7 @@ flowchart TD
   gdd --> bnc & gnd & srand
   rob --> ged & tmdb & srand
   grdd --> bnc & gnd & srand
-  dnb --> ddig & iyel & srand
+  dnb --> ddig & iyel & srand & gw & gnm
   dfor --> iva & iyel & srand
   dfor --> gin & gnm & gfd & fial & gw & jsc
   dnb -.-> jsc
@@ -169,8 +170,8 @@ flowchart TD
   class dtb,dttb,mnhb,exh,seb,fxm,afld,ged,gnd2 done;
   class tmdb,gob,rob done;
   class dfa,ddoa,gnm,dah,gw,sfa,gin,rt done;
-  class dfor,ddig done;
-  class das,dab,daa,dnb front;
+  class dfor,ddig,dnb,dab done;
+  class das,daa front;
 ```
 
 Coverage by segment — named routines proven byte-exact (an island + A/B oracle):
@@ -178,7 +179,7 @@ Coverage by segment — named routines proven byte-exact (an island + A/B oracle
 | Segment | Module | Role | Recovered | Status |
 |---------|--------|------|:---------:|--------|
 | `seg5` | SIMONE | sim primitives — map/life query, RNG, predicates, geometry, **dig subsystem done**; `_Get{Exit,Enter}Dir{B,R}`/`_PickupFood{A,B,R}`/`_CanBeHouseHole`/`_HoleBorder`/`_GetFromAlist`/`_PlaceEgg{B,R}`/`_ScanForAnts`/`_BuildAntListA`/`_IsItFoodAt`/`_FindAntIndex`/`_SFoundAnt`/`_GetAntIndex`/`_FindLifeIndex`/`_SG{I,S,}Rand`/`_IsItYellow`/`_FindLifeAt`/`_FindEggAt`/`_FoodFall`/`_DropFoodA`/`_SRand{1,2,4,8,16,32,64,128,256}` (each now individually byte-tested against its own ASM instance)/`_IsLiftable`/`_PlaceDrop`/`_InitWater`/`_AddWater`/`_CreateNewHole`/`_DigMyNewHole`/`_DigMyTile`/`_FillMap`/`_TileFrame1`/`_TileFrame2`/`_MakePlugV`/`_MakePlugH`/`_MakeKnob`/`_MakePenny`/`_MakeClip`/`_MakeOutletV`/`_MakeOutletH`/`_MakeKitchenWall` done | 123 / 169 | foundation **done** |
-| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_Sim{Egg,Queen}A`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_Raid{Out,In}B/R`/`_QueenMoveB/R`/`_MakeNewTailB/R`/`_GetMyInitialRandDir`/`_LeaveNestB`/`_DoDrown{B,R}`/`_GetNewRedTask`/`_DigOut{B,R}Nest`/`_StayInR`/`_DoRestAnt`/`_DoRepoFly`/`_GetMyNextRandDirs`/`_GetMyBestDir`/`_SimEgg{B,R}`/`_DoNestFight{B,R}`/`_DoReturnFoodAnt`/`_DoNesting{B,R}`/`_GetMyDir`/`_GetMyDis`/`_CheckNestFight{B,R}`/`_DoRest{B,R}`/`_DoRand{B,R}`/`_FeedAnts`/`_DoForageAnt`/`_DoDigInB`/`_SimQueenB`/`_DoFoodInB`/`_DoDigOutB` done (two documented gaps shared by all: `_DoTroph`/`_YellowFight`, both raise loudly) — all three `_DoNestAntB` dispatch-arm dependencies now recovered; `_DoNestAntB`/`_DoAntSim*` orchestration frontier remains | 97 / 123 | movement **done** |
+| `seg6` | SIMANT1 | ant AI — lists/scent/mode-pop/pathfinding/**movement done**; `_DoFightA`/`_DoDigOutAntA`/`_GetWinner`/`_StartFightA`/`_GoInNest`/`_RandTurn`/`_StealFoodB/R`/`_Sim{Egg,Queen}A`/`_Lost{Head,Tail}*`/`_{Try}EatFood{B,R}`/`_Raid{Out,In}B/R`/`_QueenMoveB/R`/`_MakeNewTailB/R`/`_GetMyInitialRandDir`/`_LeaveNestB`/`_DoDrown{B,R}`/`_GetNewRedTask`/`_DigOut{B,R}Nest`/`_StayInR`/`_DoRestAnt`/`_DoRepoFly`/`_GetMyNextRandDirs`/`_GetMyBestDir`/`_SimEgg{B,R}`/`_DoNestFight{B,R}`/`_DoReturnFoodAnt`/`_DoNesting{B,R}`/`_GetMyDir`/`_GetMyDis`/`_CheckNestFight{B,R}`/`_DoRest{B,R}`/`_DoRand{B,R}`/`_FeedAnts`/`_DoForageAnt`/`_DoDigInB`/`_SimQueenB`/`_DoFoodInB`/`_DoDigOutB`/**`_DoNestAntB`/`_DoAntSimB`** done (two documented gaps shared by all: `_DoTroph`/`_YellowFight`, both raise loudly) — the whole B-list per-tick behavior chain, top-level loop down through every dispatch arm, is now real byte-exact Python; `_DoAntSim`/`_DoAntSimA` orchestration above it is the remaining frontier | 99 / 123 | movement **done** |
 | `seg7` | SIMTWO | world sim + tile rendering + event loop; `_GetNewMode*`, `_Bounce`, the full `_Get*Dir` family, `_Make{Blk,Red}Queen`/`_Place{Red,Black}Queen`/`_Add{Black,Red}Ants`/`_{Un}RecruitRed`/`_IsValidYard`/`_FindInLionList`/`_SetAntLion`/`_NotMowed`/`_ForceMode{A,B}`/`_MaintainSwarm`/`_SetCasteProd`/`_SetModeProd`/`_GstrB`/`_KillAntLion`/`_FollowCatDir`/`_GrabMap`/`_GetNearbyPatches`/`_StartMigrate`/`_EndMigrate`/`_fracSIN`/`_fracCOS`/`_PlacePillTile`/`_PillGetLife`/`_StorePillarMap`/`_ReplacePillarMap`/`_PillFoodTile`/`_IsPillDead`/`_InitGrassMap`/`_InitSimVars`/`_Recruit`/`_UnRecruit`/`_Reproduce`/`_AddAntLion`/`_AddRandAntLion`/`_InitPillar`/`_StartAttack`/`_InitSimYard`/`_ClrArrays`/`_InitSow`/`_DoSow`/`_InitAntLions`/`_MakePillFood`/`_MakeAPill`/`_DoPillar`/`_GstrR`/`_GetStrategy`/`_AddFood` done | 66 / 282 | mostly rendering |
 | `seg4` | `_TEXT` | C runtime (`__aFldiv`/`__aFulmul`, MSC `rand`/`srand`) + tile expanders | 27 / 248 | hot paths lifted |
 
@@ -286,20 +287,34 @@ move and then actually move* is byte-exact, end to end:
   `get_enter_dir_b`/`get_exit_dir_b`/`get_out_b`/`is_yellow_ant`/
   `find_in_b_list`/`get_winner`/`get_new_mode_b`, and both reusing the
   private `_eat_food`/`_try_eat_food` shared bodies verbatim for their
-  own food-supply tails. Between all five, every dependency is met except
-  two, which raise loudly by design (see below).
+  own food-supply tails.
+- **The dispatcher itself, complete: `_DoNestAntB` and `_DoAntSimB`.**
+  `_DoAntSimB` loops the live black ant list in reverse order, ticking
+  each nonzero-caste slot via `_DoNestAntB` — the ~18-arm jump-table
+  dispatcher the five routines above exist to unblock, decoded fresh from
+  its raw jump-table bytes rather than trusted from any prior summary.
+  Two genuine surprises surfaced and were fully recovered rather than
+  stubbed: the routine is really TWO top-level bodies gated on
+  `mode & 0x80` (an own-colony 18-arm dispatch, and a separate body for a
+  foreign-colony "raider" ant occupying a black-nest-list slot, composing
+  `raid_in_b`/`raid_out_b`/`do_nest_fight_b`/`find_in_b_list`/
+  `get_winner`); and `_SimQueenB`'s own call site here revealed its prior
+  recovery had `mode`/`caste_sub` swapped relative to their real stack
+  offsets (a naming-only issue in the already-shipped, oracle-verified
+  function — not a behavior bug, called out at length in `_DoNestAntB`'s
+  own docstring). Between all seven routines, every dependency is met
+  except two, which raise loudly by design (see below).
 
-**Missing**: `_DoNestAntB` itself (the ~18-arm jump-table dispatcher that
-composes all five behavior-tier routines above into an actual per-tick
-decision — its three previously-unrecovered dispatch-arm dependencies,
-`_DoFoodInB`/`_SimQueenB`/`_DoDigOutB`, are now done) and `_DoAntSim*`
-orchestration above it, `_DoTroph`'s own dependency chain (a real
-sound-engine routine plus a dialog/busy-wait UI routine — presentation/
-audio work, not core sim logic), and `_YellowFight` (seg6:823E — its own
-deep, so-far-unexplored dependency chain; every combat path across all
-five behavior-tier routines above gates on it and raises loudly rather
-than guess — the SAME `(2, slot)` call signature at every site). That's
-the next milestone toward the [VM-less native port](docs/vmless_port.md).
+**Missing**: `_DoAntSim`/`_DoAntSimA` orchestration above `_DoNestAntB`/
+`_DoAntSimB` (the yard-ant and top-level per-tick loops), `_DoTroph`'s own
+dependency chain (a real sound-engine routine plus a dialog/busy-wait UI
+routine — presentation/audio work, not core sim logic), and `_YellowFight`
+(seg6:823E — its own deep, so-far-unexplored dependency chain; every
+combat path across the whole behavior tier gates on it and raises loudly
+rather than guess — the SAME `(2, slot)`/`(3, slot)` call signatures at
+every site, including the two genuinely different gate polarities
+`_DoNestAntB`'s own two branches use). That's the next milestone toward
+the [VM-less native port](docs/vmless_port.md).
 
 ### What gets lifted vs. what gets replaced
 

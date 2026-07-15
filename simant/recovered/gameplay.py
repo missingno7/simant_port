@@ -7336,6 +7336,516 @@ def sim_queen_b(dgroup, simant_data_group, pack, x: int, y: int, mode: int,
     inc_dword(pack, 0x9AF8)
 
 
+def _nest_ant_b_selfcheck(dgroup, simant_data_group, pack, x: int, y: int,
+                          mode: int) -> bool:
+    """Shared "did a fight already land on my own cell THIS tick?" check,
+    reused at FIVE call sites inside `do_nest_ant_b`'s own-colony branch
+    (field_c==0, the field_c>0x11 fallback, field_c==6 when
+    `dgroup[0xCE80]==2`, field_c==0xD, and field_c==0xE — all five confirmed
+    byte-identical via independent disassembly at seg6:0x2EA3/0x2FEE/
+    0x30A4/0x31DD).  Because every acting ant's turn this tick writes
+    through the SAME shared black-nest life-grid, an ant ticking late in
+    the same frame can find its OWN `(x, y)` cell already overwritten by an
+    earlier ant's move or fight resolution — this re-reads that cell fresh
+    (not a cached value) and resolves accordingly, exactly mirroring the
+    `do_dig_in_b`/`do_food_in_b`/`do_dig_out_b` occupant-fight shape but
+    keyed on the ACTING ant's own position instead of a neighbor's.
+
+    A yellow-ant occupant with `dgroup[0xCE98] != 0` defers to the
+    UNRECOVERED `SIMANT1!_YellowFight(2, pack[0x9B6A])` (seg6:823E) —
+    raises `NotImplementedError` per this tier's established fail-loud
+    precedent.  A yellow ant with the gate clear is treated as empty.  An
+    occupant in `0x88..0xE7` resolved via `find_in_b_list` at THIS ant's
+    own `(x, y)` (the established coordinate-role-swap convention): a hit
+    resolves `get_winner(arg_a=occupant, arg_b=mode)`, stamps the winner
+    onto the found slot's `field_e`, recomputes its caste as
+    `(winner&0x80)+0x70` onto both its own caste field AND this SAME
+    `(x, y)` cell (the ACTING ant's own position — not the found slot's own
+    recorded position), sets its `field_c=0x0A`, and returns `True`
+    ("resolved — do nothing else this tick").  Anything else (empty, out
+    of caste range, or a search miss) returns `False` ("clear").
+    """
+    life_off = LIFE_PLANE_BASE[2] + (x << 6) + y
+    occupant = dgroup.rb(life_off)
+
+    if is_yellow_ant(occupant):
+        if dgroup.rw(0xCE98) != 0:
+            raise NotImplementedError(
+                "do_nest_ant_b: _YellowFight branch reached (not recovered) "
+                "-- x={!r} y={!r}".format(x, y))
+        return False
+
+    if not (0x88 <= occupant <= 0xE7):
+        return False
+
+    found = find_in_b_list(pack, simant_data_group, x, y, occupant)
+    if found == 0xFFFF:
+        return False
+
+    winner = get_winner(dgroup, simant_data_group, pack, occupant, mode) & 0xFF
+    simant_data_group.wb(0x3F0E + found, winner)
+    new_caste = ((winner & 0x80) + 0x70) & 0xFF
+    simant_data_group.wb(0x3D18 + found, new_caste)
+    dgroup.wb(life_off, new_caste)
+    simant_data_group.wb(0x3B22 + found, 0x0A)
+    return True
+
+
+def do_nest_ant_b(dgroup, simant_data_group, pack, x: int, y: int,
+                  mode: int) -> None:
+    """Tick the CURRENT black nest-list ant (`pack[0x9B6A]`'s slot) at
+    `(x, y)` — the per-tick orchestrator `_DoAntSimB` calls once per live
+    B-list slot, and the ~18-arm jump-table dispatcher the whole seg6
+    behavior tier exists to unblock.
+
+    Recovered from `_DoNestAntB` (SIMANTW.SYM seg6:2DAE, FAR return, 1910
+    bytes, args x=[bp+6], y=[bp+8], mode=[bp+10] — the acting ant's own
+    live caste byte, THREE args only, no caller-precomputed `sub`: `sub =
+    (mode&0x78)>>3` is computed fresh here, at the very top, matching
+    `_DoDigInB`'s own `caste_sub` derivation).
+
+    GENUINE SURPRISE beyond the pre-existing scoping pass (confirmed via a
+    fresh from-scratch disassembly of the full 1910-byte body, not assumed):
+    the routine is NOT a single 18-arm dispatcher.  `mode & 0x80` gates TWO
+    entirely separate top-level bodies that only converge at the shared
+    epilogue:
+
+    - `mode & 0x80` CLEAR (the common case — genuine live black castes are
+      `< 0x80`, confirmed via `make_blk_queen`/`place_black_queen`'s own
+      literal caste constants, e.g. `0x60..0x6F`): the own-colony 18-arm
+      dispatch documented below.
+    - `mode & 0x80` SET: a SEPARATE ~450-byte body (`_do_nest_ant_b_foreign`)
+      for a FOREIGN-colony ant physically occupying a slot in the BLACK
+      list — i.e. a raider from the other colony that invaded the black
+      nest and was added to the B-list via `raid_in_b`-style mechanics with
+      a foreign-flavored caste byte, ticked here using the SAME B-list
+      field offsets since it physically lives in this list's coordinate
+      space.  See that function's own docstring.
+
+    Both bodies call ONLY already-established primitives (independently
+    audited: every unique `call far`/`call near` target across the WHOLE
+    1910-byte body resolves to an already-recovered sibling, an inline
+    `_SRand*`/`_GetNewMode*`/`_IsYellowAnt`/`_FindInBList`/`_GetWinner`
+    primitive, the unrecovered `_YellowFight` raise-loudly gate, or the
+    presentation-only `ANTEDIT!_RestBalloons`-family balloon call — no new
+    unrecovered dependency was found), so both are fully recovered here
+    rather than gated behind a stub.
+
+    ---- Shared prologue (own-colony branch only) ----
+
+    Reads the acting slot's `field_c` (`simant_data_group[0x3B22+slot]`,
+    `slot=pack[0x9B6A]`) and unconditionally bumps a per-field_c word tally
+    (`pack[0x786A + 2*field_c]` — the SAME "mode population" count array
+    `tally_mode_pop`/`clr_mode_pop` already established, confirmed by their
+    overlapping address ranges; UI-only bookkeeping, still real PACK state
+    a byte-exact oracle must match).
+
+    A starvation gate follows, BEFORE dispatch: rolls `_SRand256()`; only
+    on an exact `0` (1-in-256) AND `field_c != 9` does it roll `_SRand32()`
+    against `dgroup[0xAC86]` (food supply) — a roll EXCEEDING the supply
+    kills this ant outright (caste and life-grid cell cleared, black-death
+    counter `pack[0x9B26:0x9B28]` bumped) and returns immediately, no
+    dispatch at all.  Ported with the SAME conditional-`_SRand32`-call-
+    count discipline this tier's sessions keep re-discovering as a bug
+    class: the second roll is NEVER made unless the first roll was exactly
+    `0` and `field_c != 9`.
+
+    `field_c > 0x11` (18, out of the table's 18-entry range) and `field_c
+    == 0` behave IDENTICALLY (confirmed byte-for-byte via independent
+    disassembly of both code sites): a `_SRand32()==0` (1-in-32) refresh of
+    `field_c` via `get_new_mode_b(sub)`, then `_nest_ant_b_selfcheck`; a
+    "clear" result finishes with `try_move_dir_b(x, y, mode&7)`, retried
+    once with a fresh `_SRand8()` direction on failure (return value
+    discarded either way — matching `do_nesting_b`'s own `finish()` shape).
+
+    ---- The 18-arm table (`field_c` 0..0x11), each independently traced ----
+
+    - `0`: see above (shares the fallback's own code, not a separate copy).
+    - `1`: `do_nesting_b(x, y, mode, sub)`; return value discarded.
+    - `2, 5, 7, 0xB, 0xC, 0xF, 0x10` (SEVEN arms, all sharing the identical
+      jump-table cell `0x2FCF`): `do_dig_out_b(x, y, mode)`, UNCONDITIONALLY
+      — no `dgroup[0xCE80]` gate (unlike `6`, below).
+    - `3`: `do_food_in_b(x, y, mode)`.
+    - `4`: `do_dig_in_b(x, y, mode, sub)`.
+    - `6`: if `dgroup[0xCE80] != 2`: `do_dig_out_b(x, y, mode)` (identical
+      to the unconditional arms above). If `dgroup[0xCE80] == 2`: instead
+      runs `_nest_ant_b_selfcheck` directly (NO `_SRand32` refresh
+      prologue this time, confirmed via independent disassembly at
+      seg6:0x2FE0 vs 0x2E95/0x2EA3) and, on "clear", the SAME
+      `try_move_dir_b(mode&7)`-with-retry finish as the `0`/fallback arms.
+    - `8`: `sim_egg_b(x, y)`.
+    - `9`: `sim_queen_b(...)` — see the dedicated note below; the SECOND
+      genuine surprise this routine hid.
+    - `0xA`: `do_nest_fight_b(x, y)`.
+    - `0xD`: `_nest_ant_b_selfcheck`; a resolved fight returns immediately.
+      "Clear": UNCONDITIONALLY refreshes the acting ant's own life-grid
+      cell to its own (freshly re-read) live caste — a self-heal/reassert
+      step distinct from `0`/`6`/`0xE`'s move attempt — then rolls
+      `_SRand1(20)`; on a `0` (1-in-20) recomputes `sub` FRESH from the
+      acting ant's own LIVE caste (`(caste&0x78)>>3` — NOT the caller's
+      `sub`/`mode` args at all, independently confirmed via the raw
+      disassembly's own register reload) and refreshes `field_c` via the
+      GENERAL `get_new_mode(sub, full_byte=caste)` (not `get_new_mode_b`).
+      A nonzero roll (19-in-20) only fires a presentation-only speech-
+      balloon (`ANTEDIT!_RestBalloons`-family, gated on
+      `simant_data_group[0x85FC]==1`) — omitted, core/presentation split.
+    - `0xE`: the SAME `_SRand32()==0` `get_new_mode_b(sub)` refresh
+      prologue as `0`/fallback, THEN `_nest_ant_b_selfcheck`.  A resolved
+      fight jumps STRAIGHT into the population-cap tail below (no move
+      attempt at all — genuinely different polarity from `0xD`'s "resolved
+      -> return immediately", independently confirmed via the raw
+      disassembly's own `jz`/`jnz` sense at the two sites).  "Clear":
+      `try_move_dir_b(x, y, mode&7)` with a `_SRand8()` retry on failure
+      (result discarded either way), THEN unconditionally falls into the
+      SAME population-cap tail regardless of whether either move attempt
+      succeeded.  Population-cap tail: `pack[0x7C44] > 0x64` (100, signed)
+      sets `field_c = 0x0F`; otherwise no further change (the field_c the
+      move/fight logic above already set, if any, stands).
+    - `0x11`: fully INLINED (no `call` instruction at all, confirmed via
+      the raw disassembly), but byte-for-byte structurally identical to
+      the ALREADY-recovered `do_drown_b`'s own shared body (`_do_drown`) —
+      same `< 0x14` non-drowning `get_new_mode_b` refresh, same
+      `_SRand1(3)`-rerolled-direction / `_SRand1(100)` 1-in-100 drown
+      shape, same `[0x9FC6:0x9FC8]`/`[0x9B26:0x9B28]` colony-keyed 32-bit
+      counters — composed here as `do_drown_b(x, y, mode)` rather than
+      re-derived, confirming both independently.
+
+    ---- `_SimQueenB` argument-order surprise (arm `9`) ----
+
+    `_SimQueenB`'s own prior recovery (commit `5aa2d91`) documented its
+    signature BY ANALOGY to `_DoDigInB`'s (`x=[bp+6], y=[bp+8], mode=[bp+10],
+    caste_sub=[bp+12]`) rather than independently re-verifying it against
+    THIS caller.  This session's own fresh disassembly of arm `9`'s push
+    sequence (`push [bp+10](mode); push [bp-2](sub); push y; push x`) —
+    cross-checked against TWO independently-confirmed-correct call shapes
+    in the SAME function (arm `1`'s `_DoNestingB` call and arm `4`'s
+    `_DoDigInB` call, BOTH of which push `sub` before `mode`, landing `sub`
+    at the callee's HIGHEST arg offset per this session's own verified
+    push-order-to-frame-offset rule) — found arm `9` pushes `mode` BEFORE
+    `sub`, the OPPOSITE order.  That means `_SimQueenB`'s REAL frame is
+    `x=[bp+6], y=[bp+8], [bp+10]=sub, [bp+12]=mode` — `mode`/`caste_sub`
+    are SWAPPED relative to `sim_queen_b`'s existing parameter NAMES.  This
+    does not make the already-shipped, already-oracle-verified
+    `sim_queen_b` function itself wrong — its own state-diff tests invoke
+    it directly against `_SimQueenB`'s real entry point with a synthetic
+    frame, positionally, so byte-exactness only depends on which VALUE
+    lands at which OFFSET, never on the Python parameter's NAME. It also
+    matches `sim_queen_b`'s own internal logic far better semantically:
+    the value checked against literal `0x0C`/`0x0D` (a `sub`-shaped 0..15
+    range) is a far more natural `sub` than a full caste byte, and the
+    value XOR'd/masked for a compass direction and handed to
+    `queen_move_b` is a far more natural full caste (`mode`) than a
+    `sub` value. Ported here by calling `sim_queen_b`'s EXISTING
+    positional signature with the two values swapped relative to their
+    names: `sim_queen_b(x, y, sub, mode)` — i.e. this caller's `sub` lands
+    in `sim_queen_b`'s `mode` PARAMETER SLOT (because that parameter is
+    positionally `[bp+10]`), and this caller's `mode` lands in
+    `sim_queen_b`'s `caste_sub` parameter slot (positionally `[bp+12]`).
+    Its own return value is discarded here (matching every other own-
+    colony dispatch arm).
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    if mode & 0x80:
+        _do_nest_ant_b_foreign(dgroup, simant_data_group, pack, x, y, mode)
+        return
+
+    sub = ((mode & 0x78) >> 3) & 0xFFFF
+
+    slot = pack.rw(0x9B6A)
+    field_c = simant_data_group.rb(0x3B22 + slot)
+
+    tally_off = (0x786A + 2 * field_c) & 0xFFFF
+    pack.ww(tally_off, (pack.rw(tally_off) + 1) & 0xFFFF)
+
+    seed, roll256 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0xFF)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll256 == 0 and field_c != 9:
+        seed, roll32 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0x1F)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        if roll32 > _sx16(dgroup.rw(0xAC86)):
+            slot = pack.rw(0x9B6A)
+            simant_data_group.wb(0x3D18 + slot, 0)
+            dgroup.wb(LIFE_PLANE_BASE[2] + (x << 6) + y, 0)
+            _acc_add32(pack, 0x9B26, 0x9B28, 1)
+            return
+
+    def finish_move(direction: int) -> None:
+        if try_move_dir_b(dgroup, simant_data_group, pack, x, y, direction):
+            return
+        seed2, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed2)
+        try_move_dir_b(dgroup, simant_data_group, pack, x, y, roll8)
+
+    def idle_selfcheck_and_move() -> None:
+        if _nest_ant_b_selfcheck(dgroup, simant_data_group, pack, x, y, mode):
+            return
+        finish_move(mode & 7)
+
+    def refresh_1in32() -> None:
+        seed3, roll32b = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0x1F)
+        dgroup.ww(SRAND_SEED_OFF, seed3)
+        if roll32b != 0:
+            return
+        result = get_new_mode_b(dgroup, simant_data_group, pack, sub)
+        cur_slot = pack.rw(0x9B6A)
+        simant_data_group.wb(0x3B22 + cur_slot, result & 0xFF)
+
+    if field_c > 0x11 or field_c == 0:
+        refresh_1in32()
+        idle_selfcheck_and_move()
+        return
+    if field_c == 1:
+        do_nesting_b(dgroup, simant_data_group, pack, x, y, mode, sub)
+        return
+    if field_c in (2, 5, 7, 0xB, 0xC, 0xF, 0x10):
+        do_dig_out_b(dgroup, simant_data_group, pack, x, y, mode)
+        return
+    if field_c == 3:
+        do_food_in_b(dgroup, simant_data_group, pack, x, y, mode)
+        return
+    if field_c == 4:
+        do_dig_in_b(dgroup, simant_data_group, pack, x, y, mode, sub)
+        return
+    if field_c == 6:
+        if dgroup.rw(0xCE80) != 2:
+            do_dig_out_b(dgroup, simant_data_group, pack, x, y, mode)
+            return
+        idle_selfcheck_and_move()
+        return
+    if field_c == 8:
+        sim_egg_b(dgroup, simant_data_group, pack, x, y)
+        return
+    if field_c == 9:
+        sim_queen_b(dgroup, simant_data_group, pack, x, y, sub, mode)
+        return
+    if field_c == 0xA:
+        do_nest_fight_b(dgroup, simant_data_group, pack, x, y)
+        return
+    if field_c == 0xD:
+        if _nest_ant_b_selfcheck(dgroup, simant_data_group, pack, x, y, mode):
+            return
+        life_off = LIFE_PLANE_BASE[2] + (x << 6) + y
+        slot2 = pack.rw(0x9B6A)
+        own_caste = simant_data_group.rb(0x3D18 + slot2)
+        dgroup.wb(life_off, own_caste)
+        seed4, roll20 = srand1(dgroup.rw(SRAND_SEED_OFF), 20)
+        dgroup.ww(SRAND_SEED_OFF, seed4)
+        if roll20 != 0:
+            # ANTEDIT _RestBalloons-family speech balloon omitted -- presentation-only
+            return
+        slot3 = pack.rw(0x9B6A)
+        own_caste2 = simant_data_group.rb(0x3D18 + slot3)
+        sub2 = (own_caste2 & 0x78) >> 3
+        result = get_new_mode(dgroup, simant_data_group, pack, sub2, own_caste2)
+        simant_data_group.wb(0x3B22 + slot3, result & 0xFF)
+        return
+    if field_c == 0xE:
+        refresh_1in32()
+        if not _nest_ant_b_selfcheck(dgroup, simant_data_group, pack, x, y, mode):
+            finish_move(mode & 7)
+        if _sx16(pack.rw(0x7C44)) > 0x64:
+            slot5 = pack.rw(0x9B6A)
+            simant_data_group.wb(0x3B22 + slot5, 0x0F)
+        return
+    # field_c == 0x11
+    do_drown_b(dgroup, simant_data_group, pack, x, y, mode)
+
+
+def _do_nest_ant_b_foreign(dgroup, simant_data_group, pack, x: int, y: int,
+                           mode: int) -> None:
+    """`do_nest_ant_b`'s OTHER top-level body: a per-tick behavior for a
+    FOREIGN-colony ant occupying a black nest-list ("B-list") slot — a
+    raider from the other colony that invaded the black nest, tracked in
+    the SAME B-list array/field offsets as genuine black ants (it lives at
+    the same physical position in the nest, so it needs the same
+    coordinate space), but with a caste byte whose colony bit (`0x80`) is
+    SET — a value no genuine black ant ever carries (confirmed via
+    `make_blk_queen`/`place_black_queen`'s own literal caste constants,
+    all `< 0x80`).
+
+    Reached from `do_nest_ant_b` at seg6:0x335C (the `mode & 0x80` branch).
+    Composes the already-recovered `find_in_b_list`, `get_winner`,
+    `is_yellow_ant`, `do_nest_fight_b`, `raid_in_b`, and `raid_out_b`; the
+    yellow-ant gate raises `NotImplementedError` for the UNRECOVERED
+    `_YellowFight`, matching this tier's established precedent.
+
+    Bumps a SEPARATE per-field_c word tally (`pack[0x7BE4 + 2*field_c]` —
+    the SAME array `_DoAntSimB`'s own trace increments for THIS colony's
+    B-list foreign-caste count, distinct from the own-colony `0x786A`
+    array `do_nest_ant_b` bumps).
+
+    `mode > 0xEF` (i.e. exactly the `(winner&0x80)+0x70 = 0xF0` "defeated
+    by a red winner" marker every fight-resolution site in this tier
+    stamps): calls `do_nest_fight_b(x, y)` directly and returns — the
+    SAME "queue up `_DoNestFightB`" mechanism the own-colony branch's
+    `field_c==0x0A` arm provides, just reached via the caste byte itself
+    here rather than `field_c`.
+
+    Otherwise (`mode` in `0x80..0xEF`): re-reads this slot's own `(x, y)`
+    life-grid cell (the SAME same-tick race-check shape
+    `_nest_ant_b_selfcheck` uses, but NOT that shared helper — this
+    branch's own occupant handling and valid-caste RANGE are genuinely
+    different, confirmed via independent disassembly):
+
+    - Occupant is the player's yellow ant: the `_YellowFight` gate here is
+      INVERTED relative to every other yellow-fight site in this tier
+      (`dgroup[0xCE98] == 0` fires it, not `!= 0` — independently
+      confirmed via the raw disassembly's own `cmp`/`jnz` sense, matching
+      the SAME inversion `check_nest_fight_r`/`do_rest_r`/`do_rand_r`
+      already established for red-flavored logic) — but the call
+      ARGUMENTS are the unchanged `(2, slot)` pair, NOT the `(3, slot)`
+      those R-flavored routines use (independently confirmed, not
+      "corrected" to match that precedent). A gate-clear yellow ant is
+      treated as empty (falls to the clear tail below).
+    - Occupant in `1..0x67` (a GENUINELY different valid-caste range from
+      `_nest_ant_b_selfcheck`'s own `0x88..0xE7` — this branch is looking
+      for a genuine LOW-caste, i.e. black-colony, ant at its own position,
+      the same "low range on the other colony's grid" shape
+      `check_nest_fight_r`'s own `8..0x67` range already established):
+      looked up via `find_in_b_list` at this ant's own `(x, y)`. A miss
+      falls to the clear tail.  A hit:
+
+        - `1..7` (an unhatched egg/larva stage — the SAME low range
+          `sim_egg_b`'s own growth counter uses before its `&0xF==8` hatch
+          check): the raider "eats" the egg — sets ITS OWN `field_c=3`
+          and ORs `0x08` into its own caste (the SAME "carrying" bit
+          `raid_in_b`'s own food-pickup branch sets), stamps that onto
+          its own position, clears the found egg's caste to `0` (its OWN
+          recorded-position cell is left untouched, unlike the queen case
+          below), bumps the SAME 32-bit `pack[0x7C1E:0x7C20]` "egg lost"
+          accumulator `sim_egg_b`'s own failed-hatch branch bumps, and
+          returns immediately — no combat resolution at all.
+        - `0x60..0x67` (the established black-QUEEN caste range —
+          `make_blk_queen`/`place_black_queen`'s own `direction+0x60`/
+          `+0x68` literals): clears the found queen's caste to `0` AND
+          its OWN recorded-position life-grid cell (`[0x3736+found]`/
+          `[0x392C+found]`) to `0` — a genuine "kill the queen at her own
+          home cell too" extra step no other found-caste range gets —
+          then FALLS THROUGH (no early return) into the SAME combat
+          resolution below.
+        - Anything else in range (`8..0x5F`), or after the queen's own
+          extra clear above: resolves `get_winner(arg_a=found's CURRENT
+          caste — freshly re-read, so `0` for the just-cleared queen case,
+          the untouched original value otherwise — arg_b=mode)`.  The
+          RAIDER's OWN caste is unconditionally cleared to `0` regardless
+          of who wins (this branch's ants are one-shot: they engage once
+          then convert into a defeat-marker at their OWN position, not
+          the found ant's), the winner is stamped onto the found slot's
+          `field_e`, its caste recomputed as `(winner&0x80)+0x70` onto
+          both its own caste field AND — unlike every OTHER fight
+          resolution in this tier — the RAIDER's OWN `(x, y)` cell (since
+          that is where the raider itself was standing), and `field_c =
+          0x0A`.  Returns.
+
+    Clear tail (empty own-position, out-of-range occupant, a search miss,
+    or a gate-clear yellow ant): `field_c == 7` calls
+    `raid_in_b(x, y, exclude_direction=mode)` (continuing an inbound
+    raid); anything else calls `raid_out_b(x, y)` (retreating) — the SAME
+    `field_c` values `raid_in_b`'s own body sets on its two branches (`1`
+    or `3`), confirming this raider alternates between the two established
+    raid primitives depending on its own last-set stage.
+    """
+    slot = pack.rw(0x9B6A)
+    field_c = simant_data_group.rb(0x3B22 + slot)
+
+    tally_off = (0x7BE4 + 2 * field_c) & 0xFFFF
+    pack.ww(tally_off, (pack.rw(tally_off) + 1) & 0xFFFF)
+
+    if mode > 0xEF:
+        do_nest_fight_b(dgroup, simant_data_group, pack, x, y)
+        return
+
+    life_off = LIFE_PLANE_BASE[2] + (x << 6) + y
+    occupant = dgroup.rb(life_off)
+
+    handled = False
+    if is_yellow_ant(occupant):
+        if dgroup.rw(0xCE98) == 0:
+            raise NotImplementedError(
+                "do_nest_ant_b: foreign-branch _YellowFight reached (not "
+                "recovered) -- x={!r} y={!r}".format(x, y))
+        # else: dgroup[0xCE98] != 0 -> treated as empty, falls to clear tail
+    elif 1 <= occupant <= 0x67:
+        found = find_in_b_list(pack, simant_data_group, x, y, occupant)
+        if found != 0xFFFF:
+            handled = True
+            if occupant <= 7:
+                slot2 = pack.rw(0x9B6A)
+                simant_data_group.wb(0x3B22 + slot2, 3)
+                new_caste = (simant_data_group.rb(0x3D18 + slot2) | 8) & 0xFF
+                simant_data_group.wb(0x3D18 + slot2, new_caste)
+                dgroup.wb(life_off, new_caste)
+                simant_data_group.wb(0x3D18 + found, 0)
+                _acc_add32(pack, 0x7C1E, 0x7C20, 1)
+            else:
+                if 0x60 <= occupant <= 0x67:
+                    simant_data_group.wb(0x3D18 + found, 0)
+                    fx = simant_data_group.rb(0x3736 + found)
+                    fy = simant_data_group.rb(0x392C + found)
+                    dgroup.wb(LIFE_PLANE_BASE[2] + (fx << 6) + fy, 0)
+
+                found_caste = simant_data_group.rb(0x3D18 + found)
+                winner = get_winner(dgroup, simant_data_group, pack,
+                                    found_caste, mode) & 0xFF
+                slot3 = pack.rw(0x9B6A)
+                simant_data_group.wb(0x3D18 + slot3, 0)
+                simant_data_group.wb(0x3F0E + found, winner)
+                new_found_caste = ((winner & 0x80) + 0x70) & 0xFF
+                simant_data_group.wb(0x3D18 + found, new_found_caste)
+                dgroup.wb(life_off, new_found_caste)
+                simant_data_group.wb(0x3B22 + found, 0x0A)
+
+    if handled:
+        return
+
+    if field_c == 7:
+        raid_in_b(dgroup, simant_data_group, pack, x, y, mode)
+    else:
+        raid_out_b(dgroup, simant_data_group, pack, x, y)
+
+
+def do_ant_sim_b(dgroup, simant_data_group, pack) -> None:
+    """Loop the live black ("B") nest-ant list in REVERSE order (last slot
+    down to slot `0`), ticking each nonzero-caste slot via `do_nest_ant_b`.
+
+    Recovered from `_DoAntSimB` (SIMANTW.SYM seg6:2D4E, NEAR return, 96
+    bytes, NO args).  Composes the already-recovered `do_nest_ant_b`.
+
+    `pack[0x9B6A]` (the SAME "current acting slot" pointer-global every
+    B-list behavior routine in this tier reads) doubles as this loop's own
+    counter: seeded from `pack[0x99D4]` (the live B-list count, confirmed
+    via `ds:[0xC34E]` resolving fresh to the PACK selector, same as every
+    other PACK pointer-global this tier uses) and decremented once per
+    iteration BEFORE that iteration's slot fields are read — so slot
+    `count-1` (the most-recently-added ant) runs first, slot `0` last. A
+    non-positive count is a complete no-op (the whole loop is skipped, not
+    just each iteration — confirmed via the raw disassembly's own `jle`
+    gating the loop's very first entry, before the first decrement).  Per
+    slot: reads `simant_data_group[0x3736+slot]` (X), `[0x392C+slot]` (Y,
+    masked to a byte), `[0x3D18+slot]` (caste) — the SAME three fields
+    `do_nest_ant_b`'s own callees already established.  A caste of exactly
+    `0` (a dead/cleared slot — the SAME "dead slot" marker
+    `find_in_b_list`'s own docstring cites) skips the call entirely for
+    that slot; any other caste calls `do_nest_ant_b(x, y, caste)`.
+    """
+    count = pack.rw(0x99D4)
+    pack.ww(0x9B6A, count & 0xFFFF)
+    if _sx16(count) <= 0:
+        return
+
+    while True:
+        slot = (pack.rw(0x9B6A) - 1) & 0xFFFF
+        pack.ww(0x9B6A, slot)
+        x = simant_data_group.rb(0x3736 + slot)
+        y = simant_data_group.rb(0x392C + slot) & 0xFF
+        caste = simant_data_group.rb(0x3D18 + slot)
+        if caste != 0:
+            do_nest_ant_b(dgroup, simant_data_group, pack, x, y, caste)
+        if _sx16(pack.rw(0x9B6A)) <= 0:
+            break
+
+
 def bounce(dgroup, x: int, y: int) -> int:
     """Pick a "bounce back into the map" compass value for an ant sitting at
     the yard edge, or `0` for a strictly interior position.
