@@ -2790,6 +2790,238 @@ def test_doreturnfoodant_state_diff_matches_asm(
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
 
 
+# ---- _DoForageAnt (seg6:1E42) — yard ant foraging tick --------------------
+# Composes is_valid_a, go_in_nest, get_new_mode, get_forage_dir, pickup_food_a,
+# is_yellow_ant, find_in_a_list, get_winner, jam_scent_bn/rn, dec_t_smell,
+# alarm_here2. Two gated branches this session deliberately does NOT recover
+# (_YellowFight, _DoTroph are out of scope) -- kept out of every seeded
+# scenario below, with dedicated tests confirming each gate raises loudly
+# when it WOULD fire (same pattern as _TryMoveDirB's trophallaxis gate test).
+_DOFORAGEANT_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2000, 0xD000),
+    (_SDG, 0, 0x9000),
+    (_PACK, 0x7000, 0xA300),
+]
+
+
+def _doforageant_seed(x, y, caste, srand, inside, dest_tile, threshold,
+                      occupant, alarmed=False, field_e=0, pack_9af2=0,
+                      ce98=0, identity_mode_table=True):
+    def seed(m):
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        m.mem.wb(sdg, 0x23A4, x)
+        m.mem.wb(sdg, 0x278E, y)
+        m.mem.wb(sdg, 0x2F62, caste)
+        m.mem.wb(sdg, 0x334C, field_e)
+        m.mem.ww(dg, 0xCBF2, srand)
+        m.mem.wb(pack, 0x9B6E, 1 if inside else 0)
+        # not at a nest entrance
+        m.mem.wb(dg, 0x28E8 + (x << 6) + y, 0x00)
+        # clear the alarm + trail grids so behavior is deterministic
+        m.mem.data[sdg + 0x52D2:sdg + 0x52D2 + 0x800] = bytes(0x800)
+        m.mem.data[sdg + 0x6AD2:sdg + 0x6AD2 + 0x800] = bytes(0x800)
+        m.mem.data[sdg + 0x7AD2:sdg + 0x7AD2 + 0x800] = bytes(0x800)
+        if alarmed:
+            hx, hy = x >> 1, y >> 1
+            m.mem.wb(sdg, 0x52D2 + (hx << 5) + hy, 1)
+        if identity_mode_table:
+            for i in range(64):
+                m.mem.wb(sdg, 0x24 + i, i % 8)
+        m.mem.ww(pack, 0x7604, threshold)
+        for dxo in range(-2, 3):
+            for dyo in range(-2, 3):
+                nx, ny = x + dxo, y + dyo
+                if 0 <= nx <= 0x7F and 0 <= ny <= 0x3F:
+                    m.mem.wb(dg, 0x28E8 + (nx << 6) + ny, dest_tile)
+                    m.mem.wb(dg, 0x68E8 + (nx << 6) + ny, occupant)
+        m.mem.ww(pack, 0x9AF2, pack_9af2)
+        m.mem.wb(dg, 0xCE98, ce98)
+        m.mem.wb(sdg, 0x8A5C, 0)           # get_winner: no cheat gate (SIMANT_DATA_GROUP, not PACK)
+        m.mem.ww(dg, RAND_STATE_OFF, 0)    # pin the C-runtime rand state (get_winner's _RRand)
+        m.mem.ww(dg, (RAND_STATE_OFF + 2) & 0xFFFF, 0)
+    return seed
+
+
+@pytest.mark.parametrize(
+    "x,y,caste,srand,inside,dest_tile,threshold,occupant,alarmed,label", [
+    (20, 25, 0x08, 0x1111, False, 0x10, 0x30, 0x00, False, "caste-sub-not-2-6"),
+    (20, 25, 0x02, 0x2222, False, 0x10, 0x30, 0x00, True, "alarmed-territory"),
+    (20, 25, 0x12, 0x3333, False, 0x10, 0x30, 0x00, False, "move-empty-black"),
+    (20, 25, 0x92, 0x3333, False, 0x10, 0x30, 0x00, False, "move-empty-red"),
+    (20, 25, 0x12, 0x4444, False, 0x49, 0x30, 0x00, False, "pickup-outside"),
+    (20, 25, 0x12, 0x4444, True, 0x20, 0x30, 0x00, False, "pickup-inside"),
+    (20, 25, 0x12, 0x5555, False, 0x50, 0x05, 0x00, False, "crowded-jitter"),
+    (20, 25, 0x12, 0x6666, False, 0x10, 0x30, 0x13, False, "occupied-same-colony"),
+    (20, 25, 0x12, 0x8888, False, 0x10, 0x30, 0xFE, False,
+     "occupied-yellow-same-colony-no-troph"),
+    (1, 1, 0x12, 0x1234, False, 0x10, 0x30, 0x00, False, "near-origin-edge"),
+])
+def test_doforageant_state_diff_matches_asm(x, y, caste, srand, inside,
+                                            dest_tile, threshold, occupant,
+                                            alarmed, label):
+    from simant.recovered.gameplay import do_forage_ant
+    results = _run_and_diff_segs(
+        6, 0x1E42, (0,),
+        lambda d, s, p: do_forage_ant(d, s, p, 0),
+        _DOFORAGEANT_REGIONS, near=True,
+        seed_fn=_doforageant_seed(x, y, caste, srand, inside, dest_tile,
+                                  threshold, occupant, alarmed=alarmed))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOFORAGEANT_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_doforageant_idle_srand32_zero_matches_asm():
+    # SRand32() == 0 (1-in-32) short-circuits to field_c=0x0D before anything
+    # else -- find a concrete seed whose first LFSR step lands in that slot.
+    from simant.recovered.gameplay import do_forage_ant
+    from simant.recovered.simone import srand_step
+    seed_val = next(cand for cand in range(0x10000)
+                    if srand_step(cand) & 0x1F == 0)
+    results = _run_and_diff_segs(
+        6, 0x1E42, (0,),
+        lambda d, s, p: do_forage_ant(d, s, p, 0),
+        _DOFORAGEANT_REGIONS, near=True,
+        seed_fn=_doforageant_seed(20, 25, 0x02, seed_val, False, 0x10, 0x30, 0x00))
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOFORAGEANT_REGIONS):
+        assert asm_after == rec_after, f"idle-roll32 {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_doforageant_direction_negative_matches_asm():
+    # Own half-res trail-scent cell set higher than every neighbor forces
+    # get_forage_dir's -1 "stay put" sentinel (verified against the raw
+    # disassembly to genuinely take the SRand8-gated field_c/dec_t_smell
+    # tail, calling dec_t_smell with ALREADY-HALVED (x>>1, y>>1) coordinates
+    # -- see do_forage_ant's own docstring for why that's not a bug).
+    from simant.recovered.gameplay import do_forage_ant
+
+    def seed(m):
+        _doforageant_seed(20, 25, 0x12, 0xAAAA, False, 0x10, 0x30, 0x00)(m)
+        sdg = m.seg_bases[_SDG]
+        hx, hy = 20 >> 1, 25 >> 1
+        m.mem.wb(sdg, 0x6AD2 + (hx << 5) + hy, 0xFF)   # own cell: max scent
+
+    results = _run_and_diff_segs(
+        6, 0x1E42, (0,), lambda d, s, p: do_forage_ant(d, s, p, 0),
+        _DOFORAGEANT_REGIONS, near=True, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOFORAGEANT_REGIONS):
+        assert asm_after == rec_after, f"direction<0 {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_doforageant_fight_found_matches_asm():
+    # Force a deterministic forage direction (identity mode table -> the
+    # returned direction equals the winning neighbor index) so the enemy-
+    # colony occupant at the resulting (new_x, new_y) is guaranteed to be
+    # found by find_in_a_list, exercising the get_winner/alarm_here2 tail
+    # (not just the "not found -> early return" case the fuzzed
+    # occupied-different-colony scenarios mostly hit).
+    from simant.recovered.gameplay import (do_forage_ant, GET_BEST_DIR_DX,
+                                            GET_BEST_DIR_DY)
+    x, y, caste = 20, 25, 0x12   # black, sub=2, low3=2
+    best_dir = 2                 # -> dx=+1, dy=0 (GET_BEST_DIR_DX/DY[2])
+    new_x, new_y = x + GET_BEST_DIR_DX[best_dir], y + GET_BEST_DIR_DY[best_dir]
+
+    def seed(m):
+        _doforageant_seed(x, y, caste, 0x7777, False, 0x10, 0x30, 0x93)(m)
+        dg, sdg, pack = (m.seg_bases[hooks.DG_SEG_INDEX], m.seg_bases[_SDG],
+                        m.seg_bases[_PACK])
+        hx, hy = x >> 1, y >> 1
+        nhx = hx + GET_BEST_DIR_DX[best_dir]
+        nhy = hy + GET_BEST_DIR_DY[best_dir]
+        m.mem.wb(sdg, 0x6AD2 + (nhx << 5) + nhy, 0x40)   # best neighbor
+        m.mem.ww(pack, 0x80F0, 2)                         # A-list count
+        m.mem.wb(sdg, 0x23A4 + 1, new_x & 0xFF)
+        m.mem.wb(sdg, 0x278E + 1, new_y & 0xFF)
+        m.mem.wb(sdg, 0x2F62 + 1, 0x93)                   # nonzero -> "alive"
+
+    results = _run_and_diff_segs(
+        6, 0x1E42, (0,), lambda d, s, p: do_forage_ant(d, s, p, 0),
+        _DOFORAGEANT_REGIONS, near=True, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOFORAGEANT_REGIONS):
+        assert asm_after == rec_after, f"fight-found {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+def test_doforageant_yellowfight_gate_raises():
+    # Occupied destination is the player's yellow ant (0xFE) AND
+    # (caste ^ dgroup[0xCE98]) & 0x80 -> the UNRECOVERED _YellowFight branch
+    # WOULD fire (independently confirmed against the real ASM: it reaches
+    # SIMANT1!_YellowFight, seg6:823E, and crashes deeper in that routine's
+    # own unrecovered dependency chain -- a call this routine's own
+    # disassembly surfaced beyond the prior scoping survey's call table).
+    from simant.recovered.gameplay import (do_forage_ant, GET_BEST_DIR_DX,
+                                            GET_BEST_DIR_DY)
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, caste = 20, 25, 0x12
+    new_x, new_y = x + 1, y   # identity mode table below -> direction 2 -> (+1, 0)
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(64):
+        sdg[0x24 + i] = i % 8
+    for i in range(8):         # live compass dx/dy table get_forage_dir's own
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF        # neighbor scan reads directly
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, x)
+    sdg_view.wb(0x278E, y)
+    sdg_view.wb(0x2F62, caste)
+    sdg_view.wb(0x6AD2 + (((x >> 1) + 1) << 5) + (y >> 1), 0x40)   # neighbor (+1,0)
+    dg_view.ww(0xCBF2, 0x1234)    # nonzero SRand seed -- avoid the roll32==0 idle short-circuit
+    dg_view.wb(0x28E8 + (x << 6) + y, 0x00)
+    dg_view.wb(0x28E8 + (new_x << 6) + new_y, 0x10)                # passable, not pickup
+    dg_view.wb(0x68E8 + (new_x << 6) + new_y, 0xFE)                # yellow ant occupant
+    pack_view.ww(0x7604, 0x30)
+    dg_view.wb(0xCE98, 0x80)      # (caste ^ 0x80) & 0x80 -> nonzero -> gate fires
+    with pytest.raises(NotImplementedError):
+        do_forage_ant(dg_view, sdg_view, pack_view, 0)
+
+
+def test_doforageant_dotroph_gate_raises():
+    # Occupied destination is the player's yellow ant AND the colony bit
+    # MATCHES dgroup[0xCE98] (so the _YellowFight gate is skipped), AND
+    # pack[0x9AF2] == 1 -> the UNRECOVERED _DoTroph branch WOULD fire
+    # (independently confirmed against the real ASM: it reaches
+    # SIMANT!_DoTroph, seg1:846E, NOT _YellowFight -- traced via the raw
+    # call-site addresses actually visited before the crash).
+    from simant.recovered.gameplay import (do_forage_ant, GET_BEST_DIR_DX,
+                                            GET_BEST_DIR_DY)
+    from simant.bridge.dgroup_view import ByteBackend
+
+    x, y, caste = 20, 25, 0x12
+    new_x, new_y = x + 1, y
+    dg = bytearray(0x10000)
+    sdg = bytearray(0x10000)
+    pack = bytearray(0x10000)
+    for i in range(64):
+        sdg[0x24 + i] = i % 8
+    for i in range(8):
+        sdg[i] = GET_BEST_DIR_DX[i] & 0xFF
+        sdg[8 + i] = GET_BEST_DIR_DY[i] & 0xFF
+    dg_view = ByteBackend(dg, 0)
+    sdg_view = ByteBackend(sdg, 0)
+    pack_view = ByteBackend(pack, 0)
+    sdg_view.wb(0x23A4, x)
+    sdg_view.wb(0x278E, y)
+    sdg_view.wb(0x2F62, caste)
+    sdg_view.wb(0x6AD2 + (((x >> 1) + 1) << 5) + (y >> 1), 0x40)
+    dg_view.ww(0xCBF2, 0x1234)    # nonzero SRand seed -- avoid the roll32==0 idle short-circuit
+    dg_view.wb(0x28E8 + (x << 6) + y, 0x00)
+    dg_view.wb(0x28E8 + (new_x << 6) + new_y, 0x10)
+    dg_view.wb(0x68E8 + (new_x << 6) + new_y, 0xFE)
+    pack_view.ww(0x7604, 0x30)
+    dg_view.wb(0xCE98, 0x00)      # (caste ^ 0x00) & 0x80 == 0 -> skip _YellowFight
+    pack_view.ww(0x9AF2, 1)       # -> _DoTroph gate fires
+    with pytest.raises(NotImplementedError):
+        do_forage_ant(dg_view, sdg_view, pack_view, 0)
+
+
 # ---- _RandTurn (seg6:2A22) — purely random caste-mode-table direction -----
 # Pure(ish): its only mutation is the SRand LFSR seed, same pattern as
 # `_Bounce`/`_GetForageDir`.

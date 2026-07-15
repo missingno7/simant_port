@@ -5823,6 +5823,314 @@ def do_return_food_ant(dgroup, simant_data_group, pack, slot: int) -> None:
         jam_scent_bt(simant_data_group, new_x, new_y, field_e)
 
 
+def _forage_jitter(dgroup, simant_data_group, slot: int, x: int, y: int,
+                   caste_low3: int, high_bits: int) -> None:
+    """Shared "turn in place" step `do_forage_ant` uses for all THREE of its
+    non-moving outcomes (too crowded, blocked by a same-colony ant, and the
+    trophallaxis-gate-skipped case): reroll a random facing from the SAME
+    caste-mode table `rand_turn`'s and `get_forage_dir`'s own random
+    fallback read (`simant_data_group[0x24 + (caste_low3<<3) + _SRand8()]`),
+    OR it with `high_bits` (the acting ant's own `caste & 0xF8`), and
+    re-stamp both the slot's caste field and its (unmoved) `(x, y)`
+    life-grid cell with the result — independently confirmed byte-identical
+    across all three real-ASM call sites (seg6:207E/21CB/220E), not assumed
+    from just one.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    new_caste = (simant_data_group.rb(0x24 + (caste_low3 << 3) + roll8)
+                 | high_bits) & 0xFF
+    simant_data_group.wb(0x2F62 + slot, new_caste)
+    dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, new_caste)
+
+
+def do_forage_ant(dgroup, simant_data_group, pack, slot: int) -> None:
+    """A yard ("A"-list) ant out foraging: heads home if it's standing on a
+    nest entrance, otherwise picks a forage direction (scent-gradient or
+    random) and either picks up food, moves, jitters in place if crowded/
+    blocked, or fights an enemy-colony ant occupying its target cell.
+
+    Recovered from `_DoForageAnt` (SIMANTW.SYM seg6:1E42, arg slot=[bp+4];
+    NEAR return, 1126 bytes). Composes the already-recovered `is_valid_a`,
+    `go_in_nest`, `get_new_mode`, `get_forage_dir`, `pickup_food_a`,
+    `is_yellow_ant`, `find_in_a_list`, `get_winner`, `jam_scent_bn`/`rn`,
+    `dec_t_smell`, `alarm_here2`, and the `_SRand8`/`16`/`32` LFSR family.
+
+    Nest-entrance check is `do_return_food_ant`'s own (valid position, tile
+    `0x50` outside / `0x80..0x8F` inside `pack[0x9B6E]`): a match calls
+    `go_in_nest` and returns. An INVALID position is NOT special-cased —
+    it collapses into the exact same "not at entrance" continuation as a
+    valid-but-elsewhere position (independently confirmed: `is_valid_a`
+    failing and the tile mismatching both set the SAME zero flag the ASM
+    branches on), so an out-of-declared-range `(x, y)` still runs the rest
+    of this routine on whatever raw byte the slot's position field holds.
+
+    A `_SRand32()` roll of exactly `0` (1-in-32) short-circuits to an idle
+    outcome (`field_c` (`simant_data_group[0x2B78+slot]`) set to `0x0D`)
+    before anything else — even before the alarm-territory gate below.
+
+    Otherwise: an ALARM-grid gate (`simant_data_group[0x52D2 + (hx<<5) +
+    hy]`, hx=x>>1/hy=y>>1 — the SAME half-res grid `alarm_here`/`alarm_here2`/
+    `smooth_alarm` read/write, independently confirmed via `alarm_here2`'s own
+    `0x52D2` base) aborts with `field_c = 0x0B` if the cell is alarmed at all.
+
+    `caste_sub = (caste & 0x78) >> 3`: if NOT `2` or `6`, calls
+    `get_new_mode(caste_sub, caste)`, stores the result in `field_c`, zeroes
+    `field_e` (`simant_data_group[0x334C+slot]`), and returns — no foraging
+    this tick for these sub-modes.
+
+    For `caste_sub` in `{2, 6}`: calls `get_forage_dir(x, y, caste&7,
+    colony_flag=caste)`.
+
+    - Direction `< 0` ("no better cell, stay put" sentinel): rolls
+      `_SRand8()`; nonzero clears `field_c` to `0`, zero instead calls
+      `get_new_mode(caste_sub, caste)` into `field_c`; either way
+      `field_e` is zeroed, then `dec_t_smell` is called with `(x >> 1,
+      y >> 1, caste & 0x80)` — note `dec_t_smell` ITSELF halves its x/y
+      again internally, so this call site genuinely operates on a
+      QUARTER-resolution cell relative to the ant's actual half-res trail
+      cell. Independently re-verified against the OTHER `dec_t_smell` call
+      site in this same routine (the move-path one, which passes full-
+      resolution `new_x`/`new_y`) — a real asymmetry in the compiled code
+      between the two call sites, not a transcription slip, ported
+      verbatim rather than "corrected".
+
+    - Direction `>= 0`: computes `new_x`/`new_y` from
+      `simant_data_group[direction]`/`[direction+8]` (the SAME live
+      8-entry compass dx/dy table `get_best_dir` reads, confirmed via
+      `get_forage_dir`'s own established read of the identical table) and
+      reads the yard map tile there.
+
+      - Tile is a pickup spot (`0x48..0x4B` outside / `0x18..0x27` inside
+        `pack[0x9B6E]`): stamps `direction | high_bits | 0x08` (`high_bits`
+        = `caste & 0xF8`) as the new caste onto BOTH the slot's caste field
+        and the life-grid cell AT THE OLD `(x, y)` — the ant does NOT step
+        onto the food tile this tick, it just turns to face it — then calls
+        `pickup_food_a(new_x, new_y)`, sets `field_c = 3`, and `field_e =
+        0xC8` (200 — a carry/return-trip counter, the same field
+        `do_return_food_ant` decrements each step home). Returns.
+
+      - Tile's crowding value exceeds `pack[0x7604]`: too crowded to move —
+        `_forage_jitter`s in place (see above), then on a `_SRand16()` roll
+        of exactly `0` (1-in-16) ALSO calls `get_new_mode(caste_sub, caste)`
+        into `field_c` (zeroing `field_e`) on top of the jitter. Returns.
+
+      - Otherwise (clear enough to move): reads the life-grid occupant at
+        `(new_x, new_y)`.
+
+        - Occupant `0` (empty): moves — stamps `direction | high_bits` at
+          the new cell, clears the old one, updates the slot's `(x, y)`;
+          if `field_e` is nonzero, decrements it and calls `jam_scent_rn`/
+          `bn` (the NEST scent grid — NOT `jam_scent_bt`/`rt`'s TRAIL grid
+          `do_return_food_ant` uses; independently confirmed via the raw
+          call targets, seg6:0x94F6/0x94B6) at the new position with the
+          post-decrement value; then unconditionally calls
+          `dec_t_smell(new_x, new_y, caste & 0x80)` (full-resolution this
+          time). Returns.
+
+        - Occupant is the player's yellow ant (`is_yellow_ant`): if
+          `(caste ^ dgroup[0xCE98]) & 0x80` (a BYTE xor+test — genuinely
+          different from `check_nest_fight_b`/`r`'s plain word `!= 0` test
+          on the SAME `dgroup[0xCE98]` field, independently re-derived from
+          the raw `xor al, ds:[CE98]; test al, 80h` rather than assumed
+          identical to that precedent), calls the UNRECOVERED
+          `SIMANT1!_YellowFight(slot, 1)` (seg6:823E, reached via the
+          same-segment `push cs; call near` far-call-emulation idiom) and
+          returns unconditionally — a call this routine's own dependency
+          chain surfaces that the prior scoping survey's call-table did NOT
+          list (independently found during this session's own from-scratch
+          disassembly, not merely trusted from that report); per this
+          project's fail-loud rule, this branch raises `NotImplementedError`
+          instead of guessing at `_YellowFight`'s effect, matching the
+          established `check_nest_fight_b`/`r` precedent for the same
+          unrecovered routine. Otherwise (colony bit matches — same
+          colony's yellow ant): falls through to the SAME trophallaxis gate
+          below as if the occupant were merely a same-colony ant.
+
+        - Occupant same colony, not yellow (falls through here too): gated
+          on `pack[0x9AF2]`. This routine's own compiled comparison is a
+          literal `== 1` (`cmp ..., 0001h`) — NOT `try_move_dir_b`'s `!= 0`
+          test on the SAME field. Independently checked for equivalence
+          (per this project's own house rule against assuming unverified
+          equivalences): `pack[0x9AF2]`'s only write site anywhere in this
+          codebase is `set_my_health`'s `pack.ww(0x9AF2, 0 if ... else 1)`
+          — the field only ever holds `0` or `1`, so `== 1` and `!= 0` ARE
+          behaviorally identical here; ported as the exact compiled `== 1`
+          regardless, for maximum fidelity to the real instruction. If set:
+          first stamps `high_bits | direction` onto the caste field AND the
+          OLD-position life-grid cell (setting up the destination marker
+          `_DoTroph` reads), then calls the UNRECOVERED
+          `SIMANT!_DoTroph(x, y, direction)` (seg1:846E) — raises
+          `NotImplementedError` here (the established `try_move_dir_b`
+          precedent for this exact unrecovered routine) AFTER performing
+          those two writes, since the real ASM performs them unconditionally
+          before the call regardless of `_DoTroph`'s own (unknown) effect.
+          If NOT set, or after a hypothetical `_DoTroph` return: unconditionally
+          `_forage_jitter`s in place and returns — no move, no trophallaxis
+          effect on state beyond the pre-call stamp.
+
+        - Occupant is a DIFFERENT colony's ant (not yellow, colony bit
+          differs): a fight. Clears the acting ant's own caste field and
+          its life-grid cell at the OLD position (it "dies"/vanishes from
+          the A-list), looks the occupant up via `find_in_a_list(new_x,
+          new_y)` (a MISS — `0xFFFF` — ends the routine with no further
+          effect), then resolves `get_winner(arg_a=occupant_caste,
+          arg_b=acting_caste)`: stamps `(winner & 0x80) + 0x70` onto the
+          found occupant's caste field AND the life-grid cell at the new
+          position, sets its `field_c = 0x0A`, its `field_e = winner &
+          0xFF`, and finally calls `alarm_here2(new_x, new_y, 0x28)`.
+    """
+    from .simone import SRAND_SEED_OFF, srand_pow2
+
+    def sx8(v: int) -> int:
+        v &= 0xFF
+        return v - 0x100 if v & 0x80 else v
+
+    x = simant_data_group.rb(0x23A4 + slot) & 0xFF
+    y = simant_data_group.rb(0x278E + slot)
+    caste = simant_data_group.rb(0x2F62 + slot)
+
+    at_entrance = False
+    if is_valid_a(x, y):
+        tile = dgroup.rb(MAP_PLANE_BASE[0] + (x << 6) + y)
+        if pack.rw(0x9B6E) == 0:
+            at_entrance = tile == 0x50
+        else:
+            at_entrance = 0x80 <= tile <= 0x8F
+
+    if at_entrance:
+        go_in_nest(dgroup, simant_data_group, pack, x, y, slot)
+        return
+
+    seed, roll32 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0x1F)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+    if roll32 == 0:
+        simant_data_group.wb(0x2B78 + slot, 0x0D)
+        return
+
+    high_bits = caste & 0xF8
+    caste_sub = (caste & 0x78) >> 3
+
+    territory_idx = ((x & 0xFE) << 4) + (y >> 1)
+    if simant_data_group.rb(0x52D2 + territory_idx) != 0:
+        simant_data_group.wb(0x2B78 + slot, 0x0B)
+        return
+
+    caste_low3 = caste & 7
+    if caste_sub not in (2, 6):
+        result = get_new_mode(dgroup, simant_data_group, pack, caste_sub, caste)
+        simant_data_group.wb(0x2B78 + slot, result & 0xFF)
+        simant_data_group.wb(0x334C + slot, 0)
+        return
+
+    direction = get_forage_dir(dgroup, simant_data_group, x, y, caste_low3, caste)
+
+    if direction < 0:
+        seed, roll8 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 7)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        if roll8 != 0:
+            simant_data_group.wb(0x2B78 + slot, 0)
+        else:
+            result = get_new_mode(dgroup, simant_data_group, pack, caste_sub, caste)
+            simant_data_group.wb(0x2B78 + slot, result & 0xFF)
+        simant_data_group.wb(0x334C + slot, 0)
+        dec_t_smell(simant_data_group, x >> 1, y >> 1, caste & 0x80)
+        return
+
+    new_y = (y + sx8(simant_data_group.rb(8 + direction))) & 0xFFFF
+    new_x = (x + sx8(simant_data_group.rb(direction))) & 0xFFFF
+    dest_tile = dgroup.rb(MAP_PLANE_BASE[0] + (new_x << 6) + new_y)
+
+    is_pickup = False
+    if pack.rw(0x9B6E) == 0:
+        is_pickup = 0x48 <= dest_tile <= 0x4B
+    else:
+        is_pickup = 0x18 <= dest_tile <= 0x27
+
+    if is_pickup:
+        new_caste = (direction | high_bits | 0x08) & 0xFF
+        simant_data_group.wb(0x2F62 + slot, new_caste)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, new_caste)
+        simant_data_group.wb(0x2B78 + slot, 3)
+        pickup_food_a(dgroup, pack, new_x, new_y)
+        simant_data_group.wb(0x334C + slot, 0xC8)
+        return
+
+    if dest_tile > pack.rw(0x7604):
+        _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
+        seed, roll16 = srand_pow2(dgroup.rw(SRAND_SEED_OFF), 0xF)
+        dgroup.ww(SRAND_SEED_OFF, seed)
+        if roll16 == 0:
+            result = get_new_mode(dgroup, simant_data_group, pack, caste_sub, caste)
+            simant_data_group.wb(0x2B78 + slot, result & 0xFF)
+            simant_data_group.wb(0x334C + slot, 0)
+        return
+
+    occupant = dgroup.rb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y)
+
+    if occupant == 0:
+        new_caste = (direction | high_bits) & 0xFF
+        dgroup.wb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y, new_caste)
+        simant_data_group.wb(0x2F62 + slot, new_caste)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
+        simant_data_group.wb(0x23A4 + slot, new_x & 0xFF)
+        simant_data_group.wb(0x278E + slot, new_y & 0xFF)
+
+        field_e = simant_data_group.rb(0x334C + slot)
+        if field_e != 0:
+            field_e = (field_e - 1) & 0xFF
+            simant_data_group.wb(0x334C + slot, field_e)
+            if caste & 0x80:
+                jam_scent_rn(simant_data_group, new_x, new_y, field_e)
+            else:
+                jam_scent_bn(simant_data_group, new_x, new_y, field_e)
+
+        dec_t_smell(simant_data_group, new_x, new_y, caste & 0x80)
+        return
+
+    if is_yellow_ant(occupant):
+        if (caste ^ dgroup.rb(0xCE98)) & 0x80:
+            raise NotImplementedError(
+                "do_forage_ant: _YellowFight branch reached (not recovered) "
+                "-- slot={!r}".format(slot))
+        # falls through to the same-colony trophallaxis-gated jitter below
+    else:
+        if (occupant ^ caste) & 0x80 == 0:
+            _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
+            return
+
+        # different colony: fight
+        acting_caste = caste
+        simant_data_group.wb(0x2F62 + slot, 0)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, 0)
+        found = find_in_a_list(pack, simant_data_group, new_x, new_y)
+        if found == 0xFFFF:
+            return
+        occupant_caste = simant_data_group.rb(0x2F62 + found)
+        winner = get_winner(dgroup, simant_data_group, pack, occupant_caste,
+                            acting_caste) & 0xFF
+        new_caste_occ = ((winner & 0x80) + 0x70) & 0xFF
+        simant_data_group.wb(0x2F62 + found, new_caste_occ)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (new_x << 6) + new_y, new_caste_occ)
+        simant_data_group.wb(0x2B78 + found, 0x0A)
+        simant_data_group.wb(0x334C + found, winner)
+        alarm_here2(simant_data_group, new_x, new_y, 0x28)
+        return
+
+    # occupant was yellow, same colony -> trophallaxis gate then jitter
+    if pack.rw(0x9AF2) == 1:
+        pre_caste = (high_bits | direction) & 0xFF
+        simant_data_group.wb(0x2F62 + slot, pre_caste)
+        dgroup.wb(LIFE_PLANE_BASE[0] + (x << 6) + y, pre_caste)
+        raise NotImplementedError(
+            "do_forage_ant: _DoTroph branch reached (not recovered) -- "
+            "slot={!r}".format(slot))
+
+    _forage_jitter(dgroup, simant_data_group, slot, x, y, caste_low3, high_bits)
+
+
 def rand_turn(dgroup, simant_data_group, caste_low3: int) -> int:
     """Pick a purely random direction from the caste-mode table — no
     yard-edge handling, no gradient, just a fresh `_SRand8()` roll.

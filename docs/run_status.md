@@ -1,5 +1,71 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.206) — /goal grind: _DoForageAnt (seg6 behavior tier)
+- RECOVERED `do_forage_ant`/`_forage_jitter` (`_DoForageAnt`, SIMANTW.SYM
+  seg6:1E42, arg slot=[bp+4]; NEAR return, 1126 bytes) — the yard ("A"-list)
+  foraging-ant per-tick behavior, the biggest remaining gap per README's
+  own "what's done vs missing". Re-verified the prior scoping survey's
+  call table from scratch via a fresh linear disassembly (recreated the
+  `dos_re.lift.decode.decode_one`-over-`runtime.create_machine()` scratch
+  disassembler cont.85 established) rather than trusting the report.
+- Composes `is_valid_a`, `go_in_nest`, `get_new_mode`, `get_forage_dir`,
+  `pickup_food_a`, `is_yellow_ant`, `find_in_a_list`, `get_winner`,
+  `jam_scent_bn`/`rn`, `dec_t_smell`, `alarm_here2` — all already
+  recovered. Two genuine raise-loudly gates, matching the established
+  `try_move_dir_b`/`check_nest_fight_b`/`r` fail-loud precedent for
+  unrecovered dependencies:
+  - `SIMANT!_DoTroph` (seg1:846E) — gated on `pack[0x9AF2] == 1`. The
+    scoping report flagged this routine's own comparison as possibly
+    `==1` vs `try_move_dir_b`'s `!=0` on the SAME field; independently
+    re-derived from the raw ASM (`cmp ..., 0001h`, a genuine equality
+    test, not `!=0`) AND cross-checked for behavioral equivalence: the
+    field's only write site anywhere in this codebase (`set_my_health`)
+    only ever stores `0` or `1`, so the two forms agree here, but `==1`
+    is what's ported (byte-exact to the real instruction regardless).
+  - `SIMANT1!_YellowFight` (seg6:823E, called via the same-segment
+    `push cs; call near` far-call-emulation idiom, args `(slot, 1)`) —
+    **a call the prior scoping survey's exhaustive-call-scan did NOT
+    list**, found independently in this session's own from-scratch
+    disassembly of the "occupied destination" branch. Not a low-
+    confidence surprise (unlike the class of bug `_CreateNewHole` hit
+    once): the gate condition (`(caste ^ dgroup[0xCE98]) & 0x80`) and its
+    placement were fully, confidently traced and confirmed against the
+    real ASM (see below), so recovery proceeded rather than stopping.
+  - Both gates independently CONFIRMED against the real ASM oracle, not
+    just derived: a fuzz harness (300 randomized slot/position/caste/
+    occupant/RNG-seed trials) found the real ASM crashes on an unrecovered
+    downstream opcode in EVERY case (and only those cases) where the
+    derived gate condition evaluates true, and matches byte-exact in
+    EVERY case it evaluates false — zero disagreements. One case was
+    further hand-traced instruction-by-instruction to confirm the real
+    ASM actually reaches `_DoTroph`'s call site (seg6:21B0), not
+    `_YellowFight`'s (2171), when only the troph gate should fire.
+  - Also confirmed a real asymmetry: `dec_t_smell`'s "no better forage
+    direction, stay put" call site passes ALREADY-HALVED `(x>>1, y>>1)`
+    coordinates into a function that halves its args AGAIN internally —
+    a genuine quarter-resolution quirk in the compiled code (the OTHER
+    call site in this same routine passes full-resolution coords),
+    ported verbatim rather than "corrected".
+- Two real test-authoring bugs caught and fixed before trusting the ASM
+  oracle: (1) `get_forage_dir`'s neighbor scan reads simant_data_group's
+  OWN live 8-entry compass dx/dy table (offsets 0..15) — a from-scratch
+  `ByteBackend` test fixture left all-zero collapses every neighbor onto
+  the ant's own cell; (2) `get_winner`'s C-runtime `_RRand` state
+  (`RAND_STATE_OFF`) drifts during normal VM execution (confirmed via a
+  live before/after read) — every existing get_winner-consuming test
+  already pins it explicitly; the `_DoForageAnt` fight-path test hadn't,
+  causing a real winner-computation mismatch until pinned to a fixed value.
+- 15 new state-diff/gate tests, all green on real ASM (14 covering every
+  branch: idle-roll32, alarmed-territory, caste-sub-not-2-6, move black/
+  red, pickup outside/inside, crowded-jitter, occupied-same-colony,
+  occupied-yellow-no-troph, near-origin-edge, direction<0 quirk, and a
+  dedicated forced-direction fight-found case exercising the
+  get_winner/alarm_here2 tail specifically, plus 2 dedicated
+  `pytest.raises(NotImplementedError)` gate tests).
+- Suite: simant 2028 (+15), full suite green.
+- `_DoDigInB` (Target 2 per this session's brief) not yet attempted this
+  session — next up.
+
 ## 2026-07-15 (cont.205) — /goal grind: house/yard tile-decoration cluster (11-for-11)
 - RECOVERED the full Tier-1 house/yard tile-decoration cluster flagged by the
   prior scoping survey — all 11 symbols, all seg5, all clean/deterministic
