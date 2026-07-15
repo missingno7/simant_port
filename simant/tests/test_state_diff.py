@@ -7221,3 +7221,69 @@ def test_initsow_state_diff_matches_asm(seed_val, all_clear, extra_clear_cells, 
     for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
             results, _INITPILLAR_REGIONS):
         assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"
+
+
+# ---- _DoSow (seg7:3F8A) — per-tick growth/spread for 3 tracked rocks ------
+# Per-slot gate/step rolls are precomputed offline (via the already-verified
+# srand1/srand_pow2, with the CORRECTED polarity confirmed via the first
+# failing real-ASM run: growth fires when the SECOND _SRand4() is 0, not
+# nonzero -- the raw `jnz`-skips-growth branch was initially misread):
+#   seed 0x1234 -> all 3 slots gate1=0 (total no-op)
+#   seed 0x5001 -> all 3 slots gate1=2,gate2=1 (pure movement, no growth)
+#   seed 0x1    -> slot0 gate1=2,gate2=0 (growth then movement)
+#   seed 0x1801 -> slot0 gate1=2,gate2=0,step=2 (growth+move); slot1
+#                  gate1=1,gate2=3 (movement only); slot2 gate1=2,gate2=0,
+#                  step=0 (growth+move)
+_DOSOW_REGIONS = [
+    (hooks.DG_SEG_INDEX, 0x2800, 0xCC00),
+    (_PACK, 0x7800, 0x9D00),
+    (_SDG, 0x8A80, 0x8AA0),
+]
+
+
+def _dosow_seed(seed_val, slots):
+    """slots: {si: (x, y, roll, old_tile)}. Every slot not given defaults
+    to zeroed fields (matching a fresh/never-placed rock)."""
+    def seed(m):
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        pack = m.seg_bases[_PACK]
+        sdg = m.seg_bases[_SDG]
+        m.mem.ww(dg, 0xCBF2, seed_val)
+        for i in range(8):
+            m.mem.wb(sdg, 0x8A90 + i, 0x30 + i)
+        for si in (0, 2, 4):
+            x, y, roll, old_tile = slots.get(si, (0, 0, 0, 0))
+            m.mem.ww(pack, 0x9BC8 + si, x)
+            m.mem.ww(pack, 0x9BDA + si, y)
+            m.mem.ww(pack, 0x9C2A + si, roll)
+            m.mem.ww(pack, 0x78CC + si, old_tile)
+    return seed
+
+
+@pytest.mark.parametrize("seed_val,slots,target_cells,label", [
+    (0x1234, {}, {}, "all-slots-gate1-zero-total-noop"),
+    (0x5001, {0: (10, 10, 2, 7), 2: (20, 20, 2, 9), 4: (30, 30, 2, 11)},
+     {(11, 10): (0, 5), (21, 20): (0, 5), (31, 30): (0, 5)},
+     "pure-movement-no-growth-three-slots"),
+    (0x1, {0: (10, 10, 3, 7)}, {(10, 11): (0, 5)}, "growth-then-movement-succeeds"),
+    (0x1, {0: (10, 10, 3, 7)}, {(10, 11): (1, 5)}, "growth-then-movement-blocked-life-occupied"),
+    (0x1801, {0: (10, 10, 3, 7), 2: (20, 20, 6, 9), 4: (30, 30, 5, 11)},
+     {(10, 11): (0, 5), (19, 20): (0, 5), (30, 31): (0, 5)},
+     "growth-and-movement-mixed-three-slots"),
+])
+def test_dosow_state_diff_matches_asm(seed_val, slots, target_cells, label):
+    from simant.recovered.gameplay import do_sow, MAP_PLANE_BASE, LIFE_PLANE_BASE
+
+    def seed(m):
+        _dosow_seed(seed_val, slots)(m)
+        dg = m.seg_bases[hooks.DG_SEG_INDEX]
+        for (cx, cy), (life, tile) in target_cells.items():
+            m.mem.wb(dg, LIFE_PLANE_BASE[0] + (cx << 6) + cy, life)
+            m.mem.wb(dg, MAP_PLANE_BASE[0] + (cx << 6) + cy, tile)
+
+    results = _run_and_diff_segs(
+        7, 0x3F8A, (), lambda d, p, s: do_sow(d, p, s),
+        _DOSOW_REGIONS, seed_fn=seed)
+    for (rlabel, asm_after, rec_after), (_si, lo, _hi) in zip(
+            results, _DOSOW_REGIONS):
+        assert asm_after == rec_after, f"{label} {rlabel}: {_first_diff(asm_after, rec_after, lo)}"

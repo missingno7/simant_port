@@ -8615,6 +8615,81 @@ def init_sow(dgroup, pack, simant_data_group) -> None:
     _place_two_random_rocks(dgroup, pack, simant_data_group)
 
 
+def do_sow(dgroup, pack, simant_data_group) -> None:
+    """Per-tick update for the 3 tracked "sown" rocks (slots `si=0,2,4`
+    — unlike `init_pillar`/`init_sow`, which only ever fill slots 1/2,
+    this processes ALL THREE, including slot 0): each slot independently
+    may grow (re-stamp in place with a new lookup tile) and/or spread
+    (move to a clear neighbouring cell), gated by two independent
+    `_SRand4()` rolls.
+
+    Recovered from `_DoSow` (SIMANTW.SYM seg7:3F8A, NO args; FAR
+    return, 316 bytes; calls `_SRand4` x2, `_SRand1(3)`, `_IsValidA`).
+    For each slot: rolls `_SRand4()`; a `0` skips the slot entirely
+    (no growth, no movement). Otherwise rolls a SECOND `_SRand4()`; a
+    `0` result (independently confirmed via the raw disassembly's
+    `jnz`-skips-growth polarity — NOT a nonzero result) triggers
+    "growth" — steps `pack[0x9C2A+si]` (the
+    same 0..7 rock-tile-lookup roll `init_pillar`/`init_sow` seed) by
+    `(roll + _SRand1(3) - 1) & 7` (a signed random walk wrapping mod
+    8), then re-stamps the slot's CURRENT cell with
+    `simant_data_group[0x8A90 + new_roll]`. Movement always follows
+    (regardless of the growth gate): the (possibly just-updated) roll
+    indexes the SAME `GET_BEST_DIR_DX`/`DY` compass table
+    `add_ant_lion` uses (confirmed via the raw disassembly: the exact
+    same `+0`/`+8` DGROUP-pointer-global-into-SIMANT_DATA_GROUP
+    addressing pattern) to compute a candidate neighbour cell; if
+    `is_valid_a` rejects it, or its life-plane cell is occupied, or its
+    map tile is `>= 0x10` (blocked), the slot doesn't move this tick.
+    Otherwise: the OLD cell is restored to `pack[0x78CC+si]`'s saved
+    snapshot, the NEW cell's PRE-overwrite tile becomes the new
+    snapshot, the NEW cell is stamped with the rock-tile lookup, and
+    the slot's tracked `(x, y)` (`pack[0x9BC8+si]`/`[0x9BDA+si]`)
+    updates to the new position.
+    """
+    from .simone import SRAND_SEED_OFF, srand1, srand_pow2
+
+    seed = dgroup.rw(SRAND_SEED_OFF)
+    for si in (0, 2, 4):
+        seed, gate1 = srand_pow2(seed, 3)
+        if gate1 == 0:
+            continue
+
+        seed, gate2 = srand_pow2(seed, 3)
+        x = pack.rw(0x9BC8 + si)
+        y = pack.rw(0x9BDA + si)
+        if gate2 == 0:
+            roll = pack.rw(0x9C2A + si)
+            seed, step = srand1(seed, 3)
+            roll = (roll + step - 1) & 7
+            pack.ww(0x9C2A + si, roll)
+            simant_data_group_tile = simant_data_group.rb(0x8A90 + roll)
+            dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, simant_data_group_tile)
+
+        roll = pack.rw(0x9C2A + si)
+        new_x = x + GET_BEST_DIR_DX[roll]
+        new_y = y + GET_BEST_DIR_DY[roll]
+        if is_valid_a(new_x, new_y) == 0:
+            continue
+
+        new_cell = MAP_PLANE_BASE[0] + (new_x << 6) + new_y
+        new_life_cell = LIFE_PLANE_BASE[0] + (new_x << 6) + new_y
+        if dgroup.rb(new_life_cell) != 0:
+            continue
+        new_cell_tile = dgroup.rb(new_cell)
+        if new_cell_tile >= 0x10:
+            continue
+
+        old_tile = pack.rb(0x78CC + si)
+        dgroup.wb(MAP_PLANE_BASE[0] + (x << 6) + y, old_tile)
+        pack.ww(0x78CC + si, new_cell_tile)
+        tile = simant_data_group.rb(0x8A90 + roll)
+        dgroup.wb(new_cell, tile)
+        pack.ww(0x9BC8 + si, new_x)
+        pack.ww(0x9BDA + si, new_y)
+    dgroup.ww(SRAND_SEED_OFF, seed)
+
+
 def start_attack(dgroup, pack) -> None:
     """Roll a random attack-duration/timer value into `pack[0x78DC]`.
 

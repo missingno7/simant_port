@@ -1,5 +1,43 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.192) — /goal grind: _DoSow
+- RECOVERED `do_sow` (`_DoSow`, SIMANTW.SYM seg7:3F8A, NO args; FAR
+  return, 316 bytes; calls `_SRand4` x2, `_SRand1(3)`, `_IsValidA`).
+  Per-tick update for the 3 tracked "sown rocks" (slots `si=0,2,4` —
+  unlike `init_pillar`/`init_sow`, which only ever fill slots 1/2,
+  this processes ALL THREE). Each slot: `_SRand4()==0` skips it
+  entirely; otherwise a second `_SRand4()` may trigger "growth" (steps
+  the rock-tile-lookup roll by a signed `_SRand1(3)-1` random walk mod
+  8, re-stamping the CURRENT cell), then unconditionally attempts
+  "movement" — the (possibly just-updated) roll indexes the SAME
+  `GET_BEST_DIR_DX`/`DY` compass table `add_ant_lion` uses (confirmed
+  via the raw disassembly: identical `+0`/`+8` DGROUP-pointer-global-
+  into-SIMANT_DATA_GROUP addressing) to pick a candidate neighbour;
+  `is_valid_a`, an unoccupied life cell, and a clear (`<0x10`) tile
+  gate an actual move (old cell restored from its saved snapshot, new
+  cell's pre-overwrite tile becomes the new snapshot, tracked position
+  updates).
+- Caught a genuine INVERTED-COMPARISON bug on the first real-ASM run
+  (this session's recurring bug class): read the growth gate's `jnz
+  -> [skip growth]` as "growth fires when the second `_SRand4()` is
+  NONZERO" — backwards. The real ASM's `jnz` jumps PAST the growth
+  block when the roll IS nonzero, so growth actually fires on `0`.
+  Caught immediately (2 of 4 first-draft test cases failed, including
+  a seed-mismatch proving the LFSR draw COUNT itself was fine but the
+  BRANCH taken was wrong) and fixed by flipping `gate2 != 0` to
+  `gate2 == 0`; all test case labels/target cells were then corrected
+  offline (some had accidentally been testing the RIGHT byte-exact
+  outcome under the WRONG mental model, e.g. a "movement only, no
+  growth" label whose seed actually exercised growth) rather than
+  trusting the first green run's labels.
+- 5 cases (total no-op, pure movement across all 3 slots with no
+  growth at all, single-slot growth-then-movement succeeding and
+  blocked-by-occupied-life, and a mixed 3-slot case combining
+  movement-only with growth-then-movement) — all green after the
+  polarity fix, each seed's exact gate/step sequence precomputed
+  offline via the already-verified `srand1`/`srand_pow2`.
+- Suite: simant 1847 (+5), full suite green.
+
 ## 2026-07-15 (cont.191) — /goal grind: _InitSow (+ refactor)
 - RECOVERED `init_sow` (`_InitSow`, SIMANTW.SYM seg7:3EF8, NO args; FAR
   return, 146 bytes, calls `_SRand1`). Disassembly is byte-identical to
