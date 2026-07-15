@@ -1,5 +1,46 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-15 (cont.200) — /goal grind: _SRand2.._SRand256 explicit coverage
+- Ran a fresh Explore survey now that the third survey's whole
+  candidate list (pillar/sow cluster, `_GstrR`/`_GetStrategy`,
+  `_AddFood`/`_FeedAnts`) is exhausted. Investigated `_ClearLife`/
+  `_SetMyLife`/`_SetLife` as prep work for `_YellowFight` per the
+  prior survey's own suggestion, but abandoned partway through
+  `_SetLife` (432 bytes, seg5:5D18) — it's genuinely more complex than
+  it looked (a maze of plane-specific nest-tile/dig logic around grass
+  tiles 0x1C-0x1F, composing the already-recovered `is_valid_location`
+  and calling into `_IsItDirt` — confirmed already recovered — but
+  ALSO a far call into an unidentified segment) — and even a full
+  recovery of the trio wouldn't unblock `_YellowFight` itself (it has
+  its own further blockers: `_AnimYellowFight`, `_GotoMyAnt`,
+  `_ResetYellowVars`, `_YellowDeath`). Deferred; the fresh survey's
+  top pick was better-scoped.
+- The survey identified seg5:1182 (my `_SetLife` trace's one
+  unresolved call) as `_IsItDirt` — already recovered, so not
+  actually a blocker on its own; and far segment `0x18C0:0` as
+  `ANTEDIT!_ZapEuMapAt` (a map-redraw invalidation entry point,
+  matching this session's established presentation-only-stub
+  precedent) — useful context for a future `_SetLife` attempt, but
+  not pursued further this entry.
+- Its #1 pick: the `_SRand1`.._SRand256` family (seg5, 9 symbols, 0
+  calls each) was ALREADY semantically implemented generically via
+  `srand1`/`srand_pow2` in `simone.py` (used pervasively since early
+  in this session) but had NO explicit per-symbol byte-exact test —
+  each of the 8 power-of-two siblings (`_SRand2` through `_SRand256`)
+  differs from `_SRand1` only in a compile-time AND mask, confirmed
+  once more directly from a fresh disassembly of all 9 back-to-back.
+  Added `test_srand1_matches_asm`/`test_srand_pow2_family_matches_asm`,
+  each hitting its own real ASM address directly (not just trusting
+  the shared formula), plus cited every address in `simone.py`'s own
+  module docstring. This is a bookkeeping/verification pass — no new
+  Python logic — but it closes the "0 calls, real symbol, no
+  dedicated test" gap the survey flagged as the single highest-
+  leverage remaining item (many further seg5/6 routines cite specific
+  `_SRand8`/`_SRand32`/etc. dependencies by name).
+- 45 cases (5 seeds x 9 routines) — all green immediately (no bugs,
+  since the underlying formula was already correct).
+- Suite: simant 1934 (+45), full suite green.
+
 ## 2026-07-15 (cont.199) — /goal grind: _AddFood (clears _FeedAnts' gate)
 - RECOVERED `add_food` (`_AddFood`, SIMANTW.SYM seg7:6A58, args
   count=[bp+6], flag=[bp+8]; FAR return, 514 bytes; calls `_SRand1`/

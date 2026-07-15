@@ -3237,6 +3237,48 @@ def test_sgrand_family_matches_asm(routine, off, fn_name, n, seed_val):
     assert view.rw(0xCBF2) == asm_seed_after, f"{routine}: n={n} seed={seed_val:#x}: seed mismatch"
 
 
+# ---- _SRand1 (seg5:158A) — the raw LFSR-step + modulus routine ------------
+# Every other _SRand* in this session composes `srand1`/`srand_pow2` (see
+# simone.py's own module docstring) without a dedicated per-symbol test --
+# this and the family below close that gap explicitly, byte-exact against
+# each ACTUAL ASM instance rather than trusting the shared formula alone.
+@pytest.mark.parametrize("n,seed_val", [
+    (5, 0x1234), (48, 0xABCD), (100, 0x0001), (1, 0x7ACE), (256, 0xBEEF),
+])
+def test_srand1_matches_asm(n, seed_val):
+    from simant.recovered.simone import srand1
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+
+    ax, m = _run_and_get_ax(5, 0x158A, (n,), seed_fn=seed)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+    rec_seed, rec_ax = srand1(seed_val, n)
+    assert ax == (rec_ax & 0xFFFF), f"n={n} seed={seed_val:#x}: asm={ax:#06x} rec={rec_ax & 0xFFFF:#06x}"
+    assert asm_seed_after == rec_seed, f"n={n} seed={seed_val:#x}: seed mismatch"
+
+
+# ---- _SRand2.._SRand256 (seg5:15AE..168E) — 8 compiled mask-copies --------
+@pytest.mark.parametrize("routine,off,mask", [
+    ("_SRand2", 0x15AE, 0x01), ("_SRand4", 0x15CE, 0x03),
+    ("_SRand8", 0x15EE, 0x07), ("_SRand16", 0x160E, 0x0F),
+    ("_SRand32", 0x162E, 0x1F), ("_SRand64", 0x164E, 0x3F),
+    ("_SRand128", 0x166E, 0x7F), ("_SRand256", 0x168E, 0xFF),
+])
+@pytest.mark.parametrize("seed_val", [0x1234, 0xABCD, 0x0001, 0x7ACE, 0xBEEF])
+def test_srand_pow2_family_matches_asm(routine, off, mask, seed_val):
+    from simant.recovered.simone import srand_pow2
+
+    def seed(m):
+        m.mem.ww(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2, seed_val)
+
+    ax, m = _run_and_get_ax(5, off, (), seed_fn=seed)
+    asm_seed_after = m.mem.rw(m.seg_bases[hooks.DG_SEG_INDEX], 0xCBF2)
+    rec_seed, rec_ax = srand_pow2(seed_val, mask)
+    assert ax == (rec_ax & 0xFFFF), f"{routine} seed={seed_val:#x}: asm={ax:#06x} rec={rec_ax & 0xFFFF:#06x}"
+    assert asm_seed_after == rec_seed, f"{routine} seed={seed_val:#x}: seed mismatch"
+
+
 # ---- _IsItYellow (seg5:96B6) — is the player's yellow ant at (x,y)? -------
 def _isityellow_seed(mode, mode9fe8, marker_x, marker_y, tile):
     def seed(m):

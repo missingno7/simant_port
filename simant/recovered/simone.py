@@ -5,11 +5,16 @@ every `_SRand*` call (seed lives in DGROUP at 0xCBF2):
 
     seed <<= 1;  if the shifted-out bit was set:  seed ^= 0x1BF5
 
-`_SRand1(n)` returns `seed % n` (any modulus); the nine power-of-two
-siblings `_SRand2 .. _SRand256` are compiled copies differing only in their
-AND mask and return `seed & (n-1)`.  `_Set/GetSRandSeed` access the seed;
-`_GetRRandSeed` reads the BIOS tick dword at 0040:006C (the "real random"
-source used to seed a game) and `_SetRRandSeed` is an empty stub.
+`_SRand1(n)` (SIMANTW.SYM seg5:158A) returns `seed % n` (any modulus); the
+eight power-of-two siblings `_SRand2` (seg5:15AE) `_SRand4` (15CE) `_SRand8`
+(15EE) `_SRand16` (160E) `_SRand32` (162E) `_SRand64` (164E) `_SRand128`
+(166E) `_SRand256` (168E) are compiled copies differing only in their AND
+mask and return `seed & (n-1)` — each independently byte-tested against its
+own real ASM instance (not just trusted from the shared formula) in
+`test_state_diff.py`'s `test_srand1_matches_asm`/`test_srand_pow2_family_
+matches_asm`.  `_Set/GetSRandSeed` access the seed; `_GetRRandSeed` reads
+the BIOS tick dword at 0040:006C (the "real random" source used to seed a
+game) and `_SetRRandSeed` is an empty stub.
 
 Byte-proven by the island A/B oracles in ../tests/test_hooks.py — this file
 is the readable source; the islands in ../hooks.py are its adapters.
