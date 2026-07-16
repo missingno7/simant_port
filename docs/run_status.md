@@ -55,16 +55,29 @@
   effects are a real capability gap, NOT part of the hiss)**: recovered the
   full observed contract from GR_MODULE disassembly (`_CheckMMWave` 2:7766,
   `_myBeginSound` 2:98B0, `_MciOutWave` 2:959C).  SimAnt's digitized effects
-  are 4-bit delta-PCM: 16-byte delta table + nibble stream, decoded to
-  8-bit UNSIGNED PCM (running sample seeded 0x80) at **4096 Hz mono**
-  (PCMWAVEFORMAT {1,1,0x1000,0x1000,1,8}); 57 decode clean (owner-extracted
-  to artifacts/sounds_wav/, no hiss in any).  Flow: waveOutGetNumDevs gate →
-  waveOutOpen(&hW@8D1A-refcounted globals, WAVE_MAPPER, fmt, hwnd@DGROUP
-  :CD78, CALLBACK_WINDOW) → _MciOutWave: GlobalAlloc WAVEHDR+data, DPCM
-  decode, waveOutPrepareHeader, waveOutWrite; busy window = GetTickCount()
-  + waveOutGetPosition(TIME_MS) stored at DGROUP:1238/123A; the game PUMPS
-  PeekMessage(MM_WOM_DONE=0x3BD) and its WndProc unprepares/frees/closes
-  (refcount 8D1A → waveOutClose).  On open failure it builds a complete
+  are 4-bit delta-PCM: a 16-byte delta table (copied `rep movsw` cx=8)
+  indexes each nibble, high then low, accumulating into a running 8-bit
+  UNSIGNED sample seeded 0x80 — two output samples per input byte.  The
+  game's OWN declared format is **4096 Hz mono, 8-bit** — PCMWAVEFORMAT
+  {1,1,0x1000,0x1000,1,8}, written literally at 2:9D72..9D99 and rebuilt
+  identically in the RIFF it hands sndPlaySound.  Cross-check: the 57
+  pre-extracted WAVs in artifacts/sounds_wav/ (gitignored, provenance not
+  ours — NOT evidence of our decode) are 8-bit unsigned mono with DC
+  centred at ~128, independently corroborating the 0x80-seeded unsigned
+  model; but they are tagged **11025 Hz**, i.e. the extractor's choice, NOT
+  the game's declaration.  When the SFX slice lands, 4096 Hz is what the
+  disassembly proves and 11025 is a claim to re-derive, not inherit.
+  Flow: waveOutOpen(&hWaveOut@8D14, WAVE_MAPPER=0xFFFF, &fmt, hwnd@DGROUP
+  :CD78, dwInstance=0, CALLBACK_WINDOW=0x10000) → _MciOutWave: GlobalAlloc
+  WAVEHDR+data, DPCM decode, waveOutPrepareHeader, waveOutWrite; busy
+  window = GetTickCount() + waveOutGetPosition(TIME_MS) stored at
+  DGROUP:1238/123A and re-checked at 2:9C0B; the game PUMPS
+  PeekMessage(&msg, NULL, 0x3BD, 0x3BD, PM_REMOVE) — MM_WOM_DONE — and its
+  WndProc unprepares/frees/closes (a refcount at 8D1A gates waveOutClose).
+  Note the gate is the LoadLibrary HANDLE at 8D08, not the device count:
+  `_CheckMMWave` leaves 8D08 set even when waveOutGetNumDevs returns 0, so
+  the game attempts waveOutOpen regardless — which is exactly why our stub
+  sees 59 of them.  On open failure it builds a complete
   in-memory RIFF/WAVE and calls sndPlaySound(lpMem, SND_MEMORY|SND_NOSTOP=
   0x14) — resolved by NAME, so minting it would light effects up via the
   existing play_wav path.  **Deliberately NOT enabled this slice**: either
