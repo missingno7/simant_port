@@ -16,3 +16,6 @@ artifacts/snapshots/
 simant/lifted/
 # Locally recorded demos (promote a repro into artifacts/test_oracles/ to keep).
 *.jsonl
+# Standalone-deploy output (scripts/deploy_vmless.py) + PyInstaller work dirs.
+dist/
+build/

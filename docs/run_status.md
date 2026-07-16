@@ -1,5 +1,79 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.227) — v0.1.0-pre: the strict-VMless runner packaged standalone (dist folder + PyInstaller EXE)
+- **NEW `scripts/deploy_vmless.py` (+ `scripts/simant_vmless.spec`) — the
+  pre2 `deploy_native.py` shape adapted to Stage-1 VMless: compute the import
+  closure of the runner surface (play_vmless + play + vmless_boot, the same
+  package-dir mapping the M3 lint uses; package `__init__.py` files are
+  WALKED, not just copied — dos_re/lift/__init__ imports decode/cfg), deny
+  what must not ship, copy closure + generated data + launcher + README +
+  requirements into `dist/simant_vmless/`, smoke-test in an isolated
+  subprocess, and with `--exe` run PyInstaller (onedir, console=True) and
+  smoke-test THE BUILT EXE the same way.**  `VMLESS_RELEASE = "0.1.0-pre"`
+  lives in play_vmless.py and prints in the runner banner.
+- **The deny-list is the inverse of pre2's**: dos_re (the CPU carrier) and
+  win16 (the Python OS layer) ARE the runtime and ship whole; denied are the
+  EXE-boot entry points (`simant.runtime`, `win16.app` — lazy uses in shipped
+  files fail loud), the interpreter-era islands (`simant.hooks`), the RE
+  workbench (probes/tests/bridge/native/recovered, win16 irgen/callgraph/
+  apicoverage/tick_demo, the dos_re lift EMIT toolchain + verification tiers).
+  `win16/ne.py` + `win16/loader.py` ship as CLASS CARRIERS (program.pickle
+  holds an NEExecutable, the machine is a Win16Machine) — reachable on the
+  lint-proven graph, never called to parse anything.  The emitted graph's own
+  load-time imports (dos_re.cpu/hooks/lift.runtime) are DERIVED by scanning
+  the generated modules (they ship as data, invisible to the AST walk); the
+  spec derives its hiddenimports the same way.
+- **Loader-free interactive host**: `GAME_NAME`/`demo_out_path` moved to
+  `simant/vmless_boot.py` (simant.runtime re-exports); `scripts/play.py`'s
+  module level no longer imports simant.runtime/win16.app (the EXE-boot and
+  --resume branches import them function-locally, fail-loud in the dist) —
+  and play.py is now a third ROOT of `scripts/lint_vmless_independence.py`,
+  so the whole shipped surface is lint-proven loader-free (24 module edges,
+  2 deferred loader imports reported INFO, PASS).
+- **What ships**: 55 closure code files (~1 MB), the data-only boot image
+  (4.3 MB), the 1903-module lifted graph as plain DATA files (loaded by path
+  at run time; ~25 MB), cold_nohooks.jsonl as the reference demo, launcher
+  (`simant_vmless.py`), README.md (v0.1.0-pre: data-files-only requirement,
+  SIMANTW.EXE explicitly NOT needed, --game-root, controls, limitations),
+  requirements (pygame/numpy/Pillow — numpy+pygame verified via win16.audio,
+  Pillow/tkinter via the play host).  Dist tree 30.5 MB / EXE onedir ~150 MB
+  (tcl/tk + numpy + pygame + the win16_re data tree).  The deploy ASSERTS no
+  executable ships in any disguise (suffix, MZ head, or content hash ==
+  the manifest's source EXE) and prunes smoke `__pycache__` before bundling.
+- **PyInstaller layout (the real risks, solved properly)**: the graph + boot
+  image bundle at their repo-relative destinations, so `simant.vmless_boot`'s
+  `__file__`-derived defaults resolve inside `_internal` (= `sys._MEIPASS`)
+  unchanged; the deny-filtered win16_re source tree also ships as data and
+  the launcher points the documented `WIN16_RE_PATH`/`DOS_RE_PATH` escape
+  hatches at it so the `_env` bootstraps' existence checks pass under frozen
+  (module resolution still uses the byte-identical frozen modules —
+  PyInstaller's importer runs first).  The feared frozen-unpickle bug did not
+  materialize: system.pickle/program.pickle load fine because win16.api.* /
+  win16.ne are frozen importable — VERIFIED by the exe smoke, not assumed.
+- **Smoke tests (MANDATORY, both green)**: isolated subprocess, sys.path =
+  the dist tree only, cwd = a temp dir, SIMANTW.EXE physically ABSENT, env
+  scrubbed (PYTHONPATH + the *_PATH hatches); replay the pinned
+  45M-instruction cold_nohooks prefix (the walls-test recipe/constants,
+  single-sourced from test_vmless_walls.py) and require the release banner,
+  BOTH wall banners, the pinned digest AND instruction count, zero
+  deny-listed modules in sys.modules, and simant/win16/dos_re resolving
+  inside the dist.  Results: dist tree AND built exe both end
+  `instructions 45,102,443 / digest e9e4aafd… / EXE-independence wall: HOLDS
+  / VMless wall: HOLDS`.  Frozen INTERACTIVE mode boots too (30 s run:
+  banner, 1903 modules installed, pygame audio + MIDI up, no stderr).
+- Suite: `simant/tests/test_deploy_vmless.py` (5 tests — closure spine +
+  deny assertions, derived graph deps, the no-executable assert catching
+  suffix/MZ/hash disguises, release-constant/pin coherence); .gitignore
+  gains dist/ + build/; README gains the "Standalone pre-release" section.
+- Honest residue: (i) the routed-adapter flavor is NOT shipped (cont.223 —
+  separate build, no virtual-time preservation); (ii) the launcher's
+  interactive default needs the game DATA dir (--game-root or files next to
+  the launcher; marker = SHARED.DAT/SIMANT.CFG) — without it the first INT
+  21h open fails loud; (iii) play.py's --resume/EXE-boot branches
+  intentionally ImportError in the dist (denied edge); (iv) the exe smoke
+  asserts from OUTSIDE (console text) — the in-process deny check runs on
+  the dist-tree smoke only.
+
 ## 2026-07-16 (cont.226) — API coverage report: the IR's api:* surface joined against the registry + a counted strict replay
 - **NEW `win16/apicoverage.py` (generic, game-free) + `scripts/apicoverage.py`
   (the SimAnt wrapper) -> `artifacts/api_coverage.json` (gitignored,

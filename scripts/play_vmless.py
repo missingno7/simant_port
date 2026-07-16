@@ -45,10 +45,15 @@ from win16.bootimage import independence_report, load_boot_manifest  # noqa: E40
 from win16.demo import DemoDivergence, DemoDriver, DemoEnded  # noqa: E402
 from win16.vmsnap import digest  # noqa: E402
 
+#: The standalone-release version (scripts/deploy_vmless.py packages this
+#: runner; the deploy and its smoke tests read the constant from here).
+VMLESS_RELEASE = "0.1.0-pre"
+
 
 def banner(manifest: dict, installed: dict, *, exe_present: bool,
            collect: bool) -> None:
     print("=" * 72)
+    print(f"SimAnt strict-VMless runner — release {VMLESS_RELEASE}")
     print(independence_report(manifest, exe_present_at_runtime=False))
     print(f"Lifted graph: {len(installed)} modules installed "
           f"(entries configured interpreted: {len(vb.STRICT_SKIP)})")

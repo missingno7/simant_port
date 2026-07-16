@@ -474,6 +474,31 @@ through a relocated pointer, not a taggable far call) yet dispatches at
 runtime — the instrumented run sees what static analysis cannot.
 Report: `artifacts/api_coverage.json` (gitignored, regenerable).
 
+## Standalone pre-release (deploy_vmless)
+
+`scripts/deploy_vmless.py` packages the strict runner as a self-contained
+distribution — **v0.1.0-pre** (`VMLESS_RELEASE` in `scripts/play_vmless.py`,
+printed in the runner banner):
+
+```
+python scripts/deploy_vmless.py         # dist/simant_vmless/ + isolated smoke test
+python scripts/deploy_vmless.py --exe   # + PyInstaller onedir build (dist/exe/…)
+                                        #   + smoke test of the built exe itself
+```
+
+The dist tree carries the deny-filtered import closure of the runner surface
+(the dos_re CPU + win16 OS layer ARE the Stage-1 VMless runtime and ship; the
+EXE-boot edge `simant.runtime`/`win16.app` and the RE workbench do not), the
+data-only boot image, the ~1,900-module lifted graph as plain data files, and
+one reference demo.  The smoke test is mandatory and isolated (subprocess,
+`sys.path` = the dist tree only, temp cwd, SIMANTW.EXE physically absent):
+it replays the pinned 45M-instruction `cold_nohooks` prefix and requires both
+wall banners, the pinned digest, and zero deny-listed imports.  A tester needs
+only Python + `requirements.txt` (or nothing, for the exe build) and the game
+DATA files from an original SimAnt for Windows install — the original
+executable is explicitly NOT needed and never read.  Closure/deny guarantees
+are suite-held (`simant/tests/test_deploy_vmless.py`).
+
 ## Setup
 
 ```
