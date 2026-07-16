@@ -6062,7 +6062,7 @@
    ],
    "gates": [],
    "authority": "authoritative",
-   "ret": "near",
+   "ret": "far",
    "ret_cleanup": null,
    "args": [],
    "views": [
@@ -6077,7 +6077,7 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "ret corrected near->far: IR exits are retf-only and the cont.218-era recovery note says 'executes a genuine ret far' \u2014 the map had a clerical error."
   },
   {
    "key": "6:2DAE",
