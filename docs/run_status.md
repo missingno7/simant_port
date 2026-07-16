@@ -1,5 +1,57 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.228) — nest/map-view drag rectangle visible again: InvertRect now inverts in the 16-colour device's palette-index domain (win16_re 52691da, re-pin b04a164)
+- **Owner report**: in the Black Nest View the selection/drag rectangle all but
+  disappears over the medium-grey background — under OTVDM AND under us,
+  because inverting RGB (128,128,128) per channel gives (127,127,127).
+  Directive: trace the real drawing path first, no blind patching; OTVDM is
+  NOT the reference — original 16-colour Windows is.
+- **The actual operation (traced, not assumed)**: the IR has exactly ONE
+  InvertRect call site — `_GInvBox` (GR_MODULE 0E99:1966, `enter; normalize
+  rect; push hdc[DGROUP 0xCF52]; lea rect; call USER.82`).  Callers:
+  `_GRectInvOutline` (the 4-sided rubber-band outline) ← `_DrawMapCursor` /
+  `_EraseMapCursor` / `_ToggleMapCursor` / `_win_DrawMapWindow` /
+  `_OpenMiniMapWin` / mini-map variants (ANTEDIT), plus `_GRectInv`
+  (SIMTWO object select) and `_DrawYardData`/`_DrawMapData`.  So the drag
+  rectangle is pure **USER.82 InvertRect** — no SetROP2/PatBlt/XOR pen.
+  Live probe over cold_nohooks: 4,992 InvertRect calls, first at instr
+  36.8M, classic draw/erase toggle pairs on the same rect.
+- **Not a lifter bug** (owner's standing first question): none of
+  _GInvBox/_GRectInvOutline/_Draw|Erase|ToggleMapCursor is an island or in
+  the lifted graph's hot set with GDI effects — and OTVDM (real Windows GDI)
+  reproduces the same washout, so the gap was GDI-layer semantics.
+- **What we computed vs the real device**: win16 InvertRect did
+  `pixels ^= 0xFF` per RGB channel on the truecolor Surface → 128→127,
+  invisible.  Real Windows 3.x 16-colour VGA inverts the 4-bit PHYSICAL
+  palette index (DSTINVERT = idx ^ 0xF): grey is physical 8, NOT 8 = 7 =
+  light grey (192,192,192) — clearly visible.  SimAnt's own realized palette
+  measured at boot (CreatePalette→SelectPalette→RealizePalette): entries
+  0..15 are exactly the standard Windows 16-colour set (grey at 7, light
+  grey at 8 — same complement pair, opposite order), so the device-domain
+  result is what the original displayed.
+- **Fix (option A, generic platform mechanism — win16_re 52691da)**: new
+  `DEVICE_PALETTE_16` constant + `invert_rect_16color()` in win16/api/gdi.py;
+  USER.82 now nearest-matches each destination pixel into the 16-colour
+  device palette and writes the entry at index ^ 0xF.  Involutive on device
+  colours (draw/erase restores exactly); a non-device colour snaps to its
+  nearest device entry — what the real 4-bit device would have shown.  No
+  game knowledge in win16_re; blit()'s SRCINVERT/NOTSRCCOPY (the verified
+  monochrome-mask sprite path) deliberately untouched.  Regression suite
+  `win16_re/tests/test_invert_rect.py` (7 tests): grey → visibly-different
+  light grey, black↔white, all 16 complement pairs, toggle involution,
+  snap stability, clipping, degenerate no-op.
+- **Gates**: win16_re 166 passed; simant_port 2250 passed; visual check
+  (first InvertRect crop, intro ant portrait) inverts to exact device
+  complements.  The map-cursor InvertRects land inside the pinned 45M
+  cold_nohooks prefix, so the clean-room digest moved — **re-pinned**
+  e9e4aafd… → 50365479… (end instruction UNCHANGED at 45,102,443;
+  presentation-only).  Attribution proven by reverting only the GDI hunks:
+  old digest reproduces byte-exact.  Whole-demo differential re-run
+  post-fix: strict boot-image vs fresh interpreted oracle, cold_nohooks,
+  api-aligned masked digests — **MATCH all 39 checkpoints + final**
+  (199,612,996); local `artifacts/cp_interp_aligned_masked.trace` refreshed
+  to the post-fix oracle.
+
 ## 2026-07-16 (cont.227) — v0.1.0-pre: the strict-VMless runner packaged standalone (dist folder + PyInstaller EXE)
 - **NEW `scripts/deploy_vmless.py` (+ `scripts/simant_vmless.spec`) — the
   pre2 `deploy_native.py` shape adapted to Stage-1 VMless: compute the import
