@@ -53,16 +53,18 @@ from win16.vmsnap import digest, load_snapshot  # noqa: E402
 VERSION = 1
 
 
-def compare_traces(base: list[dict], cur: list[dict]):
+def compare_traces(base: list[dict], cur: list[dict], field: str = "digest"):
     """First diverging checkpoint of two traces: (index, kind) where kind is
     'instr' (ran a different distance), 'digest' (same distance, different game
     state) or 'length' (one trace has extra checkpoints); (None, 'match') when
-    identical over their common prefix and equal length."""
+    identical over their common prefix and equal length.  ``field`` selects
+    which recorded digest to compare ('digest', or 'mdigest' — the
+    poison-masked one, for boot-image runs vs an EXE-full oracle)."""
     n = min(len(base), len(cur))
     for k in range(n):
         if base[k]["instr"] != cur[k]["instr"]:
             return k, "instr"
-        if base[k]["digest"] != cur[k]["digest"]:
+        if base[k][field] != cur[k][field]:
             return k, "digest"
     if len(base) != len(cur):
         return n, "length"
@@ -70,6 +72,17 @@ def compare_traces(base: list[dict], cur: list[dict]):
 
 
 def _machine(args):
+    if args.boot_image:
+        # The strict-VMless machine: EXE-free load from the data-only boot
+        # image, full graph installed, interpreter poison ARMED — the same
+        # engine scripts/play_vmless.py runs; here it is driven through the
+        # checkpoint harness for the masked-digest oracle comparison.
+        import simant.vmless_boot as vb
+        m, _manifest, installed = vb.boot_strict(args.boot_image)
+        sys.setrecursionlimit(200_000)
+        print(f"[checkpoints] boot image: {len(installed)} lifted modules, "
+              f"poison armed, EXE-free load from {args.boot_image}")
+        return m
     if args.from_snapshot:
         m = load_snapshot(args.from_snapshot, create_machine)
     else:
@@ -98,11 +111,24 @@ def _trace(args) -> tuple[list[dict], str]:
     checkpoints: list[dict] = []
     st = {"i": 0, "next": args.interval}
 
+    mask: list[tuple[int, int]] = []
+    if args.mask_poison:
+        from win16.bootimage import load_boot_manifest, mask_ranges_from_manifest
+        mask = mask_ranges_from_manifest(load_boot_manifest(args.mask_poison))
+        print(f"[checkpoints] poison mask: {len(mask)} zeroed ranges from "
+              f"{args.mask_poison} (mdigest recorded per checkpoint)")
+
+    def _cp_record():
+        rec = {"i": st["i"], "instr": cpu.instruction_count,
+               "digest": digest(m)}
+        if mask:
+            rec["mdigest"] = digest(m, mask_ranges=mask)
+        return rec
+
     def _maybe_cp():
         # Capture when the real instruction_count crosses the next interval.
         if cpu.instruction_count >= st["next"]:
-            checkpoints.append({"i": st["i"], "instr": cpu.instruction_count,
-                                "digest": digest(m)})
+            checkpoints.append(_cp_record())
             st["i"] += 1
             st["next"] = (cpu.instruction_count // args.interval + 1) * args.interval
 
@@ -160,8 +186,9 @@ def _trace(args) -> tuple[list[dict], str]:
         if not args.api_aligned:
             _maybe_cp()                         # cover non-callback stretches too
     # A final checkpoint at the stop point, whatever it was.
-    checkpoints.append({"i": st["i"], "instr": cpu.instruction_count,
-                        "digest": digest(m), "final": True})
+    final = _cp_record()
+    final["final"] = True
+    checkpoints.append(final)
     return checkpoints, status
 
 
@@ -176,6 +203,18 @@ def main(argv=None) -> int:
     ap.add_argument("--vmless-graph", metavar="DIR", default=None,
                     help="install the full VMless lifted graph from DIR "
                          "(dos_re install_vmless_graph; the 2.0 candidate)")
+    ap.add_argument("--boot-image", metavar="DIR", default=None,
+                    help="run the STRICT machine: EXE-free load from this "
+                         "data-only boot image, graph installed, interpreter "
+                         "poison armed (scripts/play_vmless.py's engine)")
+    ap.add_argument("--mask-poison", metavar="BOOT_DIR", default=None,
+                    help="record an additional per-checkpoint 'mdigest' with "
+                         "the boot image's zeroed ranges masked -- the only "
+                         "digest comparable between an EXE-full oracle run "
+                         "and a poisoned boot-image run")
+    ap.add_argument("--check-field", choices=("digest", "mdigest"),
+                    default="digest",
+                    help="which recorded digest --check compares")
     ap.add_argument("--api-aligned", action="store_true",
                     help="sample checkpoints at API-call boundaries so an "
                          "interpreted baseline and a virtual-time-preserving "
@@ -205,11 +244,23 @@ def main(argv=None) -> int:
         # mechanics, error) — it is a stop-point diagnostic, not an aligned
         # sample; compare only the aligned interval checkpoints.
         bcp = [c for c in base["checkpoints"] if not c.get("final")]
+        final_pair = ([c for c in base["checkpoints"] if c.get("final")],
+                      [c for c in checkpoints if c.get("final")])
         checkpoints = [c for c in checkpoints if not c.get("final")]
-        k, kind = compare_traces(bcp, checkpoints)
+        k, kind = compare_traces(bcp, checkpoints, field=args.check_field)
         if k is None:
             print(f"[checkpoints] MATCH: all {len(bcp)} checkpoints identical "
-                  f"to the baseline.")
+                  f"to the baseline (field={args.check_field}).")
+            b_fin, c_fin = final_pair
+            if b_fin and c_fin:
+                same = (b_fin[0]["instr"] == c_fin[0]["instr"]
+                        and b_fin[0][args.check_field] == c_fin[0][args.check_field])
+                print(f"[checkpoints] final state: instr "
+                      f"{c_fin[0]['instr']:,} {args.check_field} "
+                      f"{c_fin[0][args.check_field][:16]} -- "
+                      f"{'MATCH' if same else 'MISMATCH'} vs baseline")
+                if not same:
+                    return 1
             return 0
         if kind == "length":
             print(f"[checkpoints] first {k} checkpoints match, but the traces have "
@@ -219,8 +270,10 @@ def main(argv=None) -> int:
         b, c = bcp[k], checkpoints[k]
         print(f"[checkpoints] DIVERGED at checkpoint {k} (~instr {c['instr']:,}), "
               f"{kind} mismatch:")
-        print(f"    baseline: instr={b['instr']:,} digest={b['digest'][:16]}")
-        print(f"    this run: instr={c['instr']:,} digest={c['digest'][:16]}")
+        print(f"    baseline: instr={b['instr']:,} "
+              f"{args.check_field}={b[args.check_field][:16]}")
+        print(f"    this run: instr={c['instr']:,} "
+              f"{args.check_field}={c[args.check_field][:16]}")
         print("    -> a change altered behaviour at/just before this checkpoint.")
         return 1
 

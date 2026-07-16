@@ -856,11 +856,17 @@ class PlayApp:
                  record: str | None = None, mute: bool = False,
                  snapshot_on_box: str | None = None,
                  hooks: bool = True,
-                 resume: str | None = None) -> None:
+                 resume: str | None = None,
+                 machine=None) -> None:
         self.scale = scale
         self.game_name = GAME_NAME
         self.origin_x, self.origin_y = 60, 60
-        if resume:
+        if machine is not None:
+            # A pre-built machine (the strict-VMless runner boots one from
+            # the data-only boot image, EXE-free) — this app is only the
+            # interactive host around it.
+            self.machine = machine
+        elif resume:
             from win16.vmsnap import load_snapshot
             self.machine = load_snapshot(
                 resume, lambda: create_machine(exe_path, winflags=winflags))

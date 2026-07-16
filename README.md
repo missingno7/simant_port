@@ -346,12 +346,18 @@ scaffolding a native backend discards. `python -m simant.probes.callgraph` repor
 
 The script-driven staged recovery pipeline
 ([`win16_re/dos_re/docs/dos_re_2.0.md`](win16_re/dos_re/docs/dos_re_2.0.md))
-is adopted; M2's mechanical half is in place:
+is adopted; M2 — BOTH hard walls — is in place:
 
 ```
-python scripts/irgen.py                    # recovery IR: 1313 fns, 1312 liftable
+python scripts/irgen.py                    # recovery IR: 1904 fns, 1903 liftable
+                                           # (.SYM census + dispatch-fact case
+                                           # entries + static-call closure)
+python scripts/dispatchgen.py              # mechanical switch-table derivation
+                                           # -> simant/facts/dispatch_entries.txt
+                                           # + code_as_data.txt (iterate with
+                                           # irgen to fixpoint; --check pins it)
 python scripts/liftemit.py --require-vmless-wall
-                                           # 1312 symbolically named VMless modules
+                                           # 1903 symbolically named VMless modules
                                            # -> simant/lifted/graph (+ manifest)
 python scripts/liftlink.py                 # structural near+far link + the
                                            # capability report (artifacts/)
@@ -364,11 +370,50 @@ python scripts/checkpoints.py cold_nohooks --api-aligned \
 Modules are named from SIMANTW.SYM (`simone_srand1.py`), carry their
 paragraph-base `ENTRY` as provenance, and are disposable generated output —
 regenerate, never hand-edit.  Status: the whole-demo differential is CLEAN —
-the full 1312-module linked graph (native x87 included; the sole
+the full 1903-module linked graph (native x87 included; the sole
 keep-interpreted residue is the dead `_DoInt3` stub) replays the
 199.6M-instruction `cold_nohooks` demo byte-identically to the interpreted
 oracle (all aligned checkpoints + final state; run_status cont.222,
-cont.224).
+cont.224, cont.225).
+
+### play_vmless — the strict runner (both hard walls)
+
+`scripts/play_vmless.py` runs SimAnt with the walls enforced *physically*:
+
+* **VMless execution wall** — `cpu.interp_forbidden` armed from instruction
+  zero; every address the step dispatch can land on carries a lifted hook
+  (jump-table case entries derived by `scripts/dispatchgen.py`, CRT-internal
+  labels closed mechanically by irgen, hand-verified indirect targets in
+  `simant/facts/indirect_targets.txt`); an uncovered address raises instead
+  of interpreting.  Runtime audit: `--collect-frontier` replays a demo with
+  the poison in collect mode and demands an EMPTY frontier.
+* **EXE-independence wall** — the machine boots from a generated data-only
+  boot image (no NE parse, no SIMANTW.EXE read; recovered code bytes zeroed,
+  jump tables preserved as declared `code_as_data` facts), and
+  `builtins.open` is guarded against the EXE by name AND content hash.
+
+```
+python scripts/build_vmless_boot_image.py  # EXE consumed HERE (build time only)
+                                           # -> artifacts/vmless_boot/
+python scripts/audit_vmless_boot_image.py  # data-only proof (no bundled EXE;
+                                           # every code byte zeroed or declared)
+python scripts/lint_vmless_independence.py # static proof: the runner's import
+                                           # graph reaches no loader edge
+python scripts/play_vmless.py --demo cold_nohooks          # headless, EXE-free
+python scripts/play_vmless.py --demo cold_nohooks --collect-frontier
+python scripts/play_vmless.py                              # interactive
+python scripts/checkpoints.py cold_nohooks --api-aligned \
+    --mask-poison artifacts/vmless_boot --save masked.trace          # oracle
+python scripts/checkpoints.py cold_nohooks --api-aligned \
+    --boot-image artifacts/vmless_boot --mask-poison artifacts/vmless_boot \
+    --check masked.trace --check-field mdigest        # strict run == oracle
+```
+
+A poisoned-image digest equals the EXE-full oracle digest only under the
+poison mask (`mdigest`); the suite holds both walls
+(`simant/tests/test_vmless_walls.py`: static lint, boot-image audit, and a
+clean-room replay in a temp dir with the EXE physically absent, pinned to a
+45M-instruction prefix digest).
 
 ### M2b — adapter routing (the recovery-map architecture)
 

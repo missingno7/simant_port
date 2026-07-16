@@ -1,0 +1,16 @@
+# HAND-VERIFIED code_as_data facts (boot-image poison exclusions): byte
+# ranges inside CODE segments that the program READS AS DATA at run time, so
+# the data-only boot image must preserve them (everything else in a code
+# segment is zeroed — dos_re_2.0 §1a').  The generated jump tables live in
+# code_as_data.txt (scripts/dispatchgen.py); this file holds the manually
+# identified tables, each with evidence.  A wrongly-omitted range cannot pass
+# silently: the whole-demo masked-digest differential vs the interpreted
+# oracle diverges at the first checkpoint after the zeroed data is read.
+#
+# Format: NE_SEG:HEX_OFFSET+HEX_LENGTH
+#
+4:0F2A+10   # __output's 8-slot state-machine jump table (read by the lifted jmp_ind at 4:0F94; slots 0F99 0FA4 0FBA 0FEE 101A 1022 104B 107D — see indirect_targets.txt)
+4:28E0+16   # long-double constants after __rtchsifneg (0.1L pattern CD CC ... FB 3F), read CS-relative by the FP formatting runtime
+4:2BB8+14   # long-double constants after _stackavail (…FE 3F/FB 3F exponents), same FP runtime
+4:2D4B+2B9  # $i8_output's powers-of-ten long-double tables (1e1…1e4096 mantissa/exponent rows; the whole undecoded span between $i8_output's code and __LD12MULTTENPOWER)
+7:B02B+8    # _font_MakeImage's left-mask table (80 C0 E0 F0 F8 FC FE FF), read CS-relative when building glyph images

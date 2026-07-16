@@ -1,5 +1,133 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.225) — M3: play_vmless with BOTH hard walls — VMless execution + EXE independence
+- **The strict runner exists and both walls HOLD over the whole cold_nohooks
+  demo: `python scripts/play_vmless.py --demo cold_nohooks` boots from a
+  generated data-only boot image (no NE parse, no SIMANTW.EXE read — the
+  clean-room test runs with the EXE physically absent), installs the full
+  1903-module graph, arms `cpu.interp_forbidden` from instruction zero, and
+  replays all 199,612,996 instructions with ZERO interpreted instructions.**
+  Three-repo chain: dos_re 793b754+92acb0f, win16_re d3e7bad (pin bump +
+  bootimage), simant_port (this commit + the wall-1 closure commit).
+- **Wall 1 — the runtime closure to an empty frontier.**  The collect-mode
+  audit (poison records instead of raising) over the whole demo drove three
+  closure mechanisms:
+  1. **`scripts/dispatchgen.py`** — mechanical switch-table derivation: 47
+     jmp_ind table sites proven from their own guard code (three MSC
+     families: F1 `cmp ax,N/ja/shl/xchg`, F2 inverted `jbe +3/jmp DEFAULT`,
+     F3 scaled-compare-no-shl with even bound), 934 slots read from the
+     image, 547 distinct case-body census entries as evidence-backed facts
+     (`simant/facts/dispatch_entries.txt`) + the table byte ranges
+     (`code_as_data.txt`).  8 register-indirect CRT tails STOPPED and
+     reported, never guessed (`jmp [di]`/`jmp bx`/far-through-pointer:
+     sqrt/trandisp/chkstk/setargv/LD12MULTTENPOWER + `__output`).
+     dispatchgen⇄irgen iterate to a FIXPOINT (2 iterations — closure-added
+     `internal_D7A0` carries its own table); `--check` pins the committed
+     facts to a fresh derivation (suite-held).
+  2. **irgen census closure** — static near/far CALL targets inside code
+     segments that are no .SYM entry join mechanically as `internal_<OFF>`
+     entries (34: the CRT-internal labels; fixpoint).  Hand-verified facts
+     (`simant/facts/indirect_targets.txt`, 10): `__output`'s 8-slot
+     state-machine table (bound not guard-provable; word 9 decodes as code —
+     manually verified, MSC printf's 8 states) and 2 CRT initializer-table
+     far-call targets observed by the collector.  IR now 1904 functions /
+     1903 liftable; sole refusal stays `_DoInt3` (dead).
+  3. **The chkstk finding (the deep one): `emulate_call` can NEVER terminate
+     on a frame-allocating computed-return callee.**  First collect run:
+     5,668 interpreted addresses — almost all one cascade: `__output`'s
+     `push cs; call __aFchkstk` opened an emulate frame whose done()
+     requires SP at/above the call point, but chkstk's whole job is to MOVE
+     SP BELOW it (pop far return, probe, `mov sp,ax`, push-back + retf) —
+     the frame never closed and ~180M instructions ran interpreted inside
+     it (semantically correct, structurally wrong — the island convention's
+     blind spot found live).  Fix upstream (dos_re 793b754): port-declared
+     COMPUTED-RETURN linker facts (`--computed-return-near/far`) qualify
+     such callees for linking — the lifted body reproduces the exact SP
+     trajectory and the linked helper continues at the very continuation
+     the computed jump targets.  `simant/facts/computed_return.txt`:
+     `__aNchkstk` (near), `__aFchkstk` + `__setargv` (far).  E2E dos_re
+     test: chkstk-shaped link runs byte-exact vs the interpreter.
+  - Collect runs: 5,668 → 492 → **0** frontier addresses.  Verified with
+    the wall ARMED: full demo, EXE-free, `VMless wall: HOLDS`.
+- **Wall 2 — the EXE goes in at build time and never again.**
+  - **win16_re `win16/bootimage.py` (generic)**: `build_boot_image` captures
+    a freshly loaded NE machine (canonical entry = instruction 0 — the NE
+    loader does its work at load time; no in-VM loader phase to interpret)
+    as a vmsnap snapshot + an EXE-free **program identity** (parsed NE minus
+    `raw`; NE resources carry their own bytes, so menus/dialogs/bitmaps work
+    fileless) + a manifest (provenance, seg map, the resolved API import
+    slot table — assigned in relocation order, NOT re-derivable without the
+    EXE, so it is data in the manifest and cross-checked against the fresh
+    loader-free registry at load), then **poisons**: every IR-decoded
+    instruction byte zeroed (328,070 bytes / 2,410 runs) minus declared
+    `code_as_data`, and — the win16 strengthening — **stage 2 zeroes every
+    remaining nonzero undeclared code-segment byte** (3,288: alignment
+    NOPs, statically unreached FP-dispatch bodies, dead tails, undeclared
+    inline data), so a code segment carries NOTHING but declared data.  A
+    `code_as_data` fact may not overlap decoded instructions (fail-loud).
+    `load_boot_image`/`boot_vmless_machine` = the EXE-free path
+    (`win16.api.surface.build_registry` split out of `win16.app` so the
+    loader is off the strict import graph); `audit_boot_image` +
+    `independence_report` + `mask_ranges_from_manifest` complete the layer;
+    `vmsnap` gains `restore_machine_state` + `digest(mask_ranges=)`.
+  - **Facts**: `code_as_data.txt` (47 derived jump tables, generated) +
+    `code_as_data_manual.txt` (5 hand-verified data tables with evidence:
+    `__output`'s state table, the FP long-double constants, `$i8_output`'s
+    pow10 tables, `_font_MakeImage`'s mask byte table).  An omitted
+    read-as-data range cannot pass silently — the masked whole-demo
+    differential diverges at the first checkpoint after the zeroed data is
+    read.
+  - **Guards + proofs**: `dos_re.independence.exe_access_guard` (by name AND
+    content hash) wraps every strict session; dos_re's lint gained
+    `--package-dir` mapping + walk-hole failure + bare-suffix-literal fix
+    (92acb0f) so `scripts/lint_vmless_independence.py` PROVES the strict
+    import graph (play_vmless + simant/vmless_boot + win16.bootimage) never
+    reaches `parse_ne`/`load_ne`/`create_machine`/`load_snapshot` or an EXE
+    path literal; `scripts/audit_vmless_boot_image.py` PASSES (no bundled
+    executable, full poison, code-segment coverage).
+- **The acceptance gate — the demo replay vs the oracle.**  A poisoned-image
+  digest legitimately differs from the EXE-full oracle digest by exactly the
+  zeroed bytes, so `checkpoints.py` gained `--boot-image` (drive the strict
+  machine through the harness), `--mask-poison` (record `mdigest` — the
+  digest with the manifest's zeroed ranges masked) and `--check-field`.
+  Results over cold_nohooks, api-aligned, 5M interval:
+  - fresh interpreted EXE-full oracle: final instr 199,612,996, plain digest
+    **2abf3ce5…** (the historical chain digest — unchanged), masked digest
+    **43bd4596…**;
+  - CONTROL, literal EXE-full graph (1903 modules) vs oracle, plain digests:
+    **MATCH all 39 checkpoints + final 2abf3ce5…** (the enlarged corpus is
+    still byte-identical);
+  - **THE WALL RUN**: boot-image machine (EXE-free load, poison armed) vs
+    oracle, masked digests: **MATCH all 39 checkpoints + final** (instr
+    199,612,996, mdigest 43bd4596… — and `play_vmless --demo`'s plain final
+    digest equals it, since the mask is a no-op on the poisoned side).
+  - `play_vmless --demo cold_nohooks --collect-frontier`: frontier EMPTY.
+  - Interactive `play_vmless` boots and runs under both walls (smoke-tested).
+- **Suite-held walls** (`simant/tests/test_vmless_walls.py`, 7 tests): the
+  static lint, the boot-image audit, manifest wall-derivation, dispatchgen
+  fact freshness (`--check`), the exe-access guard (name + renamed-hash),
+  and the CLEAN-ROOM replay: temp dir, game data copied, EXE physically
+  absent, poison armed, 45M-instruction demo prefix (918 input events:
+  boot→intro→menus→NewGame→worldgen→gameplay) pinned to instr 45,102,443 /
+  digest e9e4aafd… (~19 s).  Suites: simant_port 2241, win16_re 145,
+  dos_re 513 — all green.
+- Honest residue / queue: (i) the 8 STOPPED register-indirect CRT tails
+  stay outside the derivable-table set — their runtime targets are census
+  entries or emulate-return continuations (frontier empty proves it for
+  this corpus); a future demo touching an uncovered FP-dispatch body fails
+  loud at the wall, and the closure move is a
+  runtime-observed/indirect-target fact, exactly as designed; (ii) the
+  routed-adapter flavor (adaptgen) regenerates fine but stays a separate
+  build (it does not preserve virtual time — cont.223), so play_vmless's
+  demo gate runs the literal graph; routing under the strict walls is the
+  next dissolution step; (iii) statically unreached code zeroed by poison
+  stage 2 (chkstk error paths, x87-present sqrt bodies, two unnamed pack
+  helpers, `_EditMultipleScroll*Asm` tails, `_MemRChr`'s scrambled-looking
+  tail bytes) is enumerated in the manifest's `undeclared_runs` — if any is
+  ever READ as data the masked differential will finger it; (iv) demos are
+  hook-config-specific still — the strict runner refuses snapshot-anchored
+  demos (cold demos only) until the semantic-boundary clock lands.
+
 ## 2026-07-16 (cont.224) — the enlarged corpus: native x87 + push-cs linking land through the chain
 - **Integration of dos_re 24b4366 (irgen-core = origin/main): the two new
   generic capabilities — native x87 ESC scan/emit via the interpreter's own
