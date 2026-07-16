@@ -37,9 +37,14 @@ DATA_DIR = REPO_ROOT / "assets" / "ANTWIN"
 
 #: The clean-room pin: cold_nohooks truncated to records due by instruction
 #: 45,000,000, replayed on the strict boot-image machine (poison armed).
+#: Re-pinned 2026-07-16 (same end instruction — presentation-only change):
+#: win16 InvertRect now inverts in the 16-colour device's palette-index
+#: domain (idx ^ 0xF, grey -> light grey) instead of per-RGB-channel, the
+#: original 4-bit device behaviour — window pixels under the map-cursor
+#: rubber band (first InvertRect at ~36.8M instrs) changed intentionally.
 PREFIX_LIMIT = 45_000_000
 PREFIX_END_INSTR = 45_102_443
-PREFIX_DIGEST = "e9e4aafdbe508ec749290ab0be09441e04984a6ca7036c287ae549fca0a871df"
+PREFIX_DIGEST = "50365479eb0e454d3bd82bd49a848d7c688efb7f73bdf31d3d6ca7b3cfce41d0"
 
 _have_image = (BOOT_DIR / "manifest.json").exists() and IR_PATH.exists()
 _have_graph = (GRAPH_DIR / "graph_manifest.json").exists()
