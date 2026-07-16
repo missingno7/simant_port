@@ -1,6 +1,56 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-16 (cont.219) — DOS_RE 2.0 adoption begins: chain bump + the full-corpus census
+## 2026-07-16 (cont.220) — M1: recovery_ir.json — the win16 irgen over all 1319 SYM entries
+- **M1 of the 2.0 adoption lands: a deterministic Recovery IR document for
+  SIMANTW** (`win16_re/dos_re/docs/recovery_ir.md`), produced by a three-layer
+  irgen with strict layering — one commit per repo, review chain
+  dos_re → win16_re → simant_port (none pushed):
+  - **dos_re `irgen-core` branch, 1e6d77c**: `tools/irgen.py`'s generic half
+    factored into importable `dos_re/lift/irgen_core.py` (per-entry scan →
+    record serialization → fail-loud unsupported ledger → deterministic JSON),
+    parameterized by the pluggable triple `fetch_for(cs)` / `probe_for(cs)` /
+    `effect_tagger(inst)` plus an `identity_for(cs, ip)` provider.  The DOS
+    tool becomes a thin front-end; byte-identical output; seam contracts under
+    test (custom tagger tags land in the document; identity embeds in records
+    AND ledger entries).  467 dos_re tests green.
+  - **win16_re main, 2d68467** (bumps dos_re → 1e6d77c): new `win16/irgen.py`
+    — the Win16 triple: selector-map fetch, a FRESH `verify.clone_machine`
+    scratch per entry (the cont.219 census bug class, avoided by design), and
+    an effect tagger naming far transfers into THUNK_SEG as `api:*` from
+    `cpu.hook_names` (callgraph's classification, run on the decoder's
+    far_target), falling through to the DOS INT/port tagger (SimAnt's C
+    runtime does raw INT 21h).  Entries/facts are NE pairs; ALL records keyed
+    by paragraph-base CS:IP (the lift/link/install convention) with NE
+    identity (`ne_seg` + caller symbol metadata) embedded.  134 tests green
+    (5 new, synthetic machine — no game here).
+  - **simant_port**: new `scripts/irgen.py` (all SIMANTW.SYM code-seg entries
+    → `artifacts/recovery_ir.json`, gitignored/regeneratable; `--snapshot`,
+    `--seg`, `--no-probe`) + `simant/facts/keep_interpreted.txt` (committed
+    facts: the 33-name census frontier, per-line symbol + reason) +
+    `simant/tests/test_irgen.py` (pins keying, identity, api:* tag, cross-seg
+    far call, env_wait fact, symbol-named ledger).
+- **Owner directive folded in: .SYM identity is FIRST-CLASS in the IR.**
+  Every record carries `symbol`/`module`/`ne_seg` (+ `aliases` where two .SYM
+  names share an address); unsupported-ledger entries name the symbol; the
+  .SYM sha1 sits in provenance beside the EXE's.  Purpose: downstream symbolic
+  naming of generated modules + matching IR entries against the ~300
+  hand-recovered routines so the pipeline generates adapters around proven
+  code.  Layering kept: dos_re stays symbol-source-agnostic (a pluggable
+  identity provider); win16_re passes metadata through; only simant_port
+  reads SIMANTW.SYM.
+- **The run: 1319 SYM entries → 1313 functions in 12.6 s** (6 alias pairs
+  collapse onto 6 addresses; each address scanned once, probe clone per
+  entry).  1281 liftable + 32 unsupported = exactly the census frontier
+  (33 names / 32 addresses: 32× x87-esc incl. the `__aFftol`/`__ftol` alias,
+  1× `_DoInt3` grp5-invalid), 40 refusal records.  **Determinism gate: two
+  fresh runs byte-identical** (sha1 761008a9…, 16.9 MB) — no timestamps,
+  sorted keys, commit-hash provenance.
+- Alias discovery (new datum): the SYM carries 6 aliased addresses, not just
+  `__ftol`'s — census counted names (1319/1286), the IR counts functions
+  (1313/1281); both are right, the delta is exactly the 6 aliases (5 liftable
+  + 1 refused).
+- Next (M2): batch `liftemit --from-ir` over the 1281 liftable records +
+  structural link (near + far) — the IR is now the single input.
 - **Direction change (owner-directed): adopt the DOS_RE 2.0 staged recovery
   pipeline** (`win16_re/dos_re/docs/dos_re_2.0.md` — owner-ratified upstream,
   proven through M2 on the Lemmings pilot). Mechanical lifting is done by

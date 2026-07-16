@@ -1,0 +1,50 @@
+# SIMANTW keep-interpreted recovery facts (DOS_RE 2.0 dos_re_2.0.md §3:
+# game-specific recovery fact, evidence-backed).  One NE_SEG:HEX_OFFSET per
+# line (NE segment index is decimal 1-7); consumed by scripts/irgen.py and
+# tagged env_wait in the recovery IR (the keep-interpreted queue mechanism —
+# these functions stay OUTSIDE the VMless graph as the enumerated, fail-loud
+# frontier until a capability dissolves them).
+#
+# Seeded from the cont.219 full-corpus census (scripts/census.py,
+# artifacts/census.json): the complete scan frontier is 33 SYM entries over
+# 32 addresses (two names alias 4:0ACC) in exactly 2 classes:
+#   * 32x inline x87 (x87-esc) — 31 = the MSC FP runtime in _TEXT
+#     (runtime-role; a native port provides these) + 1 = _AdjustWndMinMax
+#     in seg 1;
+#   * 1x _DoInt3 — a debug-break stub whose body decodes into 0xFFFF padding
+#     (grp5 invalid /r).
+# The frontier queue is TEMPORARY by charter: each entry leaves this file
+# when the x87 capability (win16/fpu.py against a real FP frontier) or a
+# stub fact lands.
+1:1A6E  # SIMANT_MODULE!_AdjustWndMinMax -- x87-esc (db46dc)
+4:0AC0  # _TEXT!_sqrt -- x87-esc (dd4606)
+4:0AC6  # _TEXT!__aFCIsqrt -- x87-esc (dbe2, dd16e6b0, dd4606)
+4:0ACC  # _TEXT!__aFftol / __ftol (aliases) -- x87-esc (d97efc)
+4:1790  # _TEXT!__positive -- x87-esc (26dd07)
+4:17C8  # _TEXT!__fassign -- x87-esc (26db3f, 26dd07)
+4:1D18  # _TEXT!__cintrindisp2 -- x87-esc (d9c9, dbe2, dd4606)
+4:1D48  # _TEXT!__cintrindisp1 -- x87-esc (dbe2, dd16e6b0, dd4606)
+4:1D74  # _TEXT!__ctrandisp2 -- x87-esc (dd4606)
+4:1D8E  # _TEXT!__ctrandisp1 -- x87-esc (dd4606)
+4:27E0  # _TEXT!__trandisp1 -- x87-esc (d97efa)
+4:2822  # _TEXT!__trandisp2 -- x87-esc (d97efa)
+4:2885  # _TEXT!__rttospopde -- x87-esc (d9c9)
+4:2888  # _TEXT!__rttospop -- x87-esc (d9c9)
+4:288B  # _TEXT!__rtnospop -- x87-esc (ddd8)
+4:288F  # _TEXT!__rtnospopde -- x87-esc (ddd8)
+4:2894  # _TEXT!__rtzeropop -- x87-esc (ddd8)
+4:2897  # _TEXT!__rtzeronpop -- x87-esc (ddd8)
+4:289E  # _TEXT!__rtonepop -- x87-esc (ddd8)
+4:28A1  # _TEXT!__rtonenpop -- x87-esc (ddd8)
+4:28A8  # _TEXT!__rtbignan -- x87-esc (dec1)
+4:28AF  # _TEXT!__rtifprojpop -- x87-esc (ddd8)
+4:28B6  # _TEXT!__rtindfpop -- x87-esc (ddd8)
+4:28B9  # _TEXT!__rtindfnpop -- x87-esc (ddd8)
+4:28CE  # _TEXT!__rtifprojnpop -- x87-esc (ddd8)
+4:28D7  # _TEXT!__rtchsifneg -- x87-esc (d9e0)
+4:2B74  # _TEXT!__atold -- x87-esc (db6ef4)
+4:2C06  # _TEXT!$i8_output -- x87-esc (d93ec7b1)
+4:3004  # _TEXT!__LD12MULTTENPOWER -- x87-esc (d97efe, dbe2)
+4:3784  # _TEXT!$i8_tpwr10 -- x87-esc (2edb2f)
+4:387C  # _TEXT!__STRINGTOD -- x87-esc (d97ef2)
+7:F85B  # SIMTWO_MODULE!_DoInt3 -- grp5 invalid /r (0xFFFF padding body)
