@@ -1,5 +1,28 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.221) — recovery inventory: the manual corpus mapped for adapter routing
+- **Owner directive**: the existing hand-recovered corpus is AUTHORITATIVE
+  where verified — the 2.0 pipeline generates CPU/ABI adapters around it,
+  never parallel literal lifts; SIMANTW.SYM identity is first-class through
+  the whole pipeline. (Both directives recorded; irgen already carries
+  symbol identity in every IR record as of cont.220.)
+- NEW `docs/recovery_inventory.md` + `simant/facts/recovered_map.json` (the
+  explicit machine-readable mapping — the pipeline never parses handwritten
+  Python): **309 SYM entries matched by 300 distinct impls** (297 exact,
+  12 derived twins, 0 mismatches, 0 duplicate claims), 291 proven +
+  18 proven-gated, 53 helper-splits, 68 islands (61 routing through pure
+  twins), 1009 code symbols in the lift-don't-recover set.
+- Gate keystones: `_YellowFight` (6:823E) un-gates 16 matched entries;
+  `_DoTroph` (1:846E) gates 5; `_GetRedBestDirs` (6:9A18) gates 1.
+- Adapter-relevant findings: ret convention is per-entry (144 entries have
+  no docstring-stated convention — close mechanically from the IR's own
+  `exits` field, never guess); all three state views are fixed NE segments
+  (bind once per image; modal signature `(dgroup, simant_data_group, pack,
+  slot)` covers 92 entries); matching must stay address-keyed and
+  shape-flexible (1 impl↔8 entries, 2 impls↔1 entry, alias pairs).
+- Minor findings queued: duplicate `_GenNestMap` row in `hooks._ISLANDS`,
+  `gameplay._sx32` dead, `_Unpack` island defers mid-op resume to ASM.
+
 ## 2026-07-16 (cont.220) — M1: recovery_ir.json — the win16 irgen over all 1319 SYM entries
 - **M1 of the 2.0 adoption lands: a deterministic Recovery IR document for
   SIMANTW** (`win16_re/dos_re/docs/recovery_ir.md`), produced by a three-layer
