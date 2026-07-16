@@ -37,6 +37,26 @@ WAIT PRIMITIVES are the game's wait/pump framework, two tiers:
   crash set (crash_214204/214734/220104 + the headless sweep) all spin
   through exactly these.
 
+WHAT THIS SCAN DOES NOT COVER (know the edges of your own tool):
+
+* **False loops.**  A backward jump to a shared EPILOGUE is not a loop, but
+  it looks like one here — WINMAIN's "loop 3FFE..45D8" is its early-exit
+  jumps to the `retf` block, and MAINWNDPROC's are its switch dispatcher's.
+  Harmless (they land in `mixed`, which is report-only), but do not read the
+  mixed list as a to-do list.
+* **The RESIDENCE class** (docs/run_status cont.233): a loop the game lives
+  inside for unbounded wall time — the sim frame driver (MYTIMERFUNC) — trips
+  MAX_ITERATIONS not because it spins for nothing but because the guard is a
+  per-INVOCATION block-transition budget that accumulates across the whole
+  residence.  Its head is a `frame_gate` in the hand-curated facts.  Note the
+  demo cannot surface these: its clock is derived from the instruction count,
+  so every timer is due immediately and the frame driver returns at once
+  (measured: MYTIMERFUNC's max own-code span over cold_nohooks is ~50k
+  instructions across 538 calls — live it never leaves).  Residences are
+  found live, or by the frame-gate signature (a loop whose PeekMessage
+  filters WM_TIMER: exactly MYTIMERFUNC + the two shutdown waits, which are
+  already derived heads).
+
 Output:
 * ``simant/facts/boundary_heads_derived.txt`` — the poll-only heads, one per
   line (NE_SEG:HEX_OFFSET), each with its mechanical evidence comment.

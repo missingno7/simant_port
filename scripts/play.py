@@ -47,7 +47,7 @@ from PIL import Image, ImageTk
 # machine), and it ships in the standalone deploy (scripts/deploy_vmless.py)
 # where the NE-loader edge (simant.runtime / win16.app) does not exist.
 # Those are imported function-locally in the branches that boot from the EXE.
-from simant.vmless_boot import GAME_NAME, demo_out_path
+from simant.vmless_boot import GAME_NAME, boundary_park_kinds, demo_out_path
 from win16.api.core import Win16ApiGap
 from win16.api.objects import Window
 from win16.api.system import Win16System
@@ -897,8 +897,10 @@ class PlayApp:
         # boundary_heads) park through this observer so the wall clock can
         # advance between passes — inert when nothing lifted is installed,
         # and never armed on headless/demo runs (replay.py, play_vmless
-        # --demo), whose clock is the recorded timeline.
-        self.driver.arm_boundary_parks(self.machine.cpu)
+        # --demo), whose clock is the recorded timeline.  The graph's own
+        # generated policy prices each park (frame gate vs pacing spin).
+        self.driver.arm_boundary_parks(self.machine.cpu,
+                                       head_kinds=boundary_park_kinds())
         self.status = "running"
         self.stopped = False
         self.crashed = False        # a VM stop (not a clean exit) happened

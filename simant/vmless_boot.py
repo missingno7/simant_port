@@ -43,6 +43,31 @@ CORPUS_EXCLUSIONS = {
 }
 
 
+#: The generated park policy that ships beside the lifted graph
+#: (scripts/liftemit.py writes it from simant/facts/boundary_heads*.txt).
+POLICY_NAME = "boundary_policy.json"
+
+
+def boundary_park_kinds(lift_dir: Path | str = LIFT_DIR) -> dict:
+    """``{(cs, ip): kind}`` — the INTERACTIVE park cost per boundary head,
+    for ``win16.interactive.InteractiveDriver.arm_boundary_parks``.
+
+    Read from the graph's own generated policy file (paragraph-keyed, so no
+    NE mapping and no facts files are needed at run time — it ships wherever
+    the graph ships).  Absent file = no policy: every head takes the host's
+    default cost.  The kinds are NOT an emission input; the same graph runs
+    identically under any policy (and under none, headless).
+    """
+    import json
+    path = Path(lift_dir) / POLICY_NAME
+    if not path.exists():
+        return {}
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    return {(int(cs, 16), int(ip, 16)): kind
+            for cs, ip, kind in ((k.split(":")[0], k.split(":")[1], v)
+                                 for k, v in doc.get("kinds", {}).items())}
+
+
 def registry_factory():
     """SimAnt's API surface, loader-free (WINFLAGS: no x87 emulator forms —
     the NE carries real x87 opcodes)."""

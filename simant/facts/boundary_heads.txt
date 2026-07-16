@@ -10,20 +10,51 @@
 # jcc/jmp), with its successor inside the same function (the park resumes
 # there).
 #
+# A line may carry the head's INTERACTIVE PARK COST as a trailing word
+# (win16.interactive; default pacing_spin, a line in the derived file always
+# defaults):
+#   pacing_spin  one pass is one iteration of a BOUNDED wait (a clock/input
+#                poll, a queue drain) — the park sleeps ~1 ms: the clock the
+#                loop watches moves, the loop's own exit still fires promptly.
+#   frame_gate   one pass is one FRAME of the game's own frame driver, gated
+#                on a timer it waits for — the park costs the whole frame
+#                quota (wait_for_work: block until the next timer is due or
+#                input arrives), so the cadence matches the original spin
+#                with no CPU burnt between frames.
+# NEVER price a DRAIN loop frame_gate (one that consumes a queued message per
+# pass and exits when the queue runs dry — e.g. MYTIMERFUNC's own timer drain
+# at 1:27BF): waiting for the next timer to be due would hand it a fresh
+# message every pass and the drain would never end.  A drain is pacing_spin.
+# The kind is a RUNTIME price only: emission is identical for every kind, and
+# scripts/liftemit.py copies it into the graph's generated
+# boundary_policy.json (the host reads that; headless never arms parks).
+#
 # Interactive semantics (win16.interactive.InteractiveDriver.arm_boundary_parks):
 # each pass through a head parks — unwinds the lifted Python chain, lets the
 # CPU worker (or win16.callback.call_far's chunk loop, for waits reached
 # inside a WndProc/TimerProc) advance the wall clock, and resumes INSIDE the
 # lifted body at the RESUME entry, zero interpreted instructions.  Demo/
 # headless runs leave cpu.boundary_hook None: the emitted observer is inert
-# and the instruction-count timeline is unchanged.
+# and the instruction-count timeline is unchanged.  A park also RESETS the
+# module's per-invocation MAX_ITERATIONS budget (the guard counts block
+# transitions in one Python frame) — which is why a frame driver the game
+# lives inside for a whole session must have a head.
 #
-# THIS file holds only loops waitscan classifies `mixed` (they also do light
+# THIS file holds only loops waitscan classifies `mixed` (they also do real
 # per-iteration work) that are PROMOTED BY EVIDENCE — a live/headless crash
-# proving the loop is a wait, plus an oracle check that the lifted body is
-# faithful (owner triage directive: lifter bug goes upstream, never into a
+# proving the loop waits, plus an oracle check that the lifted body is
+# faithful (owner triage directive: a lifter bug goes upstream, never into a
 # fact).  Pure wait loops live in the derived file; do not duplicate them
 # here.
+#
+# NOT EVERY RUNAWAY-GUARD TRIP IS A WAIT TO PARK — the triage order before
+# any promotion is: (1) is the lifted body faithful (oracle A/B; a lifter bug
+# goes upstream)?  (2) is the loop waiting for something OUR PLATFORM LAYER
+# should have delivered (a message, a window closing) — then FIX THAT, since
+# parking a loop whose event never comes would turn a loud crash into a
+# SILENT HANG.  Only a loop that waits on the CLOCK/INPUT becomes a head.
+# Worked example of the question answering "genuine wait": _MagnifyMenu below
+# (the platform-gap hypothesis was raised first and DISPROVEN by evidence).
 #
 # Oracle evidence held by all heads (hand + derived): the whole-demo
 # api-aligned differential is byte-identical at all 39 checkpoints + final
@@ -63,3 +94,108 @@
 # stop CS:IP 0100:6422 — inside _win_GetEvent's poll — instr 149,954,474)
 # while the interpreted control passes the same dialog live on a click.
 1:6418
+
+# SIMANT!MYTIMERFUNC (0100:2440, ne_seg 1) — THE SIM FRAME DRIVER: the loop
+# the game lives inside for the whole of gameplay (the SetTimer TimerProc,
+# dispatched WinMain -> GetMessage/DispatchMessage -> call_far):
+#     25B6  8e06a0be    mov es,[bea0]          <- HEAD (loop leader, seq)
+#     25BA  26830...    inc dword es:[9b2c]    per-pass counter
+#     ...   mode checks; when enough ticks are pending:
+#     2683  9a...       call far 395E:0000     SIMANT!_DoAntSim (the tick)
+#     ...   the frame's rendering (SelectObject/CreateSolidBrush/FillRect/
+#           DeleteObject/SelectPalette/ReleaseDC — the crash's api tail)
+#     27B3  9a...       call far USER.109      PeekMessage(WM_TIMER..WM_TIMER,
+#                                              PM_REMOVE|PM_NOYIELD)
+#     27BF..27DA        the timer DRAIN loop (si counts drained ticks)
+#     27DD  9a...       call far 0E99:A216     GR!_myServiceSong (music)
+#     27E2  833e7ecd00  cmp [cd7e],0; jz 2806  exit: no game window
+#     27E9  83fe02      cmp si,2; jl 27F8      <2 ticks drained -> keep going
+#     27EE  83ff03      cmp di,3; jge 2806     exit: behind, let the pump run
+#     27F8  9a...       GetAsyncKeyState(VK_LBUTTON); jnz 2806   exit: click
+#     2803  e9b0fd      jmp 25B6               LOOP
+# WHY IT WAITS: with si < 2 the loop has NO exit but a click — it spins until
+# WM_TIMERs arrive, i.e. it waits on the WALL CLOCK exactly like every other
+# head here (interactively the clock is frozen inside one lifted invocation,
+# so no timer ever becomes due and the loop cannot exit).  It reaches that
+# state whenever the host is KEEPING UP — fewer than 2 ticks pending; when
+# the host is behind, si>=2/di>=3 exits the loop and no park is needed.  That
+# is why the crash needs minutes of play to appear and why a faster host
+# meets it sooner: it is not a slow accumulation, it is the first moment the
+# game gets ahead of its timers (MEASURED, correcting the first hypothesis:
+# max own-code span over cold_nohooks is ~50k instructions across 538 calls,
+# and a live 5-minute in-game run parks only ~5 times per 30 s while
+# delivering ~480 ticks — the loop otherwise exits by itself).
+# WHY frame_gate: a pass that finds its tick runs a whole sim frame + the
+# render; charging it a fixed sleep would slow the game.  wait_for_work parks
+# until the next timer is genuinely due (or input) — the original cadence.
+# A park also RESETS this module's per-invocation guard, which is what makes
+# the now-possible productive residence (the game legitimately living in this
+# loop on a fast host) safe from the runaway budget as well.
+# EVIDENCE: owner live crash — `simant_mytimerfunc exceeded MAX_ITERATIONS`
+# at 0100:27E2 (a resume entry inside this loop), instr 89,397,794, ~15 min
+# of play, api tail = exactly this loop's per-pass calls (crash_230334).
+# Live acceptance after the fix: 5+ minutes in-game, zero VM stops, sim rate
+# ~15 ticks/s vs the interpreted control's 6.0 (the demo differential covers
+# the body byte-identically; the demo cannot cover the wait state at all,
+# because its clock is instruction-derived and every tick is due at once).
+1:25B6 frame_gate
+
+# ANTEDIT!_MagnifyMenu (18C0:6B4C, ne_seg 3) — the press-and-hold popup menu's
+# ButtonHeld poll loop (the magnify popup over the nest/map view):
+#     6CAA  9a4e4a990e  call far 0E99:4A4E     GR!_ButtonHeld   <- HEAD (call_far)
+#     6CAF  0bc0        or ax,ax; jz 6D02      released -> dismiss
+#     6CB3  68001d 9a.. call far 430E:C19E     SIMTWO!_win_IsWinInFront
+#     6CC0  7531        jnz 6CF3               in front -> no redraw
+#     6CC2..6CF0        (only if it fell behind) BringWindowToTop; MSClipStart;
+#                       _win_DrawWindow; MSClipEnd; MySetCapture
+#     6CF3  68001d 9a.. call far 430E:C256     SIMTWO!_win_IsWinOpen
+#     6D00  75a8        jnz 6CAA               LOOP while open
+#     6D02  ...         ButtonHeldEnd; MyReleaseCapture; win_Close(popup)
+# GR!_ButtonHeld (0E99:4A4E) drains a delay counter [7236] one per 55 ms
+# _TickCount CHANGE (_TickCount = GetTickCount/0x37) before it will even poll
+# the button, then latches a press in [7234]; a release after a latched press
+# returns 0 and the loop exits.  So the loop waits on the CLOCK and on INPUT —
+# our class exactly.
+# EVIDENCE (this fact reverses an earlier "do not park this one" call, whose
+# premise — a win16 window-management bug — was DISPROVEN):
+#  * owner live crash `antedit_magnifymenu exceeded MAX_ITERATIONS` at
+#    18C0:6CFB, instr 294,126,381 (crash_231350);
+#  * the snapshot's own state is the frozen-clock signature: [7236]=2, stored
+#    tick [7230]=208, clock_ms=11468 -> 11468/55 = 208 EXACTLY — the clock is
+#    stuck on the very tick ButtonHeld recorded, so the countdown can never
+#    drain (api tail: exactly one GetTickCount per pass, the compare equal
+#    every time);
+#  * re-verified first-hand on the strict machine (scratchpad
+#    magnify_verify.py): resume crash_231350 with NO head -> the guard trips
+#    again after 93M instructions with clock ADVANCED 0 ms (11468 -> 11468);
+#    with the head + parks -> the clock advances, the countdown drains, and a
+#    press/release dismisses the popup through the game's OWN sequence
+#    (ReleaseCapture + ShowWindow(SW_HIDE)) — see run_status cont.232/cont.233.
+#  * platform-gap hypothesis cleared: SW_HIDE does remove the window from the
+#    visible list/enumeration, our z-order is correct (IsWinInFront returns
+#    true — which is why the crash tail shows NO BringWindowToTop), and
+#    GW_OWNER=0 is correct for this WS_CHILD.  The "popup renders behind the
+#    Quick Game window" symptom is a separate HOST PROMOTION bug (borderless
+#    popup lacks WS_CAPTION -> composited into the root frame), not this loop.
+# KIND: pacing_spin (the default) — a pass polls a clock-gated counter and a
+# window flag; it does real work only in the rare fell-behind redraw branch.
+3:6CAA
+
+# SIMANT!_EndGameDialog (0100:6602, ne_seg 1) — the end-of-game dialog's
+# event-poll loop (structurally _ShowIntro's twin, one family):
+#     6688  0bf6        or si,si               <- HEAD (loop leader, seq)
+#     668A  754b        jnz 66D7               an event was consumed -> done
+#     668C  8d46ec 9a.. call far 430E:D150     SIMTWO!_win_GetEvent (pump)
+#     66A7  9a...       call far 0E99:A1A0     GR!_mySongIsDone
+#     66B4..66C5        when the song ends: _SRand2 + _myBeginSong (loop it)
+#     66C8  680004 9a.. call far 430E:C256     SIMTWO!_win_IsWinOpen(0x400)
+#     66D5  75b1        jnz 6688               LOOP while the dialog is open
+# It waits for the user's click while its music loops — clock + input, our
+# class.  waitscan class: mixed (the song calls are real per-pass work).
+# EVIDENCE: found by my own headless verification of the MagnifyMenu head
+# (scratchpad magnify_verify.py mode C): once the popup dismissed, the game
+# reached this dialog and died — `simant_endgamedialog exceeded
+# MAX_ITERATIONS` at 0100:66D0, 757M instructions inside ONE invocation,
+# api tail = exactly this loop (PeekMessage + IsWindowVisible(370) repeating).
+# The whole-demo differential covers its lifted body byte-identically.
+1:6688

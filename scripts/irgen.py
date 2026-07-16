@@ -62,17 +62,33 @@ DEFAULT_OUT = REPO_ROOT / "artifacts" / "recovery_ir.json"
 
 def read_fact_pairs(path: Path) -> list[tuple[int, int]]:
     """NE pairs from a facts file: 'NE_SEG:HEX_OFFSET  # comment' per line
-    (segment index decimal, offset hex)."""
-    pairs: list[tuple[int, int]] = []
+    (segment index decimal, offset hex).  A trailing word (the boundary-head
+    park KIND — see read_fact_pairs_kinded) is ignored here: an address is an
+    address whatever policy rides with it."""
+    return [pair for pair, _kind in read_fact_pairs_kinded(path)]
+
+
+def read_fact_pairs_kinded(path: Path) -> list[tuple[tuple[int, int], str | None]]:
+    """((ne_seg, off), kind|None) per line: 'NE_SEG:HEX_OFFSET [kind] #...'.
+
+    The optional trailing word is the head's INTERACTIVE PARK COST
+    (win16.interactive FRAME_GATE / PACING_SPIN — a runtime policy, not
+    something the IR or the emitter knows: emission is identical either
+    way).  None = the host's default."""
+    out: list[tuple[tuple[int, int], str | None]] = []
     if not path.exists():
-        return pairs
+        return out
     for line in path.read_text(encoding="utf-8").splitlines():
         line = line.split("#", 1)[0].strip()
         if not line:
             continue
-        seg, off = line.split(":", 1)
-        pairs.append((int(seg, 10), int(off, 16) & 0xFFFF))
-    return pairs
+        parts = line.split()
+        seg, off = parts[0].split(":", 1)
+        kind = parts[1] if len(parts) > 1 else None
+        if len(parts) > 2:
+            raise ValueError(f"{path.name}: cannot parse {line!r}")
+        out.append(((int(seg, 10), int(off, 16) & 0xFFFF), kind))
+    return out
 
 
 def sym_corpus(segs=CODE_SEGS):
