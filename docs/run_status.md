@@ -1,5 +1,130 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.232) — resize refresh fixed at the PeekMessage pump (win16_re 39fc1c6); the MagnifyMenu popup crash proven to be an ENV-WAIT, not a window-management gap; the popup's "behind our window" traced to the host PROMOTION model
+- **Owner report 1: "on vmless play: quick play window is not refreshing when
+  resized."  Triaged lifter-first (standing directive) and answered by a
+  DIFFERENTIAL, not plausibility: the identical scripted resize reproduces the
+  same way on BOTH paths** — `play.py` (interpreted hybrid, EXE boot +
+  islands) and the strict lifted graph (play_vmless's boot-image machine).
+  **Not a lifter/park bug.**  Repro (scratchpad `resize_repro.py`): drive to
+  the target state under the real InteractiveDriver with a `call_wndproc`
+  tap, then emulate exactly what play.py's `WindowView._apply_resize` does
+  (`win.w/h` assigned, `win._surface = None`, WM_SIZE posted).
+  - PRE-FIX, both paths, main frame 640x480 -> 720x540: WM_SIZE **does**
+    reach the game; it re-lays-out via SetWindowPos + InvalidateRect
+    (dirty := True) — and then **nothing ever paints**: `dirty=1` forever,
+    `surf=(no surface)` 20 s later.  The window renders stale/black.
+  - **Root cause (win16, generic): real USER generates WM_PAINT at message-
+    RETRIEVAL time (lowest priority) for any window with a non-empty update
+    region — through GetMessage AND PeekMessage.  Our `peek_message` never
+    synthesized it; only `get_message`'s pump did.**  SimAnt's title /
+    scenario / in-game loops pump with PeekMessage and never call GetMessage
+    for long stretches, so the paint the resize invalidated was never
+    retrieved.  (The same asymmetry had already been fixed once for WM_TIMER
+    — the sim-tick spin — which is exactly why in-game animation works but a
+    resize does not.)
+  - **Fix (win16_re 39fc1c6)**: `peek_message` synthesizes WM_PAINT for the
+    first visible+dirty window matching the hwnd/message filter, after posted
+    messages and due timers (real USER's priority order).  WM_PAINT is not
+    consumed by retrieval, so `remove` is irrelevant — BeginPaint/ValidateRect
+    clear the region and the paint stops repeating exactly then.  **Gated to
+    `sysobj.interactive`** (set solely by InteractiveDriver; demo/tick replay
+    and verify force it False) so no recorded instruction-keyed baseline moves.
+  - POST-FIX: WM_PAINT dispatched within 100 ms, dirty 1 -> 0, surface
+    reallocated.  In-game on the owner's actual window (Quick Game 014C,
+    interpreted path): 423x346 -> 503x406, surface rebuilt, and the newly
+    exposed strip carries **6872 painted (non-black) pixels**.
+  - Gates: win16_re 173, simant_port 2254, full `play_vmless --demo
+    cold_nohooks` **unchanged** — 199,612,996 instructions, digest
+    05c738b2... == the pinned masked oracle final, VMless wall HOLDS.  No
+    pixels move on the demo path (the demo driver never sets `interactive`).
+  - `win16_re/tests/test_peek_paint.py` (7, four failing on old code).
+- **Owner report 2 (the popup): "double clicking on quick game view ... shows
+  a borderless popup ... it shown behind our window", plus a hard crash
+  `LiftRuntimeError: antedit_magnifymenu exceeded MAX_ITERATIONS` at
+  18C0:6CFB (instr 294,126,381; snapshot crash_231350).  These are TWO
+  DIFFERENT BUGS, and the crash is NOT the window-management gap it looks
+  like.**
+- **The crash is a textbook ENV-WAIT (the cont.229 class) — proven from the
+  snapshot's own state, not inferred.**  `_MagnifyMenu` (ANTEDIT 3:6B4C) is a
+  press-and-hold menu:
+
+      win_Open(popup); MySetCapture; ButtonHeldInit
+      while ButtonHeld() and win_IsWinOpen(popup):        # 6CAA..6D00
+          if not win_IsWinInFront(popup):
+              BringWindowToTop; MSClipStart; win_DrawWindow; MSClipEnd; MySetCapture
+      ButtonHeldEnd; MyReleaseCapture; win_Close(popup)   # 6D02
+
+  `GR!_ButtonHeld` (2:4A4E) decoded: a **delay counter [7236]** (drains one
+  per 55 ms `_TickCount` CHANGE — `_TickCount` = GetTickCount/0x37) gates a
+  **press latch [7234]**; while [7234]==0 it returns 1 ("keep waiting"), and
+  only once a press has been OBSERVED does a release make it return 0.
+  - **Snapshot state (decisive): `[7236]=2`, stored tick `[7230]=208`, and
+    `clock_ms=11468` -> `11468/55 = 208` — the stored tick EQUALS the current
+    tick.  The wall clock is FROZEN at exactly the tick ButtonHeld recorded**,
+    because the lifted invocation never returns to the chunk loop where
+    `check_pause` advances it.  The countdown can therefore NEVER drain, the
+    poll is never reached, the loop spins -> runaway guard.  The api tail
+    shows exactly ONE GetTickCount per cycle = the compare is EQUAL every
+    pass.  Re-verified live: resuming crash_231350 on a strict machine
+    reproduces the owner's crash and tail byte-for-byte, `clock=11468` at
+    resume AND at crash; arming boundary parks changes nothing (MagnifyMenu is
+    not a declared head).
+- **The coordinator's hypothesis ("parking would turn the crash into a HANG;
+  the real fix is window management") is DISPROVEN — parking makes it WORK.**
+  End-to-end proof (scratchpad `popup_dismiss4.py`: crash_231350 on the strict
+  machine, clock advancing, runaway guard raised for the experiment — a park
+  achieves both in production by re-entering at the resume entry):
+  hold the button as the menu opens -> `[7236]` drains 2->0 -> **`[7234]`
+  LATCHES to 1 at poll 4** -> release -> ButtonHeld returns 0 -> the loop
+  exits and the api tail is the game's own dismissal sequence:
+  `ReleaseCapture()` then **`ShowWindow(356, 0)` (SW_HIDE)** — **popup
+  0164 `visible=False`, gone from the visible list, and gameplay resumes
+  (attack.mid starts).**  So: our GetAsyncKeyState, ShowWindow(SW_HIDE),
+  ReleaseCapture and z-order all serve the game CORRECTLY; the only thing
+  missing was a clock that moves.  **The fix is a boundary head on
+  MagnifyMenu's loop — the env-wait agent's machinery.**  It "waits" only
+  while no button is pressed, which is the DESIGNED behaviour and is exactly
+  the owner's own description ("this window disappears if you click away" =
+  press to dismiss).
+- **The window-management worries checked and CLEARED (evidence, not
+  assertion):** (i) `ShowWindow(SW_HIDE)` DOES make a window vanish from the
+  visible list + enumeration (the dismissal above is the proof); (ii) our
+  Win16 z-order is CORRECT — popup 0164 is topmost in `sysobj.windows`,
+  `_z_children` puts it first, and `_win_IsWinInFront` (7:C19E: GetTopWindow
+  -> walk GW_HWNDNEXT to the first VISIBLE -> remap through GW_OWNER ->
+  GetProp) returns TRUE, which is why **no BringWindowToTop appears in the
+  crash tail**; (iii) `GetWindow(GW_OWNER)` returns 0 unconditionally — a real
+  gap on paper, but 0164 is a **WS_CHILD** (style 44400000), not a WS_POPUP,
+  and real USER returns NULL for a child's owner, so 0 is correct here.
+- **The "behind our window" symptom is a SEPARATE, real bug — in the HOST
+  PRESENTATION model, not win16 z-order.  Proven by construction:**
+  - popup 0164 style `44400000` = WS_CHILD|WS_DLGFRAME — it has DLGFRAME
+    (0x400000) but NOT the full WS_CAPTION (0xC00000), so
+    `compositor.presents_standalone()` is **False** -> NOT promoted ->
+    composited into the root frame.
+  - Quick Game 014C style `44FD0000` has the full caption -> **promoted** to
+    its own OS Toplevel.
+  - popup rect x 256..358, y 152..249 lies **entirely inside** 014C's rect
+    x 16..439, y 24..370.
+  - The root frame sits BEHIND the promoted Toplevel -> the topmost Win16
+    window is occluded by a lower one.  **The promotion set is not
+    z-order-closed**: any visible child ABOVE a promoted sibling must also be
+    promoted, or the OS window stacking inverts the Win16 z-order.
+  - **Not fixed this session** (honest residue).  The generic slice is
+    z-order closure in `compositor.own_windows`, but it is only correct
+    together with a host change (`play.py` must give a caption-less promoted
+    window a borderless Toplevel — `overrideredirect` — instead of an OS
+    title bar, and must not treat its close box as "quit the app"), and
+    tkinter stacking cannot be verified headlessly.  Specified here rather
+    than half-landed.
+- Queue: (i) **boundary head for MagnifyMenu's ButtonHeld loop** (env-wait
+  agent — proven correct above, do NOT skip it on the "hang" theory);
+  (ii) popup promotion z-order closure + borderless Toplevel (above);
+  (iii) scrollbars (owner's third item, untouched); (iv) an interactive v4
+  demo recorded under a driver replays without the new peek-time paints —
+  the same live-vs-replay divergence class as the wall clock.
+
 ## 2026-07-16 (cont.231) — the "snake shhh" over the music: Windows 3.x MIDI Mapper level filtering (win16_re 0678e0f); the digitized-SFX (waveOut) contract recovered and queued
 - **Owner report: MIDI music plays, but a short noise "constantly replays"
   over it — "like some snake shhhh" — under interactive play.**  Triage per
