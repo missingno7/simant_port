@@ -349,9 +349,9 @@ The script-driven staged recovery pipeline
 is adopted; M2's mechanical half is in place:
 
 ```
-python scripts/irgen.py                    # recovery IR: 1313 fns, 1281 liftable
+python scripts/irgen.py                    # recovery IR: 1313 fns, 1312 liftable
 python scripts/liftemit.py --require-vmless-wall
-                                           # 1281 symbolically named VMless modules
+                                           # 1312 symbolically named VMless modules
                                            # -> simant/lifted/graph (+ manifest)
 python scripts/liftlink.py                 # structural near+far link + the
                                            # capability report (artifacts/)
@@ -364,9 +364,11 @@ python scripts/checkpoints.py cold_nohooks --api-aligned \
 Modules are named from SIMANTW.SYM (`simone_srand1.py`), carry their
 paragraph-base `ENTRY` as provenance, and are disposable generated output —
 regenerate, never hand-edit.  Status: the whole-demo differential is CLEAN —
-the full 1281-module linked graph replays the 199.6M-instruction
-`cold_nohooks` demo byte-identically to the interpreted oracle (all aligned
-checkpoints + final state; run_status cont.222).
+the full 1312-module linked graph (native x87 included; the sole
+keep-interpreted residue is the dead `_DoInt3` stub) replays the
+199.6M-instruction `cold_nohooks` demo byte-identically to the interpreted
+oracle (all aligned checkpoints + final state; run_status cont.222,
+cont.224).
 
 ### M2b — adapter routing (the recovery-map architecture)
 

@@ -37,8 +37,10 @@ def _load_script():
 @pytest.fixture(scope="module")
 def doc():
     """The IR over a pinned entry sample: _SetHelpCursor (seg 2 — calls the
-    USER cursor API and far-calls into seg 4) + the aliased keep-interpreted
-    x87 entry __aFftol/__ftol (seg 4)."""
+    USER cursor API and far-calls into seg 4), the aliased x87 CRT entry
+    __aFftol/__ftol (seg 4 — natively liftable since dos_re's x87 ESC
+    capability), and the dead debug stub _DoInt3 (seg 7 — the one remaining
+    keep-interpreted fact)."""
     irgen = _load_script()
     from simant.runtime import create_machine
     from win16.irgen import build_ir
@@ -46,7 +48,7 @@ def doc():
     machine = create_machine()
     machine.cpu.trace_enabled = False
     entries, names, _ = irgen.sym_corpus()
-    sample = [(2, 0x0000), (4, 0x0ACC)]
+    sample = [(2, 0x0000), (4, 0x0ACC), (7, 0xF85B)]
     keep = irgen.read_fact_pairs(irgen.FACTS_DIR / "keep_interpreted.txt")
     return build_ir(machine, sample, machine_factory=None,
                     names={k: names[k] for k in sample},
@@ -54,12 +56,14 @@ def doc():
                     symbols="SIMANTW.SYM sha1=test")
 
 
-def test_committed_facts_file_parses_and_covers_the_census_frontier():
+def test_committed_facts_file_is_exactly_the_doint3_stub():
+    # The x87 census frontier (31 addresses) dissolved when dos_re gained
+    # native x87 ESC scan/emit (24b4366) — those entries lift natively and
+    # left the facts file.  What remains is the one dead debug stub.
     irgen = _load_script()
     pairs = irgen.read_fact_pairs(irgen.FACTS_DIR / "keep_interpreted.txt")
-    assert len(pairs) == 32                       # 33 SYM names, 32 addresses
+    assert pairs == [(7, 0xF85B)]                 # _DoInt3, nothing else
     assert all(seg in irgen.CODE_SEGS for seg, _ in pairs)
-    assert (4, 0x0ACC) in pairs and (7, 0xF85B) in pairs
 
 
 def test_records_are_keyed_by_paragraph_base_with_sym_identity(doc):
@@ -87,18 +91,32 @@ def test_api_effect_tag_and_cross_segment_far_call(doc):
     assert any(s == "0060" for s, _ in rec["calls_far"])
 
 
-def test_keep_interpreted_fact_tags_env_wait_and_ledger_names_symbols(doc):
+def test_x87_crt_entry_lifts_natively_with_alias_identity(doc):
+    # Formerly the keep-interpreted x87 frontier: since dos_re 24b4366 the
+    # ESC (D8-DF) family scans and emits through the interpreter's own FPU
+    # helpers, so the MSC FP runtime is plain liftable corpus now.
     rec = doc["functions"]["275F:0ACC"]
     assert rec["ne_seg"] == 4
     assert rec["symbol"] == "__aFftol"
     assert rec["aliases"] == ["__ftol"]          # two .SYM names, one address
     assert rec["module"] == "_TEXT"
+    assert rec["liftable"] and not rec["refusals"]
+    assert "platform_effect" not in rec          # no keep-interpreted fact
+    insts = [i for b in rec["blocks"] for i in b["instructions"]]
+    assert sum(i["mnemonic"] == "x87" for i in insts) == 4  # the fistp/fld body
+
+
+def test_keep_interpreted_fact_tags_env_wait_and_ledger_names_symbols(doc):
+    rec = doc["functions"]["430E:F85B"]
+    assert rec["ne_seg"] == 7
+    assert rec["symbol"] == "_DoInt3"
+    assert rec["module"] == "SIMTWO_MODULE"
     assert rec["platform_effect"] == "env_wait"  # the keep-interpreted fact
     assert not rec["liftable"]
     # Fail-loud ledger, with first-class symbol identity (refusals name the
     # symbol, not just the address).
     assert doc["unsupported"]
     for u in doc["unsupported"]:
-        assert u["entry"] == "275F:0ACC"
-        assert u["symbol"] == "__aFftol"
+        assert u["entry"] == "430E:F85B"
+        assert u["symbol"] == "_DoInt3"
         assert u["reason"] == "unsupported-opcode"

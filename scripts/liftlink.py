@@ -114,23 +114,19 @@ def classify_unresolved(doc: dict, link_report: dict,
                    else "callee-not-liftable")
             blocked_classes[f"{sub}:{refusals or 'unknown'}"].append(desc)
         elif reason == "exit-shape":
+            # Near CALLs into a pure-retf callee never land here any more:
+            # dos_re's linker links the `push cs` idiom (MSC's same-segment
+            # far call) directly, and reports the rare non-idiom case under
+            # its own 'retf-callee-no-push-cs-idiom' reason (the final else).
             callee = functions.get(callee_key, {})
             exits = sorted(set(callee.get("exits", ())))
             caller_cs, _ = caller_key.split(":")
             callee_cs_s, callee_off = callee_key.split(":")
             is_near_edge = (caller_cs == callee_cs_s and
                             callee_off in caller.get("calls_near", ()))
-            if is_near_edge and exits == ["retf"]:
-                # MSC's same-segment far call: `push cs` + near CALL into an
-                # all-retf callee.  A dedicated link helper (push only the
-                # return IP, callee's retf pops the caller-pushed CS too)
-                # would link every one of these — the top queue entry.
-                blocked_classes["near-call-to-retf-callee(push-cs-idiom)"] \
-                    .append(desc)
-            else:
-                shape = "near" if is_near_edge else "far"
-                blocked_classes[
-                    f"exit-shape:{shape}:{'+'.join(exits)}"].append(desc)
+            shape = "near" if is_near_edge else "far"
+            blocked_classes[
+                f"exit-shape:{shape}:{'+'.join(exits)}"].append(desc)
         else:
             blocked_classes[reason].append(desc)
 

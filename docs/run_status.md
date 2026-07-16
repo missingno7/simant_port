@@ -1,5 +1,66 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.224) — the enlarged corpus: native x87 + push-cs linking land through the chain
+- **Integration of dos_re 24b4366 (irgen-core = origin/main): the two new
+  generic capabilities — native x87 ESC scan/emit via the interpreter's own
+  FPU helpers, and push-cs near-call-to-retf linking — become the committed,
+  verified state of the whole chain.**  win16_re bumps dos_re
+  5adcdbc → 24b4366 (suite green, 136); simant_port bumps win16_re to that
+  commit and makes facts/tests/artifacts coherent in the same commit.
+- **The x87 census frontier DISSOLVED — exactly as the keep-interpreted
+  charter prescribed.**  `simant/facts/keep_interpreted.txt` drops the 31 x87
+  addresses (32 SYM names incl. the `__aFftol`/`__ftol` alias: the MSC FP
+  runtime in `_TEXT` + `_AdjustWndMinMax` in seg 1); they lift natively now.
+  What remains is ONE fact: `_DoInt3` (7:F85B) — still scan-refused (grp5
+  invalid /r: the body decodes straight into 0xFFFF padding, i.e. it is not
+  code) and confirmed DEAD in the fresh IR (zero static callers: no
+  calls_near/calls_far edge targets 430E:F85B).  It stays in keep_interpreted
+  with that evidence in the comment rather than in new exclusion machinery —
+  keep-interpreted already expresses the right contract (outside the graph,
+  fail-loud if ever reached).
+- **Regenerated end to end** (irgen → liftemit → liftlink → adaptgen):
+  - IR: 1319 SYM entries → 1313 functions, **1312 liftable** (was 1281),
+    1 unsupported over 1 refusal record (`_DoInt3`).
+  - liftemit: **1312/1313 modules**, VMless wall HOLDS (0 interp_one sites).
+  - liftlink: **1191 near + 2353 far edges into 795 re-emitted callers**
+    (was 93 near + 2349 far into 606), emulate_call in re-emitted callers
+    1799 → 124.  The 1088-edge `near-call-to-retf-callee(push-cs-idiom)`
+    class is GONE — dos_re's linker claims the idiom directly — leaving a
+    one-edge honest residue in its own class,
+    `retf-callee-no-push-cs-idiom`: `__fpsignal -> __amsg_exit` (a genuine
+    near CALL into a retf callee with NO `push cs` before it; `__amsg_exit`
+    is the CRT's noreturn fatal-error exit, so the mismatched return frame
+    can never unwind).  The `keep-interpreted-fact` blocked class vanished
+    with the frontier (edges into the FP runtime now link);
+    simant's classifier drops its now-dead push-cs branch
+    (`scripts/liftlink.py`).
+  - capability report: api 1265 call sites over 191 imports (USER=718
+    KERNEL=398 GDI=133 SOUND=9 KEYBOARD=7 — up from 1248: the newly
+    liftable x87 modules' call sites now count); int21_dos 67 + int2f 8;
+    exit-shape (jmp_ind-mixed) 111 edges; not-a-census-entry 47 edges over
+    23 distinct non-.SYM CRT-internal targets (was 52/27 — CRT scans are
+    complete now); entry roots 524 root-unreferenced + 1 wndproc; indirect
+    near=7 far=79.
+  - adaptgen: **166/309 adapters re-route UNCHANGED** (same ABI-shape
+    spread, same 143 kept-literal by the same reasons).
+- **The convergence gate — both halves pass, now exercising REAL native
+  x87.**  (a) literal graph vs a FRESH interpreted-oracle baseline over the
+  whole cold_nohooks demo (`checkpoints.py --api-aligned`): **byte-identical
+  at all 39 aligned checkpoints AND the final state** — both runs end at
+  instruction 199,612,996 with digest 2abf3ce5… (the same digest cont.222
+  recorded, i.e. the natively-emitted ESC bodies running through the shared
+  FPU helpers are semantically identical to interpretation;
+  `_AdjustWndMinMax` fires at boot via MAINWNDPROC, so FP drift would have
+  shown at cp0).  (b) the routed graph self-check: --save/--check over the
+  routed config — **MATCH, all 39 checkpoints**.
+- Suites: win16_re 136 green at the new dos_re pin; simant_port **2229
+  green** (test_irgen rewritten for the new frontier: the facts file pins to
+  exactly `[(7, 0xF85B)]`, `__aFftol`/`__ftol` is pinned LIFTABLE with alias
+  identity and its 4 x87-mnemonic body, env_wait/ledger identity moves to
+  `_DoInt3` at 430E:F85B — the one pre-existing failure at the old pins is
+  resolved by the coherent bump, not loosened).  README pipeline numbers
+  updated.
+
 ## 2026-07-16 (cont.223) — M2b: adapter routing — the graph routes through the recovered corpus
 - **M2b of the 2.0 adoption: the VMless graph now routes 166/309 matched
   entries through GENERATED CPU/ABI adapters into the authoritative
