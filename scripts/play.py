@@ -42,11 +42,15 @@ from tkinter import ttk
 
 from PIL import Image, ImageTk
 
-from simant.runtime import EXE_PATH, GAME_NAME, demo_out_path
+# Module-level imports stay LOADER-FREE: this module is also the interactive
+# host of the strict-VMless runner (play_vmless.py hands it a pre-built
+# machine), and it ships in the standalone deploy (scripts/deploy_vmless.py)
+# where the NE-loader edge (simant.runtime / win16.app) does not exist.
+# Those are imported function-locally in the branches that boot from the EXE.
+from simant.vmless_boot import GAME_NAME, demo_out_path
 from win16.api.core import Win16ApiGap
 from win16.api.objects import Window
 from win16.api.system import Win16System
-from win16.app import WINFLAGS_NO_FPU, create_machine
 from win16.dialog import du_to_px
 from win16.interactive import InteractiveDriver
 from win16.menu import (MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP,
@@ -867,12 +871,14 @@ class PlayApp:
             # interactive host around it.
             self.machine = machine
         elif resume:
+            from win16.app import create_machine
             from win16.vmsnap import load_snapshot
             self.machine = load_snapshot(
                 resume, lambda: create_machine(exe_path, winflags=winflags))
             print(f"[play] resumed from snapshot {resume} "
                   f"(instruction {self.machine.cpu.instruction_count})", flush=True)
         else:
+            from win16.app import create_machine
             self.machine = create_machine(exe_path, winflags=winflags)
         if hooks:
             from simant.hooks import install as install_simant_hooks
@@ -1268,6 +1274,8 @@ def main() -> None:
                     help="start from a snapshot directory (taken with F12) "
                          "instead of a cold boot — exact same state")
     args = ap.parse_args()
+    from simant.runtime import EXE_PATH               # the EXE-boot path only
+    from win16.api.surface import WINFLAGS_NO_FPU
     if not EXE_PATH.exists():
         raise SystemExit(f"{EXE_PATH} not found — put the game files under assets/")
     PlayApp(EXE_PATH, WINFLAGS_NO_FPU, args.speed, args.scale,

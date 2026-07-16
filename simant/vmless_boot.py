@@ -22,6 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BOOT_DIR = REPO_ROOT / "artifacts" / "vmless_boot"
 LIFT_DIR = REPO_ROOT / "simant" / "lifted" / "graph"
 DEMOS_DIR = REPO_ROOT / "artifacts" / "demos"
+
+GAME_NAME = "simant"
 #: The game DATA files (fonts, sound, .DAT databases — read via INT 21h at
 #: run time).  Data stays readable under the EXE-independence wall; only the
 #: executable is walled off (by name AND content hash).
@@ -53,6 +55,18 @@ def resolve_demo(name: str) -> Path:
     for cand in (Path(name), DEMOS_DIR / name, DEMOS_DIR / f"{name}.jsonl"):
         if cand.exists():
             return cand
+    return DEMOS_DIR / f"{name}.jsonl"
+
+
+def demo_out_path(name: str) -> Path:
+    """Where `--record-demo NAME` writes: artifacts/demos/NAME.jsonl.  A NAME
+    that is already a path (has a suffix or a directory part) is used verbatim.
+    Lives here (not simant.runtime) so the interactive host stays on the
+    loader-free import graph — ``simant.runtime`` re-exports it."""
+    p = Path(name)
+    if p.suffix or len(p.parts) > 1:
+        return p
+    DEMOS_DIR.mkdir(parents=True, exist_ok=True)
     return DEMOS_DIR / f"{name}.jsonl"
 
 

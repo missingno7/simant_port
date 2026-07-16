@@ -31,6 +31,11 @@ import dos_re  # noqa: E402
 ROOTS = [
     "scripts/play_vmless.py",
     "simant/vmless_boot.py",
+    # The interactive host: play_vmless's interactive mode imports it, and the
+    # standalone deploy (scripts/deploy_vmless.py) ships it — its MODULE-LEVEL
+    # graph must stay loader-free too (the EXE-boot branches import
+    # simant.runtime / win16.app function-locally, deferred by design).
+    "scripts/play.py",
 ]
 FORBIDDEN = ["parse_ne", "load_ne", "create_machine"]
 PACKAGE_DIRS = [

@@ -14,25 +14,18 @@ from win16.app import WINFLAGS_NO_FPU, create_machine as _create_machine
 from win16.loader import Win16Machine
 from win16.ne import NEExecutable, parse_ne
 
+# GAME_NAME / demo_out_path live in the loader-free half (simant.vmless_boot)
+# so the interactive host never needs this module; re-exported for the
+# workbench scripts that already boot through here.
+from .vmless_boot import GAME_NAME, demo_out_path  # noqa: F401
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ASSETS = REPO_ROOT / "assets"
 EXE_PATH = ASSETS / "ANTWIN" / "SIMANTW.EXE"
 
-GAME_NAME = "simant"
-
 # Recorded demos live under artifacts/demos/ (git-ignored scratch — dos_re
 # convention); a repro promoted to a test baseline goes to artifacts/test_oracles/.
 DEMOS_DIR = REPO_ROOT / "artifacts" / "demos"
-
-
-def demo_out_path(name: str) -> Path:
-    """Where `--record-demo NAME` writes: artifacts/demos/NAME.jsonl.  A NAME that
-    is already a path (has a suffix or a directory part) is used verbatim."""
-    p = Path(name)
-    if p.suffix or len(p.parts) > 1:
-        return p
-    DEMOS_DIR.mkdir(parents=True, exist_ok=True)
-    return DEMOS_DIR / f"{name}.jsonl"
 
 
 def resolve_demo(name: str) -> Path:
