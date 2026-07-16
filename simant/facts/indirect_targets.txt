@@ -1,0 +1,29 @@
+# HAND-VERIFIED census entries (evidence-backed recovery facts): targets of
+# indirect control transfers whose source tables/bounds are NOT mechanically
+# provable (scripts/dispatchgen.py STOPs them), pinned from concrete evidence.
+# Consumed by scripts/irgen.py as census entries (symbol indirect_<OFF>,
+# entry_origin indirect-target-fact).  Under the armed VMless wall an
+# UNLISTED indirect target fails loud at its first fetch — this list is the
+# enumerated closure of the cold_nohooks corpus plus manual table reads.
+#
+# __output's state-machine dispatch (4:0F94, jmp cs:[bx+0F2A]): the bound is
+# not a cmp/ja guard (the index is a state from the xlat class table), but the
+# table is manually verified to have EXACTLY 8 slots: words at 4:0F2A =
+# 0F99 0FA4 0FBA 0FEE 101A 1022 104B 107D — all inside __output's scanned
+# region (0F3A..142F) — and word 9 (D88C) is code, not a case offset.  Eight
+# states is MSC's printf output state machine.
+4:0F99  # __output state 0 case
+4:0FA4  # __output state 1 case
+4:0FBA  # __output state 2 case
+4:0FEE  # __output state 3 case
+4:101A  # __output state 4 case
+4:1022  # __output state 5 case
+4:104B  # __output state 6 case
+4:107D  # __output state 7 case
+#
+# C-runtime startup initializer-table far-call targets (__cinit at
+# text_internal_0268 walks the segment of initializer far pointers with
+# `call far [si]`-style dispatch; targets observed on cold_nohooks with the
+# interp-poison frontier collector, docs/run_status.md cont.225):
+4:2B6D  # CRT initializer #1 (first@91; unnamed routine after _matherr's region)
+4:0B0A  # CRT initializer #2 (first@101; unnamed routine before __setargv)

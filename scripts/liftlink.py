@@ -60,6 +60,32 @@ from liftemit import DEFAULT_EMIT_DIR, DEFAULT_IR, load_dosre_tool  # noqa: E402
 
 DEFAULT_REPORT = REPO_ROOT / "artifacts" / "capability_report.json"
 DEFAULT_LINK_REPORT = REPO_ROOT / "artifacts" / "link_report.json"
+FACTS_DIR = REPO_ROOT / "simant" / "facts"
+
+
+def computed_return_args(doc: dict) -> list[str]:
+    """CLI arguments for dos_re's --computed-return-near/-far from
+    simant/facts/computed_return.txt (lines: NE_SEG:HEX_OFF near|far #...).
+    NE pairs are converted to the IR's paragraph-base keys through the IR's
+    own ne_seg identity — no machine boot needed."""
+    path = FACTS_DIR / "computed_return.txt"
+    if not path.exists():
+        return []
+    para_of_seg: dict[int, int] = {}
+    for entry, rec in doc["functions"].items():
+        para_of_seg.setdefault(rec["ne_seg"], int(entry.split(":")[0], 16))
+    args: list[str] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.split("#", 1)[0].strip()
+        if not line:
+            continue
+        pair, shape = line.split()
+        seg, off = pair.split(":")
+        if shape not in ("near", "far"):
+            raise ValueError(f"computed_return.txt: bad shape {shape!r}")
+        key = f"{para_of_seg[int(seg, 10)]:04X}:{int(off, 16):04X}"
+        args += [f"--computed-return-{shape}", key]
+    return args
 
 
 def _label(rec: dict) -> str:
@@ -204,17 +230,20 @@ def main(argv=None) -> int:
                          "only; the emitted modules are NOT re-linked)")
     args = ap.parse_args(argv)
 
+    doc = json.loads(Path(args.ir).read_text(encoding="utf-8"))
+
     # 1. The structural link (dos_re's batch linker, unforked; naming comes
-    #    from the emit dir's graph_manifest.json).
+    #    from the emit dir's graph_manifest.json).  The computed-return facts
+    #    (simant/facts/computed_return.txt — the MSC chkstk/__setargv family)
+    #    ride in as dos_re CLI facts.
     if not args.skip_link:
         liftlink = load_dosre_tool("liftlink")
         rc = liftlink.main(["--from-ir", args.ir,
                             "--emit-dir", args.emit_dir,
-                            "--json", args.link_report])
+                            "--json", args.link_report]
+                           + computed_return_args(doc))
         if rc != 0:
             return rc
-
-    doc = json.loads(Path(args.ir).read_text(encoding="utf-8"))
     link_report = json.loads(Path(args.link_report).read_text(encoding="utf-8"))
 
     callback_procs = runtime_callback_procs(args.snapshot)

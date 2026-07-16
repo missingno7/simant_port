@@ -1,0 +1,15 @@
+# COMPUTED-RETURN callee facts (dos_re tools/liftlink.py --computed-return-*):
+# callees whose every exit path transfers control to the caller's return
+# address through a computed jump with a DELIBERATELY adjusted SP — the MSC
+# stack-probe/startup family.  emulate_call's unwind heuristic can never
+# terminate on them (their whole job is to leave SP below the call point), so
+# these edges MUST be linked; the lifted callee body reproduces the exact
+# frame/SP trajectory (found live: the cold_nohooks frontier-collect run — one
+# open emulate frame under __output's `push cs; call __aFchkstk` left the rest
+# of the session interpreting inside it, docs/run_status.md cont.225).
+#
+# Format: NE_SEG:HEX_OFFSET near|far  # evidence
+#
+4:2344 near  # __aNchkstk — pops the near return into BX, aligns/probes, MOV SP,AX (allocates), JMP BX.  Error path: MOV AX,0 / JMP into the shared __amsg_exit tail (noreturn fatal exit).  Zero static callers today (Win16 MSC emits ENTER for game frames); declared for shape completeness.
+4:2364 far   # __aFchkstk — pops the far return into BX:DX, probes, MOV SP,AX, PUSH DX/PUSH BX/RETF (normal path) or JMP FAR [b118] (stack-overflow chain; b118 defaults into the noreturn __amsg_exit tail).  2 near call sites, both `push cs; call` (in __output and $I10_OUTPUT's neighbourhood) — the far-shaped push-cs idiom.
+4:0B24 far   # __setargv — POP [b022]/POP [b024] saves the far return, builds argv/env ON THE STACK (SP deliberately lowered), exits JMP FAR [b022].  1 near call site, `push cs; call` @275F:009F in __astart.
