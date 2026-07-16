@@ -54,7 +54,7 @@ from win16.api.system import Win16System
 from win16.dialog import du_to_px
 from win16.interactive import BoundaryParked, InteractiveDriver
 from win16.menu import (MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP,
-                        MF_SEPARATOR, parse_menu)
+                        MF_SEPARATOR, parse_menu, split_label)
 
 # Button styles (low nibble).
 BS_CHECKBOX, BS_AUTOCHECKBOX = 0x2, 0x3
@@ -277,7 +277,7 @@ class WindowView:
 
     def _add_menu_obj_item(self, parent: tk.Menu, it) -> None:
         """Add one runtime Menu item (win16.api.objects.MenuItem) to a tk menu."""
-        label = (it.text or "").replace("&", "")
+        label, accel = split_label(it.text or "")
         if it.flags & MF_SEPARATOR:
             parent.add_separator()
             return
@@ -298,7 +298,7 @@ class WindowView:
                                        it.flags, var))
         else:
             parent.add_command(
-                label=label,
+                label=label, accelerator=accel or None,
                 command=lambda: self.app.driver.post_input(hwnd, WM_COMMAND, cmd_id, 0))
             self._menu_entries.append((parent, parent.index("end"), cmd_id,
                                        it.flags, None))
