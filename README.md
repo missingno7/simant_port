@@ -446,6 +446,34 @@ instruction-count timeline (the island convention), so the byte-identical
 whole-demo differential remains the literal graph's gate (run_status
 cont.223 has the full timing analysis).
 
+### API coverage report
+
+`scripts/apicoverage.py` (over `win16/apicoverage.py`, the generic join) maps
+the whole Win16 API surface: the IR's `api:*` call sites joined against the
+registry's implemented surface plus an **instrumented strict replay** (thunk
+dispatch, GetProcAddress mints and per-service INTs counted live over the
+cold_nohooks demo).  Per target: identity (honest `unnamed` where nothing
+names an ordinal), static sites + calling symbols, handler/equate/tripwire
+status, runtime dispatch count, classification.
+
+```
+python scripts/apicoverage.py                       # full strict replay (~4 min)
+python scripts/apicoverage.py --budget 50000000     # quick prefix pass
+python scripts/apicoverage.py --no-replay           # static join only
+```
+
+Status (cont.226): 196 imported targets — 165 implemented / 3 equates /
+28 tripwires (never dispatched: the demo replay is the proof); 128 exercised
+at runtime, **37 implemented-but-never-exercised** (the stub-quality risk
+set: dialogs/help/SOUND driver/save-game `_lwrite` paths a new demo could
+expose); 25 targets honestly unnamed (all unreached tripwires).  The MIDI
+path mints `mciSendCommand`/`midiOutGetNumDevs`/`waveOutOpen` dynamically;
+`sndPlaySound` is requested 59× and honestly NULL-minted (the game takes its
+waveOut fallback).  `WIN87EM.1:__fpMath` shows zero static sites (reached
+through a relocated pointer, not a taggable far call) yet dispatches at
+runtime — the instrumented run sees what static analysis cannot.
+Report: `artifacts/api_coverage.json` (gitignored, regenerable).
+
 ## Setup
 
 ```

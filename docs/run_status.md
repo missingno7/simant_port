@@ -1,5 +1,76 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.226) — API coverage report: the IR's api:* surface joined against the registry + a counted strict replay
+- **NEW `win16/apicoverage.py` (generic, game-free) + `scripts/apicoverage.py`
+  (the SimAnt wrapper) -> `artifacts/api_coverage.json` (gitignored,
+  regenerable) + a human table.**  Joins three sources per API target:
+  the recovery IR's `api:MODULE.ord[:Name]` platform-effect call sites
+  (static usage, deduped by global (CS,IP) — dispatch-fact/closure records
+  overlap their containing functions, so per-record counting double-counts;
+  attribution prefers the non-generated record), the ApiRegistry's
+  implemented surface (handler / handler-raw / equate / tripwire — a slot
+  with no handler raises Win16ApiGap), and RUNTIME dispatch counts from an
+  instrumented replay on the STRICT VMless runner (the shipping config:
+  boot-image machine, poison armed, EXE guarded).  Instrumentation =
+  counting wrappers around every thunk-slot replacement hook +
+  `mint_proc_thunk` (GetProcAddress mints wrap lazily as they appear;
+  NULL mints recorded as honest misses) + `cpu.interrupt_handler`
+  (per-service: `int21:<AH>` / `int2F`).  Identity resolution order:
+  Wine-spec ordinal table -> registry entry name -> handler `__name__` ->
+  the IR tag's name part -> **`unnamed`, honestly — never guessed from
+  Win3.x ordinal folklore**.  win16_re: 8 synthetic-machine tests
+  (mock CPU + real ApiRegistry: site dedupe, honest identity, status
+  partition, live slot/proc/int counting incl. idempotent re-instrument
+  and the tripwire fail-loud path, report classification, table shape) —
+  no game knowledge upstream, layering intact.  simant side: 4 tests
+  pinning join invariants on the real artifacts (every statically-called
+  target is an import; status partition covers targets; honest unnamed;
+  int21+int2f static surface present).
+- **The run (full cold_nohooks on the strict runner, wall held, all
+  199,612,996 instructions / 4212 events): 196 imported targets = 165
+  implemented + 3 equates (__AHSHIFT/__AHINCR/__WINFLAGS) + 28 tripwires;
+  1353 static call sites; 128 targets exercised at runtime, 37
+  implemented-but-never-exercised; 25 unnamed (ALL of them unreached
+  tripwires — zero runtime dispatches, so nothing the demo proves is
+  missing a name or an implementation).**  Name sources: 161 ordinal-table
+  + 8 handler-`__name__` (GlobalFlags/GlobalCompact/GlobalLRUOldest/
+  GetFreeSpace/lstrcat/lstrlen/EnumChildWindows/DlgDirList) + 2
+  registry-entry.  Top runtime dispatch: GetTickCount 1,249,019,
+  PeekMessage 258,081, GetAsyncKeyState 179,245, SelectObject 162,672,
+  SelectPalette 162,055.
+- **The stub-quality risk set (implemented, never exercised by this demo —
+  where a new demo/gameplay path could expose behavioral gaps), top 10 by
+  static sites: MessageBox 20, SendDlgItemMessage 15, KillTimer 13,
+  _lwrite 10, WriteProfileString 8, WinHelp 8, GetClassWord 7,
+  UnlockSegment 6, FreeProcInstance 6, CloseSound 6** (37 total — the
+  file-dialog/save-DB tier (OPENDLG/SAVEASDLG/_DBAdd), the help path, the
+  SOUND.DRV voice tier, and shutdown paths the demo never reaches).
+- **Dynamic (GetProcAddress) surface**: minted + called =
+  `MMSYSTEM.mciSendCommand` (5: the MIDI music path),
+  `MMSYSTEM.midiOutGetNumDevs` (1), `MMSYSTEM.waveOutOpen` (59);
+  `MMSYSTEM.sndPlaySound` requested 59x and honestly NULL-minted (not
+  implemented) — the game takes its documented waveOut fallback each time;
+  7 more waveOut procs implemented but never minted by this demo.
+- **Findings the instrumented run surfaced**: (i) `WIN87EM.1:__fpMath` has
+  ZERO static api:* sites (it is reached through a relocated pointer, not
+  a decoder-taggable far call) yet dispatched 2x at runtime — the join's
+  union keyed on slots+runtime catches what static tagging cannot;
+  (ii) int21 static sites after (CS,IP) dedupe = 45 distinct (the
+  capability report's 67/68 counts per-record across the overlapping
+  internal_*/case_* closure entries — both true, different units);
+  runtime int21 services: 3F(read) 47, 43(chmod probe) 8, 3D(open) 6,
+  3E(close) 4, 44(ioctl) 4, 19/47/25/30/35 few — plus int2F 76 (the TSR
+  probe, honest no-op); (iii) 3 NAMED tripwires exist (FatalExit,
+  FatalAppExit, LocalReAlloc — fatal-error paths + 2 LocalReAlloc sites),
+  fail-loud by design; (iv) 47 registry handlers are unreferenced by
+  SIMANTW entirely (surface other games proved).
+- Suites: win16_re 153 green (145+8), simant_port 2245 green (2241+4).
+  README pipeline section gains the apicoverage subsection.
+- Queue: the 37-target risk set is the natural demo-recording checklist
+  (a save/load + help + dialog demo would exercise the biggest tier);
+  `sndPlaySound` is the one dynamic proc the game actively wants and we
+  NULL — worth an implementation decision when sound fidelity matters.
+
 ## 2026-07-16 (cont.225) — M3: play_vmless with BOTH hard walls — VMless execution + EXE independence
 - **The strict runner exists and both walls HOLD over the whole cold_nohooks
   demo: `python scripts/play_vmless.py --demo cold_nohooks` boots from a
