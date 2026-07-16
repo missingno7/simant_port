@@ -1,5 +1,114 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.222) — M2a: the full VMless lifted graph, symbolically named, linked, converged to 68M
+- **M2a of the 2.0 adoption: the whole SIMANTW liftable corpus is one
+  installed, structurally linked, symbolically named VMless graph, run over
+  a real demo against the interpreted oracle — and the whole-demo
+  differential is CLEAN.**  Three-repo chain (none pushed): dos_re
+  `irgen-core` 1c2c718+c6ef3d6+5adcdbc, win16_re 5d0d019+f9e1de7 (bumps)
+  +eade086 (replay-determinism fix), simant_port (this commit).
+- **dos_re: the symbolic-naming seam** (owner directive 1, upstream — not a
+  game-side fork): `dos_re/lift/naming.py` (`GraphNaming`) makes module
+  naming DATA — `graph_manifest.json` beside the emitted modules maps
+  "CS:IP" -> stem; `resolve_links`/`install_vmless_graph`/`tools/liftlink`
+  resolve through it, empty manifest = the historical `lifted_CS_IP` names
+  byte-for-byte.  10 new tests (validation, determinism, fail-loud missing
+  modules).  The manifest doubles as M2b's adapter-routing seam: swapping
+  one entry's module re-routes every consumer without touching machinery.
+- **dos_re: the whole-corpus emit frontier became 5 native-emitter
+  capabilities** (2.0 loop: observe frontier -> improve tooling ->
+  regenerate).  First full emit left 437 interpreter-fallback sites in the
+  1281-module corpus; ALL were just 80186/Win16-era opcodes the emitter
+  lacked: ENTER/LEAVE (337 sites — every MSC prologue/epilogue),
+  3-operand IMUL (77), PUSHA/POPA (20), LAHF/SAHF (2 — the CRT's raw-INT21
+  flag save; 0x9E/0x9F were never serviced by CPU8086 either, so the
+  interpreter gained them too).  Differential tests per family.  After:
+  **VMless wall HOLDS over all 1281 modules — zero interp_one sites.**
+- **simant_port `scripts/liftemit.py`**: IR -> 1281 symbolically named
+  modules in 1.0s (gitignored `simant/lifted/graph/` + manifest).  Naming
+  policy (game-owned): `{module}_{symbol}` snake-case (`simone_srand1`),
+  collisions get address suffixes (2 in the corpus: `gr_mem_free`,
+  `text_exit` case-collisions), `$`-CRT names sanitized; paragraph-base
+  ENTRY stays inside each module as provenance.  Skips = exactly the
+  committed keep_interpreted frontier (32 x87 + _DoInt3).
+- **simant_port `scripts/liftlink.py`**: dos_re's structural linker over
+  the IR (unforked, via the manifest): **93 near + 2349 far edges linked
+  into 606 re-emitted callers**.  Plus the fine-grained capability report
+  (`artifacts/capability_report.json`, owner directive 2 — never one
+  generic bucket): 1248 api:* call sites over 191 imports
+  (USER=702 KERNEL=397 GDI=133 SOUND=9 KEYBOARD=7; top:
+  GetProcAddress 64, GetAsyncKeyState 61, InvalidateRect 38); int21_dos 67
+  + int2f 8; **1088 blocked near edges are ONE idiom — MSC's `push cs` +
+  near CALL into an all-retf callee** (the same-segment far call; a
+  dedicated link helper would claim them all — top queue entry); 97
+  jmp_ind-mixed-exit callees; 52 edges to 27 non-.SYM targets (CRT
+  internal labels — the strict-wall to-do); indirect calls near=7 far=79;
+  entry roots: 1 wndproc (0100:2930 shared by AntRoot/GenericWindow/
+  RibbonWindow) + 527 statically-unreferenced (dialog/enum/GetProcAddress
+  procs + dead code — runtime classification found no live TimerProc in
+  the inspected snapshots).
+- **Convergence gate (which gate ran): cold_nohooks demo (199.6M instrs,
+  cold start, no hooks) — interpreted-oracle baseline vs the FULL
+  1281-module linked graph**, `scripts/checkpoints.py --api-aligned`
+  (new): checkpoints sampled at import-thunk dispatches, where
+  instruction counts are IDENTICAL between oracle and a
+  count_instructions graph (virtual-time preservation) — the
+  cross-config-comparison problem dissolved.  **Result: CLEAN — all 39
+  aligned 5M-checkpoints AND the final stop state byte-identical
+  (digest = memory + CPU + surfaces + clock; both runs end at
+  instruction 199,612,996 with digest 2abf3ce5…).**  Whole-demo graph
+  run: ~4 min CPython.
+- The one real divergence found on the way was NOT an emitter bug but a
+  **win16 replay-determinism gap**, localized mechanically: first
+  divergence at cp 68/199 (1M grain), bisected (scratchpad
+  graph_bisect.py, skip=-driven subsets over the UNLINKED emit) to
+  `_DoEvent`, then traced to a `GetAsyncKeyState(VK_LBUTTON)` poll racing
+  a recorded WM_LBUTTONDOWN: in-callback arrival injection rode ONLY
+  `yield_check`, which fires per interpreter STEP — one instruction on
+  the oracle, a whole lifted function under the graph.  Fix upstream
+  (win16_re eade086 + regression test): `refresh_polled_input` injects
+  arrivals due at the poll's own instruction count, making every
+  game-observable input read instruction-aligned and replay timing
+  config-invariant.  `_DoEvent` and the whole graph were innocent —
+  the bisect had found the module whose step-compression crossed the
+  race threshold.
+- Frontier facts found live and dissolved: `_WaitHundredths`
+  (GetTickCount pacing spin) tripped the 100k runaway guard — the spins
+  are virtual-time-bounded (the demo clock derives from instruction
+  count), so the corpus emits with a 5M iteration floor instead of an
+  exclusion fact; deep guest recursion (worldgen) needs
+  sys.setrecursionlimit under the graph (mirrored guest stack).
+- **Remaining M3 runtime frontier (enumerated, for the armed-poison
+  wall)**: 47 liftable functions end in a `jmp_ind` TAIL (switch
+  dispatchers incl. MAINWNDPROC) — their case bodies re-enter the
+  interpreter until `dispatch_entries` facts are recorded from the jump
+  tables; 27 non-.SYM CRT-internal call targets (52 edges); the 32 x87
+  records + `_DoInt3` (keep_interpreted facts).
+- **liftverify spot-check** (per-call ASM differential, config-invariant):
+  43 sim routines (seg4 blitters, seg5 SIMONE, seg6 SIMANT1 ticks, seg7
+  win layer) over snap_004053/demo_004053 + snap_185520/demo_185520:
+  **24 distinct ORACLE_PASSING, 0 DIVERGED**, rest NOT_REACHED by those
+  drives (honest coverage; the 004053 replay stops at 27.6M on its known
+  pre-frame-recording OrphanReturnError).
+- New `simant/tests/test_liftgraph.py` (naming policy pinned pure +
+  miniature real-code emit/install through the manifest); liftverify now
+  resolves demo names via resolve_demo.  Suites: simant_port 2206,
+  win16_re 135, dos_re 482 — all green.
+- Capability queue, top entries (full detail in
+  artifacts/capability_report.json):
+  1. link the `push cs`+near-CALL far-call idiom (1088 edges — one
+     dedicated dos_re link helper claims all of them);
+  2. dispatch_entries facts for the 47 jmp_ind switch dispatchers (the
+     designed dissolution — case leaders become re-entry hooks into the
+     containing function);
+  3. the 27 non-.SYM CRT-internal near targets (extend the entry corpus
+     or record facts — 52 edges, today emulated+interpreted);
+  4. win16 flavour of dos_re tools/hook_bisect.py (this session used a
+     scratchpad bisector; promote it);
+  5. M2b adapter routing through simant/facts/recovered_map.json via the
+     graph manifest (the seam is in place — swap an entry's module in
+     data).
+
 ## 2026-07-16 (cont.221) — recovery inventory: the manual corpus mapped for adapter routing
 - **Owner directive**: the existing hand-recovered corpus is AUTHORITATIVE
   where verified — the 2.0 pipeline generates CPU/ABI adapters around it,

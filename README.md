@@ -342,6 +342,35 @@ scaffolding a native backend discards. `python -m simant.probes.callgraph` repor
 | presentation | 18 / 490 | reimplemented natively |
 | runtime | 9 / 240 | provided by Python |
 
+## The DOS_RE 2.0 pipeline (VMless graph)
+
+The script-driven staged recovery pipeline
+([`win16_re/dos_re/docs/dos_re_2.0.md`](win16_re/dos_re/docs/dos_re_2.0.md))
+is adopted; M2's mechanical half is in place:
+
+```
+python scripts/irgen.py                    # recovery IR: 1313 fns, 1281 liftable
+python scripts/liftemit.py --require-vmless-wall
+                                           # 1281 symbolically named VMless modules
+                                           # -> simant/lifted/graph (+ manifest)
+python scripts/liftlink.py                 # structural near+far link + the
+                                           # capability report (artifacts/)
+python scripts/checkpoints.py cold_nohooks --api-aligned --save base.trace
+python scripts/checkpoints.py cold_nohooks --api-aligned \
+    --vmless-graph simant/lifted/graph --check base.trace
+                                           # oracle-vs-graph convergence gate
+```
+
+Modules are named from SIMANTW.SYM (`simone_srand1.py`), carry their
+paragraph-base `ENTRY` as provenance, and are disposable generated output —
+regenerate, never hand-edit.  Status: the whole-demo differential is CLEAN —
+the full 1281-module linked graph replays the 199.6M-instruction
+`cold_nohooks` demo byte-identically to the interpreted oracle (all aligned
+checkpoints + final state; run_status cont.222).  Manual recovery into
+`simant/recovered/` continues as the semantic stage; the next milestone
+routes the generated graph through CPU/ABI adapters around that proven
+corpus (`simant/facts/recovered_map.json`).
+
 ## Setup
 
 ```

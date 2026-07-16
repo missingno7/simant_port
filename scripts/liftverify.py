@@ -203,7 +203,8 @@ def main(argv=None) -> int:
                 to_verify.discard(k)
 
     verifier.config.progress_callback = _retire_when_sampled
-    driver = DemoDriver(args.demo)
+    from simant.runtime import resolve_demo
+    driver = DemoDriver(resolve_demo(args.demo))
     sysobj = machine.api.services["system"]
     driver.install(sysobj)  # instruction-count-keyed input + GetTickCount timeline
 
