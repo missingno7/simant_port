@@ -1,5 +1,86 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.231) — the "snake shhh" over the music: Windows 3.x MIDI Mapper level filtering (win16_re 0678e0f); the digitized-SFX (waveOut) contract recovered and queued
+- **Owner report: MIDI music plays, but a short noise "constantly replays"
+  over it — "like some snake shhhh" — under interactive play.**  Triage per
+  the standing lifter-first directive came back clean: the strict lifted
+  graph and the interpreted oracle issue the IDENTICAL audio API stream over
+  the same drive (mci open/status/set/set/play GAMETHME + 59 waveOutOpen
+  attempts over cold_nohooks) — not a lifter bug.
+- **Ground truth, both shapes**: (i) headless cold_nohooks replay with every
+  audio API instrumented: 59 waveOutOpen(WAVE_MAPPER, CALLBACK_WINDOW) calls
+  all failing with MMSYSERR_BADDEVICEID (the deliberate stub), sndPlaySound
+  resolved by GetProcAddress 59× and NULL-minted (it was registered by
+  ordinal only), sound_log EMPTY — zero SOUND.DRV notes, zero WAVs; (ii) a
+  240 s interactive-shaped strict run (InteractiveDriver + boundary parks,
+  scripted click/F2/enter) with the real backends wrapped: the ONLY events
+  reaching host audio are MidiBackend.open+play of GAMETHME.MID.  The
+  digitized-effects path is entirely silent today — so the hiss had to live
+  INSIDE the MIDI rendering itself.
+- **Root cause (measured; independently confirmed by the owner-side A/B —
+  the same .mid is clean in a normal media player)**: every one of the 29
+  `sound\*.MID` files is dual-format per the Windows 3.x MIDI Mapper
+  authoring guideline — the extended-level arrangement on channels 1-10
+  (percussion on 10) is mirrored on the base-level channels 13-16
+  (percussion on 16).  Verified note-for-note: in ALL 29 files each base
+  channel is a time-exact unison copy (13~3, 14~4, 15~5, 16~10).  Under real
+  Windows the MCI sequencer ran through the MIDI MAPPER, which passed
+  exactly ONE level to the synth; our SDL_mixer stream got the raw file and
+  played BOTH — every melody doubled, and the ch16 percussion mirror
+  rendered as a MELODIC General-MIDI instrument: program change 126 = GM
+  "Applause" (a noise wash), 456 note-ons in GAMETHME.MID ≈ one "shhh" per
+  drum hit, continuously.  That is the owner's snake.
+- **Fix (generic Win16 platform mechanism, win16_re 0678e0f)**: new
+  `win16.audio.midi_keep_channels()` — a pure SMF rewrite keeping only the
+  requested channels (dropped events fold deltas into the next kept event so
+  absolute times are exact; meta/sysex verbatim; running status resolved;
+  Cn/Dn 1-param messages skip correctly; malformed SMF raises) — and
+  `MidiBackend` now plays the Mapper's extended-level view (channels 1-10,
+  GM-aligned; `level="base"` selectable), filtered once per path, cached,
+  loaded via BytesIO.  A file the filter cannot parse plays unfiltered with
+  a loud console note.  Presentation-only: mci_log, digests, demos and every
+  pinned baseline are untouched (backends are only wired in interactive
+  play).  Side effect the owner will hear immediately: the unison doubling
+  is gone too — the whole soundtrack plays as authored.
+- **Tests**: win16_re `tests/test_midi_mapper.py` (8: dual-level fixture,
+  base-level complement, meta survival, delta folding, running status across
+  dropped events, 1-param skips, multi-track, fail-loud non-SMF) +
+  `test_audio.py` MCI-semantics harness updated (filter stubbed to identity
+  there; the rewrite has its own suite).  Game side:
+  `simant/tests/test_midi.py::test_gamethme_mapper_filter_strips_the_base_level_mirror`
+  pins the real file — note-on census {3:346, 4:182, 5:98, 10:456} + the
+  456-hit ch16 mirror with program 126, mirror stripped, extended events
+  preserved time-exact.
+- **The waveOut/sndPlaySound investigation (closed out honestly — the
+  effects are a real capability gap, NOT part of the hiss)**: recovered the
+  full observed contract from GR_MODULE disassembly (`_CheckMMWave` 2:7766,
+  `_myBeginSound` 2:98B0, `_MciOutWave` 2:959C).  SimAnt's digitized effects
+  are 4-bit delta-PCM: 16-byte delta table + nibble stream, decoded to
+  8-bit UNSIGNED PCM (running sample seeded 0x80) at **4096 Hz mono**
+  (PCMWAVEFORMAT {1,1,0x1000,0x1000,1,8}); 57 decode clean (owner-extracted
+  to artifacts/sounds_wav/, no hiss in any).  Flow: waveOutGetNumDevs gate →
+  waveOutOpen(&hW@8D1A-refcounted globals, WAVE_MAPPER, fmt, hwnd@DGROUP
+  :CD78, CALLBACK_WINDOW) → _MciOutWave: GlobalAlloc WAVEHDR+data, DPCM
+  decode, waveOutPrepareHeader, waveOutWrite; busy window = GetTickCount()
+  + waveOutGetPosition(TIME_MS) stored at DGROUP:1238/123A; the game PUMPS
+  PeekMessage(MM_WOM_DONE=0x3BD) and its WndProc unprepares/frees/closes
+  (refcount 8D1A → waveOutClose).  On open failure it builds a complete
+  in-memory RIFF/WAVE and calls sndPlaySound(lpMem, SND_MEMORY|SND_NOSTOP=
+  0x14) — resolved by NAME, so minting it would light effects up via the
+  existing play_wav path.  **Deliberately NOT enabled this slice**: either
+  route changes guest control flow from ~instr 41M — inside the pinned 45M
+  cold_nohooks prefix — so every instruction-keyed demo desyncs and every
+  pinned digest moves: enabling digitized SFX is its own slice with the
+  re-record + re-pin ceremony (and WOM_DONE needs a deterministic virtual-
+  clock completion model, not a host-audio callback).
+- **Gates**: win16_re 182 passed (includes the concurrent resize-agent's
+  in-tree tests), simant_port 2255 passed; live verification: the strict
+  interactive run plays the filtered GAMETHME through SDL_mixer (banner
+  names the filter; play #1 clean).  Commits: win16_re 0678e0f + the port's
+  test/journal/submodule bump (this entry).  Scratch evidence:
+  audio_probe.py / audio_live_repro.py / midi_inspect.py in the session
+  scratchpad.
+
 ## 2026-07-16 (cont.229) — env-waits parked: interactive play_vmless past the splash/intro/title into gameplay; the wait class mechanically enumerated
 - **The "hang at the Maxis logo" was never a hang: the CPU worker died with
   `LiftRuntimeError: gr_ibminitstuff exceeded MAX_ITERATIONS` at 0E99:07F3
