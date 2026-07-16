@@ -60,7 +60,7 @@ from dos_re.lift.runtime import LiftRuntimeError  # noqa: E402
 from dos_re.verification import HookVerifyDivergence  # noqa: E402
 from simant.probes.symbols import nearest_symbol  # noqa: E402
 from simant.runtime import create_machine  # noqa: E402
-from win16.demo import DemoEnded, DemoPlayer  # noqa: E402
+from win16.demo import DemoDriver, DemoEnded  # noqa: E402
 from win16.verify import install_lift_verifier  # noqa: E402
 from win16.vmsnap import digest, load_snapshot  # noqa: E402
 
@@ -203,12 +203,11 @@ def main(argv=None) -> int:
                 to_verify.discard(k)
 
     verifier.config.progress_callback = _retire_when_sampled
-    player = DemoPlayer(args.demo)
+    driver = DemoDriver(args.demo)
     sysobj = machine.api.services["system"]
-    sysobj.message_source = player.next_message
-    machine.api.services["demo_player"] = player
+    driver.install(sysobj)  # instruction-count-keyed input + GetTickCount timeline
 
-    print(f"\nreplaying {args.demo} ({len(player.records)} records) with "
+    print(f"\nreplaying {args.demo} ({len(driver.records)} records) with "
           f"{len(hooks)} lifted hook(s), {args.samples} sample(s) each...\n")
     diverged: dict[tuple[int, int], str] = {}
     runaway: dict[tuple[int, int], str] = {}
