@@ -366,10 +366,38 @@ paragraph-base `ENTRY` as provenance, and are disposable generated output —
 regenerate, never hand-edit.  Status: the whole-demo differential is CLEAN —
 the full 1281-module linked graph replays the 199.6M-instruction
 `cold_nohooks` demo byte-identically to the interpreted oracle (all aligned
-checkpoints + final state; run_status cont.222).  Manual recovery into
-`simant/recovered/` continues as the semantic stage; the next milestone
-routes the generated graph through CPU/ABI adapters around that proven
-corpus (`simant/facts/recovered_map.json`).
+checkpoints + final state; run_status cont.222).
+
+### M2b — adapter routing (the recovery-map architecture)
+
+Where a verified manual implementation exists, it is AUTHORITATIVE: the graph
+routes those entries through **generated CPU/ABI adapters** into the recovered
+corpus instead of the literal lift — never two implementations of one function.
+Every SIMANTW entry is served by exactly one of four tiers:
+
+| tier | what serves the entry | provenance |
+|------|----------------------|------------|
+| authoritative manual | `simant/recovered/` (pure, CPU-less) | hand recovery + state-diff/island oracles |
+| generated adapter | `scripts/adaptgen.py` output (marshals CPU carrier → recovered fn) | `simant/facts/recovered_map.json` + `recovery_ir.json` + `adapter_facts.json` |
+| literal lift | `scripts/liftemit.py` output | recovery IR (mechanical) |
+| api effects | `win16/api/` Python services | the OS surface |
+
+```
+python scripts/adaptgen.py [--emit-dir simant/lifted/graph_routed]
+                                           # replace routable entries' modules
+                                           # with generated adapters (166/309;
+                                           # artifacts/routing_report.json)
+python scripts/adaptverify.py --demo cold_nohooks --all-routed
+                                           # per-call A/B: adapter vs ASM oracle
+```
+
+Routing policy and honest residue (gated entries, presentation-effect
+subtrees, island-only marshalling) are recorded per entry in
+`artifacts/routing_report.json`; the routed graph is a separate build flavor
+verified per-call — it deliberately does NOT preserve the virtual
+instruction-count timeline (the island convention), so the byte-identical
+whole-demo differential remains the literal graph's gate (run_status
+cont.223 has the full timing analysis).
 
 ## Setup
 

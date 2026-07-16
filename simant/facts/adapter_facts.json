@@ -1,0 +1,26 @@
+{
+ "version": 1,
+ "_notice": "Adapter-routing facts for scripts/adaptgen.py (M2b). Explicit, evidence-backed game knowledge the mechanical recovered_map extraction does not carry. Never guessed: every entry cites its evidence.",
+ "presentation_sinks": {
+  "_comment": "Presentation/UI/sound routines the recovered corpus deliberately OMITS (the state-diff oracle stubs them when running the ASM; see docs/recovery_inventory.md section 6 and the stubs= lists in simant/tests/test_state_diff.py). A matched entry whose ASM call subtree reaches any of these cannot be routed: the pure recovered implementation would silently drop the effect. These stay on the literal lift until a presentation-effect sink seam exists.",
+  "symbols": [
+   "_ZapEuMapAt",
+   "_FightBalloons",
+   "_QueenBalloons",
+   "_EggBalloons",
+   "_RestBalloons",
+   "_myBeginSound",
+   "_myBeginSong",
+   "_EditMessage",
+   "_PictStrnDialog",
+   "_win_LockWin",
+   "_win_UnlockWin"
+  ]
+ },
+ "entries": {
+  "7:65CE": {
+   "route": false,
+   "evidence": "adaptverify divergence (2026-07-16, cont.223): on the live cold_nohooks worldgen pre-state at ~instr 37.73M, gameplay.place_black_queen applied directly to ByteBackend copies (state-diff style) produces a tunnel diverging from the interpreted ASM (46 dgroup + 17 seg8 + 34 seg9 bytes; first dgroup diff 0x4FAF; queen recorded at seg8[0x8362]=0x20/0x1E vs 0x22/0x21). The generated adapter reproduces the impl exactly (impl==adapter, both != ASM), so the divergence is in the recovered implementation on a path the state-diff seeds never exercised (likely the sticky-drift/reroll interaction against a partially dug map). Repro: install a probe at 7:65CE over the cold_nohooks replay, clone at entry, run ASM clone to continuation, diff. Stays on the literal lift until the impl is re-proven on this pre-state."
+  }
+ }
+}
