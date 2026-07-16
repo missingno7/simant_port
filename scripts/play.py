@@ -55,6 +55,9 @@ from win16.dialog import du_to_px
 from win16.interactive import BoundaryParked, InteractiveDriver
 from win16.menu import (MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP,
                         MF_SEPARATOR, parse_menu, split_label)
+from win16.scrollbar import (DEFAULT_THUMB_FRACTION, SB_HORZ, SB_VERT,
+                             ScrollTracker, thumb_fraction, thumb_metrics,
+                             thumb_position)
 
 # Button styles (low nibble).
 BS_CHECKBOX, BS_AUTOCHECKBOX = 0x2, 0x3
@@ -134,6 +137,10 @@ class WindowView:
                                 bg="black")
         self._resize_after = None
         self._vscroll = self._hscroll = None
+        # One Win16 notification state machine per bar (win16.scrollbar): it
+        # owns the SB_* sequence; tk owns the pointer gesture that drives it.
+        self._sb_track: dict[int, ScrollTracker] = {}
+        self._sb_cancelled: dict[int, bool] = {}
         self._layout_canvas()
         # "main" = carries a menu bar (from a MENU resource OR built at runtime
         # via CreateMenu/AppendMenu, like SimAnt).  Detected live in sync() too,
@@ -177,10 +184,12 @@ class WindowView:
                 self._vscroll = tk.Scrollbar(self.top, orient="vertical",
                                              command=self._on_vscroll)
                 self._vscroll.grid(row=0, column=1, sticky="ns")
+                self._bind_scrollbar(self._vscroll, SB_VERT)
             if self._has_hscroll:
                 self._hscroll = tk.Scrollbar(self.top, orient="horizontal",
                                              command=self._on_hscroll)
                 self._hscroll.grid(row=1, column=0, sticky="ew")
+                self._bind_scrollbar(self._hscroll, SB_HORZ)
         elif self._can_resize:
             self.canvas.pack(fill="both", expand=True)
         else:
@@ -192,36 +201,101 @@ class WindowView:
             self.canvas.bind("<Configure>", self._on_configure)
 
     # -- scroll bars (WS_H/VSCROLL windows) -----------------------------------
+    # The bars themselves are host chrome, like the title bar and resize
+    # handles of a promoted window: tk draws them and owns the pointer gesture
+    # (hit-testing, the auto-repeat clock, the drag).  What the GAME observes —
+    # which SB_* code, carrying which position, in what order — is Win16
+    # platform truth and lives in win16.scrollbar, not here.
     def _on_vscroll(self, *args):
-        self._post_scroll(0x0115, 1, args)      # WM_VSCROLL, SB_VERT
+        self._post_scroll(SB_VERT, args)
     def _on_hscroll(self, *args):
-        self._post_scroll(0x0114, 0, args)      # WM_HSCROLL, SB_HORZ
+        self._post_scroll(SB_HORZ, args)
 
-    def _post_scroll(self, msg: int, bar: int, args) -> None:
-        # Map the tkinter scroll command to a Win16 scroll code + thumb pos and
-        # post WM_H/VSCROLL(wParam = code | pos<<16) to the window.
-        lo, hi, pos = self.win.scroll.get(bar, (0, 0, 0))
-        if args[0] == "moveto":                 # SB_THUMBPOSITION
-            newpos = int(round(lo + float(args[1]) * (hi - lo)))
-            wparam = 4 | ((newpos & 0xFFFF) << 16)
+    def _bind_scrollbar(self, sb: "tk.Scrollbar", bar: int) -> None:
+        """tk's scroll `command` reports movement but never the button: bind the
+        press (does this grab the thumb?), the release (SB_THUMBPOSITION +
+        SB_ENDSCROLL) and ESC (cancel the drag) to complete the Win16 sequence.
+        `add="+"` keeps tk's own scrollbar bindings — they are the gesture."""
+        sb.bind("<ButtonPress-1>", lambda e, b=bar: self._sb_press(b, e), add="+")
+        sb.bind("<ButtonRelease-1>", lambda e, b=bar: self._sb_release(b, e), add="+")
+        sb.bind("<KeyPress-Escape>", lambda e, b=bar: self._sb_cancel(b), add="+")
+        self.top.bind("<KeyPress-Escape>", lambda e, b=bar: self._sb_cancel(b), add="+")
+
+    def _tracker(self, bar: int) -> ScrollTracker:
+        return self._sb_track.setdefault(bar, ScrollTracker(bar))
+
+    def _thumb_size(self, bar: int) -> float:
+        """The fixed thumb as a fraction of its trough.  Win 3.x's thumb is a
+        square the breadth of the bar, and the trough is what is left once the
+        two arrow buttons are taken off the ends."""
+        sb = self._vscroll if bar == SB_VERT else self._hscroll
+        if sb is None:
+            return DEFAULT_THUMB_FRACTION
+        if bar == SB_VERT:
+            breadth, length = sb.winfo_width(), sb.winfo_height()
+        else:
+            breadth, length = sb.winfo_height(), sb.winfo_width()
+        return thumb_fraction(length - 2 * breadth, breadth)
+
+    def _post_scroll(self, bar: int, args) -> None:
+        """One tk scroll command -> the Win16 notification(s) it means."""
+        lo, hi, _pos = self.win.scroll.get(bar, (0, 0, 0))
+        t = self._tracker(bar)
+        if args[0] == "moveto":                 # the thumb went somewhere
+            if self._sb_cancelled.get(bar):
+                return                          # drag abandoned; ignore till mouse-up
+            target = thumb_position(lo, hi, float(args[1]), self._thumb_size(bar))
+            out = t.drag_to(target)             # SB_THUMBTRACK while the drag is live
         else:                                   # ("scroll", n, "units"|"pages")
             n, unit = int(args[1]), args[2]
-            if unit == "units":
-                wparam = 1 if n > 0 else 0       # SB_LINEDOWN / SB_LINEUP
-            else:
-                wparam = 3 if n > 0 else 2       # SB_PAGEDOWN / SB_PAGEUP
-        self.app.driver.post_input(self.win.handle, msg, wparam, 0)
+            out = t.line(n) if unit == "units" else t.page(n)
+        self._post_sb(out)
+
+    def _post_sb(self, msgs) -> None:
+        for msg, wparam, lparam in msgs:
+            self.app.driver.post_input(self.win.handle, msg, wparam, lparam)
+
+    def _sb_press(self, bar: int, event) -> None:
+        """Mouse down on a bar.  Only a press on the THUMB starts a drag; a
+        press on an arrow or the trough is tk's own auto-repeat, which reaches
+        us as scroll commands."""
+        sb = self._vscroll if bar == SB_VERT else self._hscroll
+        self._sb_cancelled[bar] = False
+        if sb is not None and sb.identify(event.x, event.y) == "slider":
+            _lo, _hi, pos = self.win.scroll.get(bar, (0, 0, 0))
+            self._post_sb(self._tracker(bar).begin_drag(pos))
+
+    def _sb_release(self, bar: int, _event=None) -> None:
+        """Mouse up: a drag lands on SB_THUMBPOSITION, and every interaction —
+        drag, arrow repeat, trough repeat — closes with SB_ENDSCROLL."""
+        t = self._tracker(bar)
+        if self._sb_cancelled.pop(bar, False):
+            self._post_sb(t.end())
+        elif t.dragging:
+            self._post_sb(t.end_drag())
+        else:
+            self._post_sb(t.end())
+
+    def _sb_cancel(self, bar: int) -> None:
+        """ESC during a thumb drag: the thumb snaps back to where it was
+        grabbed.  tk keeps dragging its own slider until the button comes up,
+        so latch the cancel and ignore its moveto commands until then — the
+        next _sync_scrollbars puts the slider back on the game's real position."""
+        t = self._tracker(bar)
+        if t.dragging:
+            self._sb_cancelled[bar] = True
+            self._post_sb(t.cancel_drag())
 
     def _sync_scrollbars(self) -> None:
-        for bar, sb in ((1, self._vscroll), (0, self._hscroll)):
+        for bar, sb in ((SB_VERT, self._vscroll), (SB_HORZ, self._hscroll)):
             if sb is None:
                 continue
+            if self._tracker(bar).dragging:
+                # USER owns the thumb while it is being tracked: an app that
+                # calls SetScrollPos mid-drag does not get to yank it back.
+                continue
             lo, hi, pos = self.win.scroll.get(bar, (0, 0, 0))
-            if hi > lo:
-                first = (pos - lo) / (hi - lo)
-                sb.set(first, min(first + 0.15, 1.0))
-            else:
-                sb.set(0.0, 1.0)
+            sb.set(*thumb_metrics(lo, hi, pos, self._thumb_size(bar)))
 
     def _has_menu(self) -> bool:
         if self.win.wndclass.menu_name is not None:

@@ -32,10 +32,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except (AttributeError, ValueError):
-    pass
+import simant._env  # noqa: E402,F401  (puts win16_re on sys.path)
+from win16.console import make_console_safe  # noqa: E402
+
+make_console_safe()   # the banner's dashes must not become mojibake (win16/console.py)
 
 import simant.vmless_boot as vb  # noqa: E402
 import win16  # noqa: E402,F401
