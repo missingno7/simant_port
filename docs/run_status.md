@@ -1,6 +1,34 @@
 # SimAnt — run status (newest on top)
 
-## 2026-07-15 (cont.218) — /goal grind: _DoRedInitiator (A-list "_DoAntSimA" dependency batch, 8/8 — BATCH COMPLETE)
+## 2026-07-16 (cont.219) — DOS_RE 2.0 adoption begins: chain bump + the full-corpus census
+- **Direction change (owner-directed): adopt the DOS_RE 2.0 staged recovery
+  pipeline** (`win16_re/dos_re/docs/dos_re_2.0.md` — owner-ratified upstream,
+  proven through M2 on the Lemmings pilot). Mechanical lifting is done by
+  scripts; AI only unblocks tooling; target = the strict VMless wall for
+  SIMANTW (whole reachable graph lifted, interpreter poisoned inside the
+  corpus). Hand recovery into `simant/recovered/` continues as the SEMANTIC
+  stage (2.0 Stage 4) — the readable-source goal is unchanged; the pipeline
+  gets the game VMless without waiting for it.
+- Bumped dos_re to 7c1afa3 (2.0 merge) through the chain: win16_re 2f2f78e,
+  simant_port 188b0aa. Both suites green UNCHANGED (129 + 2198) — zero API
+  breakage.
+- NEW `scripts/census.py` — the 2.0 frontier probe: batch scan_function +
+  emit_function over EVERY SIMANTW.SYM entry in the 7 code segments (1319
+  routines), refusal/emit ledgers with details, `--json` ledger output.
+  **Result: 1286/1319 = 97.5% mechanically liftable, zero emit blockers.**
+  The full frontier is 2 classes: 32× inline x87 (31 = the MSC FP runtime in
+  `_TEXT` — runtime-role, native-port-provided; 1 = `_AdjustWndMinMax` seg1)
+  + 1× `_DoInt3` (a debug-break stub that decodes into 0xFFFF padding).
+  Segs 5/6/7 — the ENTIRE simulation — are 100% liftable minus that stub.
+- Census bug caught (same class the cont.217 scoping agent self-caught): a
+  probe scratch machine shared across entries gets mutated by probe
+  execution and later reports FALSE decoder-mismatches (11 of them, incl.
+  `_DoFoodInB`/`_SpiderScan`). Fix: fresh scratch clone per entry. All 11
+  "decoder-mismatch" entries were false positives — they lift fine.
+- Milestones tracked as tasks: M1 census (done) → M1 win16 irgen → M2 batch
+  emit + structural link (near + far) → M2 demo-differential convergence →
+  M3 play_vmless + wall. Generic mechanisms land in win16_re; SimAnt facts +
+  runners live here.
 - RECOVERED `do_red_initiator` (`_DoRedInitiator`, seg6:0x96D4, arg
   slot=[bp+6]; FAR return — the ONLY far-return routine in this whole
   batch, independently confirmed via all three of its own raw `ret far`
