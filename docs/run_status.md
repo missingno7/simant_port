@@ -1,5 +1,162 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.234) — the Quick Game scroll bars: the thumb that vanished at max, and the Win32 packing that told the game "go to the top" (win16_re 9089e12)
+- **Owner report (live `play_vmless`): "dragging the scrollbar thumb does not
+  scroll the view; the arrows are not visible by default, so I have to click
+  the scrollbar first to give it focus and then use the arrow keys."  Owner
+  note: long-standing, not a regression — "it was always like that in our vm,
+  but it works correctly on W311."**
+- **TRIAGE FIRST (standing directive), and it answered itself structurally:
+  NOT a lifter bug.**  `play_vmless` imports `play.py`'s `PlayApp` — both
+  paths share the SAME host `WindowView`, so the interpreted and strict-lifted
+  paths cannot differ here.  No A/B needed; the code is common by construction.
+- **What SimAnt's scroll bars ARE — settled from the IR + the EXE, not
+  assumed.**  WINDOW scroll bars (non-client WS_H/VSCROLL), never SCROLLBAR
+  child controls: the whole scroll API surface is `ANTEDIT_MODULE`
+  (SetScrollPos ×13, SetScrollRange/GetScrollPos/GetScrollRange in
+  `_ResetEditScrollRange` 3:6086, ScrollWindow in `_ScrollEditWindow` /
+  `_UpdateEdit`), and zero `CreateWindow` with a SCROLLBAR class exists.
+  Live in-game (crash_230334): **hwnd 014C "SimAnt - Quick Game", style
+  44FD0000 = WS_VSCROLL|WS_HSCROLL|WS_THICKFRAME|WS_CHILD|WS_CAPTION**, with
+  `scroll={1: (0,42,0), 0: (0,37,22)}` — the game sets its ranges correctly.
+  It is the ONLY WS_?SCROLL window, and it is `presents_standalone()` (full
+  caption) => promoted to its own host Toplevel.
+- **Which SB_* codes the game honours — read off its own jump table, not
+  guessed.**  `_DoEditScroll` (3:5C6E) is `(hwnd, msg, code, lParam)`:
+  `[bp+8]` vs 0x114 picks the bar (WM_HSCROLL => SB_HORZ else SB_VERT),
+  `[bp+0xa]` is the code, and `cmp ax,7 / ja default` indexes an 8-entry table
+  at cs:5CAE — **every code 0..7 is handled**, THUMBPOSITION(4) and
+  THUMBTRACK(5) sharing one arm (3:5F5C), with SB_ENDSCROLL(8) falling to the
+  default (ignored, as most Win3.x apps do).  The thumb arm reads its position
+  from **`[bp+0xc]` = LOWORD(lParam)**, and a DGROUP flag (5294:85F2) gates
+  whether THUMBTRACK is honoured live or only THUMBPOSITION lands — the game's
+  own "live scroll" option.  On THUMBTRACK it deliberately does NOT call
+  SetScrollPos (USER owns the thumb while tracking); on THUMBPOSITION it does.
+  The wndproc arm (1:3810) forwards wParam/lParam verbatim.
+- **Root cause per symptom — our layer has NO scroll-bar UI at all.**
+  `win16/api/user.py` keeps `Window.scroll[bar] = (min,max,pos)` as pure data;
+  nothing renders, hit-tests or generates WM_?SCROLL anywhere in `win16/`.
+  The bars are **host chrome**: `play.py`'s `WindowView` mirrors WS_H/VSCROLL
+  onto real `tk.Scrollbar` widgets (the same pattern as the OS title bar,
+  resize handles and close box of a promoted window).  Both bugs were in the
+  host's translation:
+  1. **The thumb vanished.**  `_sync_scrollbars` mapped (lo,hi,pos) -> tk's
+     (first,last) with a fabricated 0.15 page: `first=(pos-lo)/(hi-lo);
+     last=min(first+0.15,1.0)`.  The box therefore SHRANK as pos approached
+     hi and hit **zero size exactly at pos==hi** — measured live on the
+     owner's own window: vert `(0,42,42)` -> `set(1.0,1.0)`, tk elements
+     `['arrow1','trough1','arrow2']`, **no slider**.  Nothing to grab, which
+     is why "dragging does nothing" and why the thumb "is not present until
+     you click on that bar" (a trough click moves pos off the max, and the
+     thumb reappears).  Win 3.x has no page size at all: SetScrollRange gives
+     a **FIXED-size thumb**; proportional thumbs are Win95's SetScrollInfo.
+  2. **Every drag meant "go to position 0".**  `_post_scroll` packed the
+     position **Win32-style** — `wparam = 4 | (newpos << 16)`, `lParam = 0`.
+     Win16's wParam is a WORD, and `Win16System.call_wndproc` masks
+     `wparam & 0xFFFF` (correctly): the position was **discarded**, and the
+     game read `LOWORD(lParam)` = **0**.  Proven against the live guest
+     pre-fix: "drag the thumb to the MIDDLE" (`moveto 0.5`) delivered
+     `code=4 pos=0` and the view jumped to the TOP.  It fails as a plausible
+     value, never as an error — which is why it survived this long.
+  3. **Only the keyboard worked** because the GAME does that itself: 1:345C
+     etc. poll GetAsyncKeyState and call `_DoEditScroll` DIRECTLY, bypassing
+     the host path entirely.  Nothing was ever right about the mouse path.
+  Also missing: no SB_THUMBTRACK stream and no SB_ENDSCROLL ever.
+- **NEW (win16_re 9089e12, generic): `win16/scrollbar.py` — the Win16 scroll
+  notification contract.**  `scroll_message()` packs the shape once (code in a
+  16-bit wParam; position in LOWORD(lParam) for SB_THUMB* only; hwndCtl in
+  HIWORD, 0 for a window bar).  `thumb_metrics()`/`thumb_position()` are the
+  Win 3.x FIXED thumb and its exact inverse — the box keeps its size at every
+  position, the TRAVEL absorbs the range, and a thumb dropped at an extreme
+  reaches min/max instead of falling short by its own size.  `ScrollTracker`
+  owns the SEQUENCE (order is contract): line/page on the host's repeat clock,
+  a drag streaming SB_THUMBTRACK at the live position then landing on
+  SB_THUMBPOSITION, a cancelled drag reporting the ORIGIN, and exactly one
+  SB_ENDSCROLL closing every interaction.  **Zero game knowledge; the module
+  is pixel-free and clock-free by design** — whoever draws the bar owns the
+  gesture, this owns what the guest sees.
+- **The DIVISION OF LABOUR, stated rather than fudged**: the bars are host
+  chrome, so **tk owns the gesture** (arrow/trough/thumb hit-testing, the
+  auto-repeat delay+rate, the drag) and win16 owns the protocol.  play.py now
+  binds press/release/ESC (tk's `command` reports movement but never the
+  button), starts a drag only when the press lands on the `slider` element,
+  sizes the thumb from the real pixel geometry (a square the bar's breadth,
+  the trough being what is left after the two arrows), and **skips
+  `_sync_scrollbars` for a bar while it is being dragged** — USER owns the
+  thumb during tracking, and an app calling SetScrollPos mid-drag does not get
+  to yank it back (which is exactly what the game's own THUMBTRACK arm
+  assumes).  Consequence, reported honestly: **hit-test geometry and
+  auto-repeat timing are tk's, not ours, so they are not ours to unit-test** —
+  our layer is not asked to draw a scroll bar anywhere (014C is the only
+  WS_?SCROLL window and it is promoted), and inventing an unused non-client
+  scroll-bar renderer would be speculative generality.
+- **HEADLESS PROOF — all four interactions against the LIVE guest** (strict
+  lifted machine resumed from crash_230334, driving play.py's own handlers
+  exactly as tk drives them; scratchpad `sbfinal.py` / `sbcancel.py`).  Method
+  note that matters: the physical desktop pointer sits 4 px from the real
+  on-screen bar and its stray events polluted the first runs — tk's Scrollbar
+  class bindings are dropped for the measurement so ONLY the synthetic gesture
+  drives the app.  (The apparent "feedback loop" was that, not `set()`:
+  `Scrollbar.set()` provably does not invoke `command`, and 2 s idle gives 38
+  syncs and ZERO commands.)
+  - thumb at pos==max `(0,42,42)`: `set=(0.944,1.000) thumb_size=0.056`,
+    elements `['arrow1','trough1','slider','arrow2']` — **grabbable** (was: no
+    slider at all);
+  - **arrow** click held 3 repeats: `SB_LINEDOWN(0) x3 -> SB_ENDSCROLL(0)`;
+  - **trough** click held 2 repeats: `SB_PAGEUP(0) x2 -> SB_ENDSCROLL(0)`,
+    pos 42 -> 0;
+  - **thumb drag**: `SB_THUMBTRACK(13) -> SB_THUMBTRACK(22) ->
+    SB_THUMBTRACK(31) -> SB_THUMBPOSITION(31) -> SB_ENDSCROLL(0)`, and the
+    view **lands where it was dropped: pos 0 -> 31** (pre-fix: -> 0, always);
+  - **drag cancelled with ESC**: `SB_THUMBTRACK(4) -> SB_THUMBTRACK(0) ->
+    SB_THUMBPOSITION(31) -> SB_ENDSCROLL(0)`; a direct watch on every write to
+    `scroll[SB_VERT]` shows the only write after the cancel is **pos 31 at
+    t+0.03 s, and it holds for 2 s** — the thumb snaps back to its origin.
+    (In the four-interaction run the pos read later drifted off 31: the game
+    scrolls its own view autonomously between steps; the SEQUENCE — the half
+    we own — was byte-exact in both runs.)
+- **Gates: win16_re 239 passed, simant_port 2257 passed.  NO pinned digest
+  moved, and it is not luck — it is structural**: `win16.scrollbar` is
+  imported ONLY by `scripts/play.py`, `WindowView` is constructed ONLY there,
+  and the headless demo/checkpoint/verify path never imports either, so the
+  change cannot reach a recorded baseline.  Confirmed rather than assumed —
+  the clean-room 45M prefix still pins **instr 45,102,443 / digest
+  50365479...**, and `test_boundary_parks` is green (8 passed together).  No
+  re-pin, no re-record.
+- **Regression tests (win16_re `tests/test_scrollbar.py`, 33)**: the message
+  shape (code in wParam; position in LOWORD(lParam) and NOT in HIWORD(wParam);
+  non-thumb codes carry no position; hwndCtl in HIWORD), the fixed-thumb
+  geometry (same size across the whole range; **does not vanish at pos==max**
+  — the live `(0,42,42)` state; parks at both ends; empty range fills the
+  trough; exact round-trip with `thumb_position`; extremes reach min/max), and
+  the SEQUENCES (arrow, arrow auto-repeat, trough, full drag incl. the
+  THUMBTRACK stream and its live positions, a still thumb notifying nothing, a
+  cancelled drag reporting the origin, a move with no grab being a POSITION
+  not a track, and SB_ENDSCROLL sent exactly once per interaction).  **Two pin
+  the pre-fix bugs directly**: re-running the old formulas verbatim gives
+  `wParam=0x150004` (masked to `0x4`, position 21 destroyed) and thumb sizes
+  `[0.0, 0.0238, ..., 0.15]` collapsing to **0.0** at max.
+- **HOUSEKEEPING THE OWNER MUST SEE — my host-side hunks were swept into
+  another agent's commit.**  A concurrent agent worked `scripts/play.py`
+  (menu accelerators) at the same time and staged the WHOLE FILE: commit
+  **9dd8b1f "play_vmless: ASCII-safe console output"** carries my 116-line
+  scrollbar rewrite of `WindowView` under an unrelated message (its sibling
+  d1fb982 is clean — 6 lines, theirs only).  The code is correct, tested and
+  green; only its attribution is wrong.  I did NOT rewrite their history: they
+  were still working the tree, and nothing here is pushed — reword/split at
+  review if it matters.  Recording it so the next reader is not baffled by a
+  console-encoding commit containing scroll bars.
+- Queue / honest residue: (i) **real Win3.x tracking niceties tk does not
+  give us** — the perpendicular snap-back margin (drag strays too far from the
+  bar => thumb returns) is unimplemented; ESC-cancel IS wired and proven, but
+  tk keeps dragging its own slider until the button comes up, so the host
+  latches the cancel and ignores tk's remaining `moveto`s until then;
+  (ii) a composited (non-promoted) WS_?SCROLL window would today have NO bars
+  at all — no such window exists in SimAnt (014C is the only one and it is
+  promoted), so the non-client renderer stays unbuilt rather than speculative;
+  (iii) cont.232's popup promotion z-order closure still open; (iv) `dist/` is
+  still stale.
+
 ## 2026-07-17 (cont.233) — the sim frame driver joins the parked set: per-head park costs (frame_gate/pacing_spin); MagnifyMenu + EndGameDialog promoted; 29 heads
 - **Owner live crash: `simant_mytimerfunc exceeded MAX_ITERATIONS` at
   0100:27E2 (instr 89,397,794, ~15 min of play; crash_230334), api tail =
