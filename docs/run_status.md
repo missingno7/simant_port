@@ -1,5 +1,155 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.233) — the sim frame driver joins the parked set: per-head park costs (frame_gate/pacing_spin); MagnifyMenu + EndGameDialog promoted; 29 heads
+- **Owner live crash: `simant_mytimerfunc exceeded MAX_ITERATIONS` at
+  0100:27E2 (instr 89,397,794, ~15 min of play; crash_230334), api tail =
+  SelectObject/GetTickCount/CreateSolidBrush/FillRect/DeleteObject/
+  SelectPalette/ReleaseDC/PeekMessage×2 per iteration.**  Exactly the case
+  cont.229 queued: SIMANT!MYTIMERFUNC is the SIM FRAME DRIVER — the SetTimer
+  TimerProc the game lives inside for the whole of gameplay — and it is NOT a
+  pure wait (my conservative waitscan rule correctly refused to auto-park it).
+- **Disassembled, not assumed** (loop 25B6..2803): each pass bumps a counter,
+  runs `_DoAntSim` + the frame's rendering when enough ticks are pending,
+  drains WM_TIMERs (27BF..27DA, si counts them), services the MIDI song
+  (`_myServiceSong`), then decides: exit if the game window is gone, or if
+  si>=2 **and** di>=3 (behind — let the pump run), or if the left button is
+  down; **otherwise loop**.  With si<2 the only exit is a click, so the loop
+  spins until WM_TIMERs arrive — i.e. **it waits on the WALL CLOCK**, frozen
+  inside a lifted invocation.  Same class as every other head.
+- **A hypothesis of mine that my own measurements REFUTED (recorded because
+  the correction is the useful part).**  I first read this as a RESIDENCE
+  bug: the guard is a per-invocation block-transition budget, the game lives
+  in the frame loop, so it accumulates over a session.  Two measurements say
+  otherwise: (i) over cold_nohooks MYTIMERFUNC's max OWN-code span is ~50k
+  instructions across 538 calls — short invocations; (ii) live in-game for
+  5 minutes it parks only ~5 times per 30 s while ~480 ticks flow — the loop
+  *exits by itself* almost every pass.  The truth is simpler and is the
+  cont.229 class exactly: the loop only reaches its wait state when the host
+  is KEEPING UP (fewer than 2 ticks pending), and then the frozen clock means
+  no tick can ever arrive → it spins → the guard trips.  That is why the
+  crash takes minutes to appear (it is the first moment the game gets ahead
+  of its timers), not because anything accumulates.  A park does also reset
+  the per-invocation budget — which is what makes the *productive* residence
+  (a fast host legitimately living in this loop) safe — but that is a
+  property of the fix, not the cause of the crash.
+- **NEW (win16_re, generic): PER-HEAD PARK COSTS — dos_re's own
+  frame_gate/pacing_spin vocabulary, priced by the host** (its 4-arg observer
+  ABI passes the head identity precisely so a port can price heads).
+  `arm_boundary_parks(cpu, head_kinds=...)`:
+  - `PACING_SPIN` (default) — one pass of a BOUNDED wait: sleep ~1 ms (the
+    watched clock moves, the loop's own exit still fires promptly, no core
+    burnt).
+  - `FRAME_GATE` — one pass IS one frame: pay the whole frame quota via the
+    new `wait_for_work()` (return at once if a tick is already due or input
+    is pending; else block until the next armed timer is due, capped at
+    10 ms so a loop watching something else stays responsive).  Same rule
+    `_next`/GetMessage already paces by, so the cadence matches the original
+    busy-spin with the CPU idle between frames.
+  - **A DRAIN loop must never be frame_gate** (documented in the facts +
+    suite-pinned): waiting for the next timer to come due would hand
+    MYTIMERFUNC's own drain (1:27BF) a message every pass and it would never
+    end.  The kind decides termination, not just pacing.
+- **The policy is generated data, not a second source of truth**:
+  `simant/facts/boundary_heads*.txt` lines may carry a trailing kind;
+  `scripts/liftemit.py` converts them through the IR's own ne_seg identity,
+  CROSS-CHECKS the head set against `facts_applied` (drift fails loud), and
+  writes `simant/lifted/graph/boundary_policy.json` — paragraph-keyed, so it
+  ships wherever the graph ships and needs no NE mapping or facts files at
+  run time.  `simant.vmless_boot.boundary_park_kinds()` reads it; play.py
+  passes it to the driver.  **Emission is identical for every kind** — the
+  kind prices the park, it never changes what executes.
+- **Two more heads, both crash-evidenced, both reversing a "don't park this"
+  hypothesis:**
+  - **ANTEDIT!_MagnifyMenu 3:6CAA** (the press-and-hold popup's ButtonHeld
+    poll; crash_231350 at 18C0:6CFB, instr 294,126,381).  I was told not to
+    park it (theory: a win16 window-management bug, so parking would turn a
+    loud crash into a silent hang).  **Disproven — and I re-derived it
+    first-hand rather than taking it on report** (scratchpad
+    `magnify_verify.py`): (A) resume the crash snapshot with NO head → the
+    guard trips again after 93M instructions with the clock advanced **0 ms**
+    (11468 → 11468: the frozen-clock signature; `GR!_ButtonHeld`'s 55 ms
+    countdown can never drain); (B) with the head + parks, NO input → **25 s
+    with no crash**, clock 11468 → 36467 (+24,999 ms), 33,432 parks, api tail
+    now `GetAsyncKeyState(1)` — the menu politely waits for a press, which is
+    its DESIGNED behaviour, not a hang; (C) with a press/release injected →
+    the loop **exits** and execution leaves MagnifyMenu entirely (the run
+    continued 757M instructions into other code).  The resize agent's
+    independent cont.232 analysis agrees; the "popup renders behind the Quick
+    Game window" symptom is a separate HOST PROMOTION bug (theirs).
+  - **SIMANT!_EndGameDialog 1:6688** — found BY that verification: once the
+    popup dismissed, the game reached the end-game dialog and died
+    (`simant_endgamedialog exceeded MAX_ITERATIONS` at 0100:66D0, **757M
+    instructions inside ONE invocation**, api tail = PeekMessage +
+    IsWindowVisible(370) repeating).  Its loop (6688..66D5) is
+    `_ShowIntro`'s structural twin — `or si,si` → `_win_GetEvent` pump →
+    `_mySongIsDone` (re-loops the music) → `_win_IsWinOpen` → loop — i.e. it
+    waits for a click while its song plays.  Promoted with that evidence.
+- **Sibling frame loops — asked mechanically, answered honestly.**  The
+  frame-gate signature (a loop whose PeekMessage filters WM_TIMER) matches
+  exactly **3 functions**: MYTIMERFUNC (its outer loop + its drain) and the
+  two shutdown waits `_StopSimulation`/`_CleanUp`, already derived heads.
+  WINMAIN's message pump (440D..444F) is not one: it blocks in GetMessage,
+  which yields to the host by construction — and its "loop 3FFE..45D8" in
+  wait_report is a FALSE loop (backward jumps to the shared epilogue, like
+  MAINWNDPROC's switch dispatcher).  waitscan's docstring now names both
+  limits (false loops; the wait state the demo cannot surface) so the next
+  reader does not mistake the mixed list for a to-do list.
+- **The demo's own blind spot, stated rather than papered over**: its clock is
+  derived from the instruction count, so every timer is due instantly and the
+  frame driver never enters its wait state.  The whole-demo differential
+  therefore proves the lifted BODY byte-for-byte and says nothing about the
+  wait; live play is the only evidence for that half — which is why this
+  slice's acceptance is a live in-game run, not just a green gate.
+- **Gates (29 heads: 25 derived + 4 hand-promoted):**
+  - **NEW `simant/tests/test_boundary_parks.py` — parks are TRANSPARENT**:
+    the pinned clean-room 45M prefix replayed with EVERY head parking
+    (cost-free) reproduces the park-free pin EXACTLY — instr 45,102,443 and
+    digest 50365479… .  This is stronger than the differential alone: it
+    proves the park/resume path itself (unwind → RESUME entry → continue),
+    not just the emission.  Plus a pin that the frame-gate policy ships and
+    that the drain stays pacing_spin.
+  - whole-demo differential, literal graph vs interpreted oracle
+    (api-aligned): **MATCH all 39 checkpoints + final** (269eb6db…);
+  - **THE WALL RUN**, boot image + poison, masked: **MATCH all 39 + final**
+    (05c738b2…), instr 199,612,996;
+  - suites: win16_re 189+, simant_port 2254+ green; waitscan `--check` fresh
+    (25 derived heads).
+- **LIVE ACCEPTANCE (the half the demo cannot prove): 330 s of in-game play,
+  strict graph, parks armed — ZERO VM stops.**  Method (scratchpad
+  `live_gameplay.py`): drive to gameplay with the demo prefix the walls test
+  already trusts (boot→intro→menus→NewGame→worldgen→gameplay), detach the
+  demo, attach the real InteractiveDriver + the graph's park policy, play;
+  sim rate measured mode-independently in the layer both share (every
+  WM_TIMER `Win16System._due_timer` hands the game = one tick).  Result:
+  **4591 ticks in 330 s = 13.9/s, 431M instructions (1.3M/s), 5 parks, 0 VM
+  stops** — vs the **interpreted control's 6.0 ticks/s** over the identical
+  procedure (2.3x faster).  Both hosts are CPU-bound below the game's 59 Hz
+  timer on CPython, which is why the frame loop mostly exits on its own and
+  parks only ~5 times: each of those 5 is a moment the host caught up — i.e.
+  each is a crash pre-fix.  Two findings worth keeping: (a) a park
+  inside the TimerProc is absorbed by `call_far`'s chunk loop — the callback
+  keeps running and far-returns normally, which is the design, but it means
+  `cpu.run` does not return to the worker for minutes: the wall clock and
+  pause live on `yield_check`, as they already did; (b) the harness's own
+  driver switch orphaned an in-flight callback frame — handled by win16's
+  existing snapshot-resume orphan path, i.e. a harness seam, not a product
+  one (the interpreted control hit it identically with no parks at all).
+- Honest residue / queue: (i) **adopt dos_re's new `boundary_clock.py`**
+  (upstream ce620ab, not yet pinned here): it is the generic seam for this
+  mechanism — same observer ABI, same frame_gate/pacing_spin taxonomy, plus
+  pass-counted quotas and exact cross-mode parks.  What I landed is the
+  INTERACTIVE half it does not cover (what a park COSTS in wall-clock time:
+  a fixed sleep vs `wait_for_work`), and my facts→`boundary_policy.json`
+  pipeline is exactly the "heads and kinds are PORT FACTS the port passes
+  in" input it asks for — so adoption should subsume win16's `head_kinds`
+  dict + `BoundaryParked` and keep the facts side as-is.  Queued
+  deliberately rather than hand-rolled further; (ii) the remaining `mixed`
+  candidates stay report-only — each needs a crash or an A/B, and the
+  wait-vs-platform-gap question (cont.232's lesson) answered first;
+  (iii) `dist/` is still stale (deploy must re-run to ship the parked graph
+  + the policy file it now reads); (iv) a park costs a Python unwind per
+  pass — if a future head sits in a hot inner loop, price it deliberately.
+
 ## 2026-07-16 (cont.232) — resize refresh fixed at the PeekMessage pump (win16_re 39fc1c6); the MagnifyMenu popup crash proven to be an ENV-WAIT, not a window-management gap; the popup's "behind our window" traced to the host PROMOTION model
 - **Owner report 1: "on vmless play: quick play window is not refreshing when
   resized."  Triaged lifter-first (standing directive) and answered by a
