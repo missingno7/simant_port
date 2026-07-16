@@ -1,5 +1,139 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-16 (cont.229) — env-waits parked: interactive play_vmless past the splash/intro/title into gameplay; the wait class mechanically enumerated
+- **The "hang at the Maxis logo" was never a hang: the CPU worker died with
+  `LiftRuntimeError: gr_ibminitstuff exceeded MAX_ITERATIONS` at 0E99:07F3
+  (~instr 523M; re-verified headless) while the GUI thread kept the window
+  alive.**  A textbook env-wait (dos_re_2.0 §3a): `GR!_IBMInitStuff`'s
+  splash-timeout loop (0E99:07E6..07F8) spins on `_WaitedEnough` →
+  `_TickCount` → GetTickCount against a 0x48-tick deadline — but the
+  interactive WALL clock only advances between cpu.run chunks
+  (driver.check_pause), and one lifted invocation never returns to the
+  worker, so the spin's clock is FROZEN: it cannot exit, and the runaway
+  guard (correctly) kills it.  Demo replay never trips this — the recorded
+  clock advances per instruction count.
+- **The fix is dos_re's OWN designed machinery, not new mechanism: boundary
+  heads (dos_re 1dd8b8d/186003d) + an interactive park policy.**  Each
+  fact-declared wait-loop head gets an emitted observer event + RESUME
+  entries; `resume_calls` goes pipeline-wide (THE UNWIND RE-ENTRY RULE —
+  every call-site continuation in every module is a resume entry, ~7.9k
+  resume hooks registered by dos_re's installer).  New in win16_re
+  (generic): `InteractiveDriver.arm_boundary_parks(cpu)` — the observer
+  sleeps the pacing cost (1 ms), re-points CS:IP at the RESUME entry and
+  raises `BoundaryParked`; EVERY step loop treats it as a YIELD, not a
+  stop: the CPU worker (play.py `_run_cpu` → `driver.boundary_yield()` =
+  check_pause, advancing the clock the wait polls) AND
+  `win16.callback.call_far`'s chunk loop (a wait reached INSIDE a
+  WndProc/TimerProc parks there and the callback still far-returns
+  normally — proven live: `_DoMouse` → `_WaitHundredths` mid-scenario,
+  crash_214734).  The next step() re-enters the lifted body at the resume
+  entry; abandoned outer lifted frames re-establish through their own
+  continuation resume hooks as the guest stack unwinds — zero interpreted
+  instructions.  Headless/demo runs never arm the hook: the emitted
+  observer is inert.
+- **Second manifestation, interpreted path (owner live, crash_214204):
+  `CallbackOverrun: callback 0100:2930 did not return within 20000000
+  steps` — the title screen polling GetAsyncKeyState/GetCursorPos INSIDE
+  MAINWNDPROC killed as a "runaway" while the user idled.**  The policy
+  seam already existed (`Win16System.callback_max_steps`; the interactive
+  driver sets None because a live wait is user-interruptible) but only
+  DispatchMessage's TimerProc branch honoured it.  Fix (win16_re):
+  `call_wndproc`, the dialog-proc dispatcher and EnumChildWindows now pass
+  the SYSTEM's budget — one policy, every callback dispatch site; no
+  constant raised anywhere.  Headless/replay keeps the 20M cap.
+  Regression tests pin all of it (failing on old code):
+  tests/test_callback.py (budget policy ×2 + park-inside-callback),
+  tests/test_boundary_park.py (repoint+raise, clock advance, the whole
+  spin-exits-through-parks model).
+- **Owner triage directive (now standing): every observed glitch is FIRST
+  suspected to be an automatic-lifter bug, answered by an oracle
+  differential at the site, never by plausibility.**  Applied:
+  `_WaitHundredths` per-call A/B (fresh machine, interpreted vs lifted,
+  headless clock, 50-tick wait): identical AX/DX/SP/flags/instruction
+  count (50,011) — the lifted loop is faithful; the trips are genuinely
+  the clock model.  The whole-demo differential (below) covers every other
+  parked body byte-exactly through splash+intro+dialogs+pacing.
+- **Owner directive escalation: stop fixing crashes one at a time — the
+  class is mechanically enumerable.  NEW `scripts/waitscan.py`**: scans the
+  recovery IR for loops (backward jcc/jmp) reaching a polling-class api
+  (GetTickCount/GetAsyncKeyState/GetKeyState/GetCursorPos/PeekMessage,
+  call closure ≤2), derives each loop's head, and classifies HONESTLY:
+  `wait` (every call in the loop targets a WAIT PRIMITIVE — the fixpoint-
+  derived tick/input leaf helpers + the evidence-curated pump/dialog-wait
+  family `_win_GetEvent`/`_win_Events`/`_win_FlushEvents`/`_Dialog*`/
+  `_myDelay`/`_myButton`/`_StillDown`) vs `mixed` (any other call = real
+  per-iteration work possible — NEVER parked mechanically; a sim loop
+  reading the clock is timestamping, not waiting).  Census: 183 candidate
+  loops in 129 functions → **25 derived wait heads**
+  (simant/facts/boundary_heads_derived.txt, one evidence comment each;
+  freshness pinned by `--check`, suite-held) + 158 mixed reported in
+  artifacts/wait_report.json (the review queue).  Facts split:
+  boundary_heads.txt now holds ONLY evidence-promoted mixed loops —
+  `_ShowIntro` 1:D4BE (intro event-poll; headless crash at 0100:D4C7) and
+  `_PictureDialog` 1:6418 (dialog event-poll; headless crash at 0100:6422)
+  — each with loop shape + crash evidence; irgen reads both files.  The
+  live-crash sites all land in the set: splash 0E99:07E6, _WaitHundredths
+  0E99:4A08, _processEdit tick-spin 0100:6A88 (crash_220104), _DoScenario
+  idle pump 0100:59C3.  simant/tests/test_waitscan.py pins freshness, the
+  evidenced heads, and that MAINWNDPROC/WINMAIN/sim-frame loops are NOT
+  mechanically parked.
+- **Regenerated end to end** (irgen → liftemit → liftlink → adaptgen) with
+  27 heads: 1903/1904 modules, VMless wall HOLDS (0 interp_one), linking
+  unchanged (1730 near + 3209 far into 1271 callers, emulate_call 2550→73),
+  adaptgen re-routes into graph_routed as before.  scripts/liftemit.py and
+  scripts/liftlink.py read the heads from the IR's own `facts_applied`
+  (ONE source; liftlink materializes dos_re's @FILE flag as a generated
+  artifacts/boundary_heads_para.txt) — the linker's re-emitted callers
+  carry the identical observer/resume configuration.
+- **The gates (all green, re-proven on the 27-head graph, post-cont.228):**
+  - my own fresh interpreted EXE-full oracle (scratch): all aligned
+    checkpoints byte-identical; final stop-point 269eb6db… (plain) /
+    05c738b2… (masked) — independently confirming cont.228's re-pinned
+    baseline (the InvertRect device-domain fix moved the stop-point
+    surface state; the earlier 3-head round of these same gates, run
+    PRE-52691da, matched the PRE-fix final 2abf3ce5…/43bd4596… the same
+    bidirectional way — each round self-consistent, cause fully attributed);
+  - CONTROL, literal graph vs oracle, plain digests: **MATCH all 39
+    checkpoints + final** (269eb6db…);
+  - WALL RUN, boot-image + poison, masked digests: **MATCH all 39 +
+    final** (05c738b2…);
+  - `play_vmless --demo cold_nohooks`: 199,612,996 instructions, wall
+    HOLDS, final digest 05c738b2… == the masked oracle final;
+  - suites: dos_re 513, win16_re 166, simant_port 2254 — all green
+    (win16_re/dos_re trees carry no game knowledge: the park machinery is
+    generic, the heads are simant facts).
+- **Interactive verification (headless repro, wall-clock driver, strict
+  machine): the game now PLAYS.**  Idle 240 s: zero VM stops, 153k parks,
+  splash → intro → title (windows evolve exactly as the interpreted
+  control: SimAnt/Ribbon/Root + Generic Windows, one visible), idle parked
+  in _DoScenario's pump at 0100:59C6 polling GetAsyncKeyState — where the
+  control also sits.  Scripted 300 s click-through (click/F2/enter/clicks):
+  zero stops, all input consumed, same stable endpoint, 193k parks.  Owner
+  live progression during the work: splash → menus → NewGame →
+  DoScenario → in-game mouse handling — each formerly-fatal wait now
+  parking (their session died only at the next UNPARKED wait of the day,
+  which is how the last two facts were found and is exactly the
+  crash→fact→regen loop waitscan now replaces with enumeration).
+- **UX hardening — a dead CPU worker is now unmissable:** play.py prints a
+  `====`-framed VM STOPPED banner (status, CS:IP, instruction count, "the
+  game window is now FROZEN — close it to exit") before the traceback;
+  every surviving game window gets a red stop banner AND a
+  `[VM STOPPED — see console]` title prefix (the old banner only attached
+  to the is_main frame, which doesn't exist during the splash — exactly the
+  silent case); play_vmless prints a closing VM-STOP verdict as its LAST
+  console output and exits 1.  Proven live by the owner mid-session.
+- Honest residue / queue: (i) 158 mixed wait candidates in
+  artifacts/wait_report.json — promotion is evidence-driven (a crash or an
+  A/B), one line in boundary_heads.txt each; (ii) the pacing feel of parked
+  pumps (1 ms observer sleep per pass) is untuned — if a menu/animation
+  paces oddly, per-head park costs are the dos_re-designed next step
+  (186003d's frame_gate vs pacing_spin); (iii) **dist/ is stale**: the
+  packaged v0.1.0-pre bundles the graph + play host + win16 tree — the
+  deploy (scripts/deploy_vmless.py) must be re-run to pick up the parked
+  graph, the loud-stop UX and cont.228's GDI fix (not rebuilt this
+  session); (iv) demos remain hook-config-specific; the strict runner
+  still refuses snapshot-anchored demos.
+
 ## 2026-07-16 (cont.228) — nest/map-view drag rectangle visible again: InvertRect now inverts in the 16-colour device's palette-index domain (win16_re 52691da, re-pin b04a164)
 - **Owner report**: in the Black Nest View the selection/drag rectangle all but
   disappears over the medium-grey background — under OTVDM AND under us,

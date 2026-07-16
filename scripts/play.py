@@ -52,7 +52,7 @@ from win16.api.core import Win16ApiGap
 from win16.api.objects import Window
 from win16.api.system import Win16System
 from win16.dialog import du_to_px
-from win16.interactive import InteractiveDriver
+from win16.interactive import BoundaryParked, InteractiveDriver
 from win16.menu import (MF_CHECKED, MF_DISABLED, MF_GRAYED, MF_POPUP,
                         MF_SEPARATOR, parse_menu)
 
@@ -538,8 +538,13 @@ class WindowView:
         if version != self._last_version:
             self._last_version = version
             self._redraw(self._composited())
-        if self.top.title() != (win.title or win.wndclass.name):
-            self.top.title(win.title or win.wndclass.name)
+        want_title = win.title or win.wndclass.name
+        if self.app.crashed:
+            # A dead CPU worker must be unmissable: every surviving game
+            # window says so in its title bar (the frame underneath freezes).
+            want_title = f"[VM STOPPED — see console] {want_title}"
+        if self.top.title() != want_title:
+            self.top.title(want_title)
         if self.is_main:
             self._sync_menu_state()
         if self._vscroll is not None or self._hscroll is not None:
@@ -888,8 +893,15 @@ class PlayApp:
                       f"(--no-hooks to disable)", flush=True)
         self.sys: Win16System = self.machine.api.services["system"]
         self.driver = InteractiveDriver(self.sys, speed=speed)
+        # Fact-declared wall-clock wait loops in the lifted graph (dos_re
+        # boundary_heads) park through this observer so the wall clock can
+        # advance between passes — inert when nothing lifted is installed,
+        # and never armed on headless/demo runs (replay.py, play_vmless
+        # --demo), whose clock is the recorded timeline.
+        self.driver.arm_boundary_parks(self.machine.cpu)
         self.status = "running"
         self.stopped = False
+        self.crashed = False        # a VM stop (not a clean exit) happened
         self.snapshot_on_box = snapshot_on_box and snapshot_on_box.lower()
         self.recorder = None
         if record:
@@ -948,16 +960,30 @@ class PlayApp:
             # the pause latency to well under a frame.
             while self.driver.running:
                 self.driver.check_pause()
-                cpu.run(4096)
+                try:
+                    cpu.run(4096)
+                except BoundaryParked:
+                    # A fact-declared wait loop parked: CS:IP already points
+                    # at its RESUME entry — advance the wall clock, don't
+                    # burn a core, keep running.  A yield, not a stop.
+                    self.driver.boundary_yield()
             self.status = "stopped"
         except HaltExecution:
             self.status = "app exited cleanly (DOS terminate)"
             print(f"[play] {self.status}", flush=True)
         except Exception as exc:  # noqa: BLE001 — console first, then the UI
             self.status = f"VM STOPPED - {type(exc).__name__}: {exc}"
-            print(f"\n[play] {self.status}", file=sys.stderr, flush=True)
+            self.crashed = True
+            # UNMISSABLE on the console: the GUI thread keeps the window
+            # alive, so without this banner a dead worker looks like a
+            # silently frozen game (the Maxis-logo "hang").
+            print("\n" + "=" * 72, file=sys.stderr, flush=True)
+            print(f"[play] {self.status}", file=sys.stderr, flush=True)
             print(f"[play] at CS:IP {cpu.s.cs:04X}:{cpu.s.ip:04X}, "
                   f"instruction {cpu.instruction_count}", file=sys.stderr)
+            print(f"[play] the game window is now FROZEN (the GUI thread "
+                  f"stays up); close it to exit", file=sys.stderr)
+            print("=" * 72, file=sys.stderr, flush=True)
             traceback.print_exc()
             print("[play] last trace lines:", file=sys.stderr)
             for line in cpu.trace[-10:]:
@@ -1177,12 +1203,21 @@ class PlayApp:
             clk = self.sys.clock_ms
             rec = f"   REC {self.recorder.records}" if self.recorder else ""
             main.status_var.set(f"{self.status}   t={clk // 1000}.{clk % 1000:03d}s{rec}")
-            if self.stopped and "STOPPED" in self.status \
-                    and not getattr(self, "_banner", None):
-                self._banner = tk.Label(main.top, text=self.status + "  (see console)",
-                                        bg="#c00000", fg="white",
-                                        font=("Consolas", 10, "bold"))
-                self._banner.pack(fill="x")
+
+        if self.crashed:
+            # The red stop banner goes on EVERY game window (the splash/intro
+            # phase has no is_main frame, and a banner only on the main frame
+            # was missable) — sync() also stamps the title bars.
+            for v in self.views.values():
+                if not getattr(v, "_stop_banner", None):
+                    try:
+                        v._stop_banner = tk.Label(
+                            v.top, text=self.status + "  (see console)",
+                            bg="#c00000", fg="white",
+                            font=("Consolas", 10, "bold"))
+                        v._stop_banner.pack(fill="x")
+                    except tk.TclError:
+                        pass
 
         if self.stopped and ("exited cleanly" in self.status or not self.views):
             self.on_close()

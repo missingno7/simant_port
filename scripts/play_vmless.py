@@ -167,6 +167,17 @@ def main(argv=None) -> int:
         app = PlayApp(None, 0, args.speed, args.scale, hooks=False,
                       machine=machine)
         app.run()
+        if app.crashed:
+            # The worker already printed the full stop report when it died;
+            # repeat the verdict as the runner's LAST console output so a
+            # "silently frozen window" session can never end quietly.
+            print("\n" + "=" * 72, file=sys.stderr)
+            print(f"[play_vmless] the session ended with a VM STOP:",
+                  file=sys.stderr)
+            print(f"[play_vmless] {app.status}", file=sys.stderr)
+            print("=" * 72, file=sys.stderr, flush=True)
+            return 1
+        print(f"[play_vmless] session ended: {app.status}")
         return 0
 
 
