@@ -195,8 +195,10 @@ def main(argv=None) -> int:
     entries, names, n_syms = sym_corpus(segs)
     keep = [p for p in read_fact_pairs(FACTS_DIR / "keep_interpreted.txt")
             if p[0] in segs]
-    heads = [p for p in read_fact_pairs(FACTS_DIR / "boundary_heads.txt")
-             if p[0] in segs]
+    # Boundary heads: the hand-curated evidence-promoted waits PLUS the
+    # mechanically derived pure-wait enumeration (scripts/waitscan.py).
+    heads = [p for f in ("boundary_heads.txt", "boundary_heads_derived.txt")
+             for p in read_fact_pairs(FACTS_DIR / f) if p[0] in segs]
     sym_kw = dict(
         keep_interpreted=keep,
         boundary_heads=heads,

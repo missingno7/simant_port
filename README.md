@@ -356,6 +356,15 @@ python scripts/dispatchgen.py              # mechanical switch-table derivation
                                            # -> simant/facts/dispatch_entries.txt
                                            # + code_as_data.txt (iterate with
                                            # irgen to fixpoint; --check pins it)
+python scripts/waitscan.py                 # mechanical env-wait enumeration
+                                           # (pure wait loops -> simant/facts/
+                                           # boundary_heads_derived.txt; mixed
+                                           # loops -> artifacts/wait_report.json,
+                                           # hand-promoted with evidence into
+                                           # boundary_heads.txt; --check pins it).
+                                           # Interactive hosts park these loops
+                                           # (win16.interactive boundary parks);
+                                           # demo replay leaves them inert.
 python scripts/liftemit.py --require-vmless-wall
                                            # 1903 symbolically named VMless modules
                                            # -> simant/lifted/graph (+ manifest)

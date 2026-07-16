@@ -1,0 +1,65 @@
+# boundary_heads.txt — HAND-CURATED env-wait loop heads (NE_SEG:HEX_OFFSET
+# per line).  scripts/irgen.py reads this file AND the mechanically derived
+# simant/facts/boundary_heads_derived.txt (scripts/waitscan.py — the
+# enumeration of every pure wait loop; freshness suite-held via --check);
+# each head is tagged BoundaryEffect in the IR, the emitter generates a
+# host-side observer event + RESUME entries from it, and resume_calls goes
+# pipeline-wide (the UNWIND RE-ENTRY RULE).
+#
+# A head must be a SEQUENTIAL/CALL instruction of the wait loop (never a
+# jcc/jmp), with its successor inside the same function (the park resumes
+# there).
+#
+# Interactive semantics (win16.interactive.InteractiveDriver.arm_boundary_parks):
+# each pass through a head parks — unwinds the lifted Python chain, lets the
+# CPU worker (or win16.callback.call_far's chunk loop, for waits reached
+# inside a WndProc/TimerProc) advance the wall clock, and resumes INSIDE the
+# lifted body at the RESUME entry, zero interpreted instructions.  Demo/
+# headless runs leave cpu.boundary_hook None: the emitted observer is inert
+# and the instruction-count timeline is unchanged.
+#
+# THIS file holds only loops waitscan classifies `mixed` (they also do light
+# per-iteration work) that are PROMOTED BY EVIDENCE — a live/headless crash
+# proving the loop is a wait, plus an oracle check that the lifted body is
+# faithful (owner triage directive: lifter bug goes upstream, never into a
+# fact).  Pure wait loops live in the derived file; do not duplicate them
+# here.
+#
+# Oracle evidence held by all heads (hand + derived): the whole-demo
+# api-aligned differential is byte-identical at all 39 checkpoints + final
+# state on the observer-emitting graph (cold_nohooks exercises splash +
+# intro + dialogs + pacing under the demo clock), and _WaitHundredths
+# additionally by a direct per-call A/B (identical AX/DX/SP/flags/
+# instr=50,011 over a 50-tick wait, headless clock).
+
+# SIMANT!_ShowIntro (0100:D3E2, ne_seg 1) — the intro/title event-poll loop:
+#     D4BE  0bf6        or si,si               <- HEAD (loop leader, seq)
+#     D4C0  7524        jnz D4E6 (done: an event was consumed)
+#     D4C2  9a...       call far 430E:D040     SIMTWO!_win_Events (pump)
+#     D4C7  0bc0        or ax,ax; jnz D4D4
+#     D4CB  90 0e e8..  call 9C98              SIMANT!_DialogAbortOrCont
+#     D4D7  68 0003 9a  push 0x300; call far 430E:C256  SIMTWO!_win_IsWinOpen
+#     D4E4  75d8        jnz D4BE (loop while the intro window is open)
+# waitscan class: mixed (the _win_IsWinOpen poll is not a wait primitive).
+# Promotion evidence: waits for the intro window to close / the user to
+# abort; the intro's own progress paces on the wall clock, frozen inside one
+# lifted invocation — headless strict repro died here (LiftRuntimeError at
+# 0100:D4C7, instr 126,718,967, api tail GetTickCount polls).  The
+# interpreted control exits this same loop live, and the whole-demo
+# differential covers its lifted body byte-identically through the intro.
+1:D4BE
+
+# SIMANT!_PictureDialog (0100:62BC, ne_seg 1) — the picture-dialog wait loop
+# (the customer-ID / story screens; every _PictureDialog caller waits here):
+#     6418  8d46d0      lea ax,[bp-30]         <- HEAD (loop leader, seq)
+#     641B  16 50       push ss; push ax
+#     641D  9a...       call far 430E:D150     SIMTWO!_win_GetEvent (pump)
+#     6425  0bc0        or ax,ax; jz 6430
+#     ...   light UI per pass: MessageBeep / _win_IsWinInFront /
+#           BringWindowToTop / _win_DrawWindow / _MySetCapture
+#     6489  748d        jz 6418 (loop until an event ends the dialog)
+# waitscan class: mixed (the UI refresh calls).  Promotion evidence: the
+# headless strict sweep died here after the title click (LiftRuntimeError,
+# stop CS:IP 0100:6422 — inside _win_GetEvent's poll — instr 149,954,474)
+# while the interpreted control passes the same dialog live on a click.
+1:6418

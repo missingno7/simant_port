@@ -53,6 +53,20 @@ DEFAULT_IR = REPO_ROOT / "artifacts" / "recovery_ir.json"
 DEFAULT_EMIT_DIR = REPO_ROOT / "simant" / "lifted" / "graph"
 
 
+def boundary_heads_from_ir(doc: dict) -> frozenset[tuple[int, int]]:
+    """The boundary-head facts, as paragraph-base (cs, ip) pairs, read from
+    the IR's own ``facts_applied`` record (scripts/irgen.py applies
+    simant/facts/boundary_heads.txt there) — ONE source, no re-conversion.
+    Passing them to the emitter turns on the host-side observer events +
+    RESUME entries AND, non-empty, pipeline-wide ``resume_calls`` (the unwind
+    re-entry rule — every call-site continuation must be a resume entry)."""
+    return frozenset(
+        (int(cs, 16), int(ip, 16))
+        for cs, ip in (key.split(":")
+                       for key in doc.get("facts_applied", {})
+                                     .get("boundary_heads", ())))
+
+
 def load_dosre_tool(name: str):
     """Import a dos_re tools/*.py module by file path (tools/ is not a
     package; this is the same mechanism dos_re's own tests use)."""
@@ -137,6 +151,13 @@ def main(argv=None) -> int:
     naming = build_naming(functions)
     naming.save(emit_dir)
 
+    heads = boundary_heads_from_ir(doc)
+    if heads:
+        print(f"boundary heads (facts_applied): "
+              + ", ".join(f"{cs:04X}:{ip:04X}" for cs, ip in sorted(heads))
+              + " -- observer events + RESUME entries emitted; resume_calls "
+                "pipeline-wide")
+
     t0 = time.perf_counter()
     counts = Counter()
     per_seg = Counter()
@@ -145,6 +166,7 @@ def main(argv=None) -> int:
         rec = functions[entry]
         status, detail = liftemit.emit_entry_from_ir(
             rec, emit_dir, args.max_iterations,
+            boundary_heads=heads,
             stem=naming.stem_of(entry) if rec.get("liftable") else None)
         counts[status] += 1
         if status == "ok":
