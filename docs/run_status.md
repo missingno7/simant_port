@@ -1,5 +1,191 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.236) — the API tripwire tier closed: 20 of 28 imports implemented from their call sites, 4 left failing loud ON EVIDENCE — and the file dialogs, opened for the first time, turned out to be broken three ways (win16_re 3be222a, 4db04b6, 084c717)
+- **The problem: 28 of SIMANTW's 196 imported ordinals had a thunk slot and NO
+  handler, so each raised `Win16ApiGap` the moment the game reached it — and
+  the owner was finding them one crash per play session (USER.473 in the Load
+  dialog, GDI.44 in the About box).  Closed systematically instead.**
+- **NAMES FIRST, as facts (win16_re 3be222a).**  25 of the 28 printed nothing
+  but a number — `apicoverage.py` listed them honestly as `unnamed`, because
+  the rule is that a name is READ OFF a table, never inferred from a call site
+  or from Win3.x folklore.  Re-fetched the Wine 16-bit spec files this table
+  already cites (krnl386/user/gdi/**keyboard**.drv16) and resolved all 28.
+  This is not cosmetic: `ApiRegistry.register` cross-checks every handler
+  against the table and RAISES on a mismatch, so a misidentified ordinal fails
+  at import time instead of quietly mis-servicing a call — the check that
+  caught USER.186 SwapMouseButton once already.  `KEYBOARD` is a whole new
+  section (a Win16 app imports its keyboard LAYOUT from KEYBOARD.DRV).
+  Also table-sourced KERNEL.89/90 (lstrcat/lstrlen), previously handler-named.
+- **THE TIER (20 implemented, each from its own call site in the IR — the arg
+  shape, the value the caller BRANCHES on, and what must be true to proceed):**
+  - **Load/Save** — `USER.473 AnsiPrev` (the previous character clamped to
+    lpszStart; DBCS in Win3.1, a clamped decrement single-byte; returns a FAR
+    pointer the caller reads as ES:BX) and `USER.99 DlgDirSelect` (copies the
+    selection AND reports directory-vs-file: "[SUBDIR]" -> "SUBDIR\", "[-c-]"
+    -> "c:", a file verbatim — SimAnt lstrcat()s its spec onto the result only
+    when that boolean is set, so getting it wrong pastes "*.ANT" onto a file).
+  - **About** — `GDI.44 SelectClipRgn` (REPLACES the clip with a COPY, which is
+    why both sites DeleteObject the region on the next line; tracked as a rect
+    exactly like IntersectClipRect, enforcement in the blitters still not
+    modelled and nothing has proven the need).
+  - **Input** — `KEYBOARD.131 MapVirtualKey` (**new `win16/api/keyboard.py`**: a
+    layout IS a table, so the table is the implementation; a key not on the US
+    layout RAISES, because a plausible scan code is indistinguishable from a
+    right one to the caller and SimAnt feeds the character straight into the C
+    runtime's 256-entry ctype table as an INDEX), `USER.70 SetCursorPos` (the
+    guest-visible cursor moves NOW — the half any program can detect; warping
+    the host's real pointer is presentation and needs a "cursor_warp" callback
+    the host may install), `USER.76 PtInRect`.
+  - **Menus** — `USER.415 CreatePopupMenu` (CreateMenu's twin here: Menu is a
+    pure item tree and the renderer derives bar-vs-popup from where it hangs).
+  - **Palette** — `GDI.373 SetSystemPaletteUse` (recorded, not enforced: the
+    single-app palette model already gives the app every entry, so there are no
+    static colours to reserve; GetSystemPaletteUse now answers truthfully
+    instead of a constant), `USER.180/181 GetSysColor/SetSysColors` —
+    `SYS_COLORS` becomes the DEFAULTS behind a live **per-machine** table
+    (`gdi.sys_colors`) every reader resolves through at paint time, so SimAnt
+    repainting Windows' whole colour scheme (saves all 19, installs its own,
+    restores on exit) takes effect with no WM_SYSCOLORCHANGE broadcast to model.
+  - **Atoms** — `USER.268/269 GlobalAddAtom/GlobalDeleteAtom` + `USER.118
+    RegisterWindowMessage` on one `AtomTable`: unique per distinct string,
+    case-insensitive, ref-counted, 0xC000..0xFFFF.  RegisterWindowMessage mints
+    from the same space, which is exactly what puts a registered message above
+    every WM_USER-relative control message.  Integer atoms ("#123") raise.
+  - **Lines** — `GDI.19/20 LineTo/MoveTo` with a current position on the DC that
+    SaveDC/RestoreDC round-trips; LineTo moves the CP whether or not it painted,
+    so a polyline stays connected under a NULL pen.
+  - **Debug + PANIC** — `KERNEL.115 OutputDebugString` (to the harness console,
+    where stops and gaps already go; a host may take it via "debug_out"),
+    `KERNEL.1/137 FatalExit/FatalAppExit` — the C runtime's panic path, which
+    must NEVER return: the caller has already declared its state unrecoverable
+    and is written on the assumption it dies there.  They raise
+    `FatalAppExitError` carrying the CRT's own "run-time error R6xxx" text.
+  - Plus `USER.36 GetWindowText`.  `GDI.136 RemoveFontResource` was already done
+    (5e08353) — the coverage artifact calling it a tripwire is stale.
+- **LEFT FAILING LOUD, ON EVIDENCE — the interesting half:**
+  - **`KERNEL.103 NetBIOSCall` — its only caller is PHYSICALLY TRUNCATED in
+    SIMANTW.EXE.**  `_NetBios` (275F:8380) is `push bp / mov bp,sp / pusha /
+    push ds / push es / les bx,[bp+6] / mov ax,0100h / call far NetBIOSCall` —
+    and **segment 4's data ends at 0x8391, which is exactly the end of that
+    call**.  The epilogue is not in the file; the relocation at 0x838D (module
+    1, ordinal 103) is the segment's LAST.  min_alloc == file_length == 0x8391,
+    so on real Windows returning from that call runs past the segment and
+    faults.  A handler could only ever return into nothing.  (The IR's extent
+    for `_NetBios` runs to 85DF — irgen's linear sweep decodes PAST
+    `file_length` into zeros.  Cosmetic here, but it is an irgen bug.)
+    Reachable on paper (_NbCall <- _NetworkSend <- MYTIMERFUNC <- a WM_TIMER
+    dispatch case), which makes SimAnt's network mode dead by construction.
+  - **`USER.416 TrackPopupMenu`** — no caller at all
+    (`_ms_PopUpMenuResource` is dead Maxis-library code), and it needs real
+    popup-menu host UI.
+  - **`KERNEL.6/13 LocalReAlloc/LocalCompact`** — callers (`__nexpand`,
+    `__nrealloc`, `__freect`, `__memavl`) are dead CRT code: no near call, no
+    far call, and absent from every dispatch/indirect-target fact.  Writing an
+    implementation for a site that cannot execute is speculative generality;
+    the tripwire costs nothing and now names itself.
+  - **`KERNEL.111/112/191/192`** (GlobalWire/GlobalUnWire/GlobalPageLock/
+    GlobalPageUnlock) — the sound path, deferred to the concurrent audio work.
+    Their NAMES are in the table now, so their gaps name themselves.
+- **THEN THE DIALOGS OPENED FOR THE FIRST TIME — and were broken three ways
+  (win16_re 084c717).  None was a missing API; all three were this layer
+  answering wrong, and each failed as a PLAUSIBLE VALUE, never as an error.**
+  1. **DlgDirList ignored its DDL_* filetype entirely** — `_fill_dir_control`
+     did not take the argument and both callers dropped it.  That INVERTS the
+     answer: SAVEASDLG asks DDL_EXCLUSIVE|DDL_DRIVES|DDL_DIRECTORY (0xC010) for
+     "the folders and drives here" and deliberately passes an EMPTY spec
+     (it wants no files) — which fell through a `or "*.*"` default and listed
+     every file in the game folder, SIMANTW.EXE and README.WRI included.
+  2. **LB_ERR/CB_ERR went back as 0x0000FFFF through a `ret="long"` API.**
+     They are -1 and must be SIGN-EXTENDED (DX:AX = FFFF:FFFF); with DX=0 the
+     guest reads 65535.  SAVEASDLG and `_ChangeDirectory` both test the FULL
+     long after LB_GETCURSEL (`cmp ax,FFFF / jnz / cmp dx,ax / jnz`), so DX=0
+     told them a directory WAS selected: **the Save As dialog re-listed forever
+     and could never be dismissed.**
+  3. **`_fill_dir_control` pre-selected item 0.**  Real DlgDirList never sends
+     LB_SETCURSEL — the box comes up unselected and LB_GETCURSEL answers LB_ERR
+     until a user clicks.  Same "a directory is selected" lie from the other
+     end.  Selecting the first row looks helpful and silently makes Save As
+     impossible.
+  Plus **INT 21h AH=36h (Get Free Disk Space)**, the last thing between the
+  dialog and a file: `_SaveGame` calls the MSC runtime's `__dos_getdiskfree` and
+  refuses to save unless free clusters x sectors x bytes exceeds its save size
+  by 25%.  Deterministic geometry (512-byte sectors, 4K clusters, 256MB) for the
+  same reason AH=2Ah/2Ch already report a fixed date and time: a demo replay
+  must not depend on how full the operator's real disk is.
+- **A CORRECTION I OWE MY OWN FIRST WRITE-UP: "ordering is part of the DlgDirList
+  contract" was an INFERENCE, and it was wrong.**  I deduced "USER appends the
+  bracketed entries after the files" from `_UpdateListBox` hoisting them to the
+  top.  Competing explanation, checked instead of assumed: **"[" is 0x5B, above
+  "Z" (0x5A)** — in a SORTED box the brackets collate last on their own, and the
+  game is merely choosing a nicer order.  **Both list boxes in the DLGTEMPLATE
+  are LBS_SORT (style 0x50a10003)**, and our control model has no sorting of its
+  own, so the listing is sorted unconditionally; for a sorted box the two are
+  indistinguishable.  An UNSORTED box would differ and nothing has proven that
+  case — said in the docstring, not claimed as a finding.
+- **A path spec we cannot serve now FAILS LOUD.**  The file model is flat —
+  `system._canonical` reduces every path to its last component — so there is
+  exactly one directory and it IS the root.  A user picking "[SOUND]" makes the
+  game build "SOUND\*.ANT", and answering with an empty list would say "that
+  folder is empty": indistinguishable from the truth, and the worst answer
+  available.  Traversal means changing the file model itself, so this raises and
+  names the spec.  Listing a directory we cannot enter is still right — it is
+  really there; hiding it would be the lie.
+- **DRIVEN, not just unit-tested.**
+  - **The owner's own Load crash (`crash_081109`, a play_vmless snapshot parked
+    at 0060:027C) resumes and crosses the gap**: OPENDLG's separator walk runs
+    to completion — **5 AnsiPrev calls stepping 93A5 -> 93A0 over "*.ANT"**,
+    terminating on the caller's own `jbe` guard, then taking its no-separator
+    arm (lstrcpy to the spec + re-list).
+  - **Save/Load END TO END** (strict VMless runner, in-game snapshot
+    crash_230334, far-calling the game's own cdecl `_SaveGame`/`_LoadGame` with
+    a host that types a name and presses OK): SaveAs opens; list box 0x194 shows
+    **`['[-c-]', '[SOUND]']`** (assets/ANTWIN has exactly one subdirectory);
+    **`_SaveGame(0) -> AX=1` after 1 `_lcreat` + 307 `_lwrite`: AGENT1.ANT,
+    48,386 bytes**; the **`Open`** dialog (the other DIALOG resource) opens and
+    **`_LoadGame(0,0) -> AX=1`, the game's own reader reopening `C:\AGENT1.ANT`
+    and reading all 48,386 bytes back**.  The COMMDLG.DLL probes still miss (-1)
+    three times, so the game keeps taking its built-in-dialog fallback — the
+    path under test.  Writes land in the guest's overlay filesystem
+    (`Win16System.overlay_files`), which is the model: the host's asset
+    directory is never mutated.
+- **A CRASH INSIDE A MODAL DIALOG CANNOT BE RESUMED INTO THAT DIALOG** (found
+  the hard way, spun off as a task).  `DialogBox`'s `try/finally` removes the
+  Dialog and its controls as the gap propagates, so `_save_crash_snapshot` runs
+  AFTER the dialog is gone: crash_081109's pickle has 49 handles and ZERO
+  Dialogs while its `callback_frames` still records `DialogBox`.  Resuming and
+  stepping dies on `handle 0164 is not a dialog`.  (`save_snapshot`'s own
+  refusal to snapshot with a dialog open only passes because the dialog is
+  already destroyed — the same bug wearing a different hat.)
+- **Gates.  win16_re 289 (242 + 47 new in `tests/test_api_tripwire_tier.py`),
+  simant_port 2258.**  Both measured against a CLEAN win16_re worktree at the
+  committed tip: the working tree carries another agent's in-flight
+  `system.py`/`mmsystem.py`/`audio.py`, whose missing `scheduled_messages`
+  reddens 7 win16_re tests and the strict walls — **not this work**, and proven
+  so by the clean run.  Tests pin the DECLARED pascal arg shape and return of
+  every added API (a shape read wrong corrupts the guest stack), the returns
+  callers branch on, and the fail-loud edges.
+- **PINNED DIGESTS VERIFIED, NOT ASSUMED: the 45M clean-room prefix still pins
+  instr 45,102,443 / digest 50365479… and `test_vmless_walls` is 6/6 green; the
+  39-checkpoint cold_nohooks differential is byte-identical to the same trace
+  generated on the pre-change tip (41028e9).**  Structural, not luck:
+  cold_nohooks never opens a dialog, never presses a key reaching MapVirtualKey,
+  and never paints an About box — every new handler sits beyond or outside it.
+  `simant/tests/test_apicoverage.py::test_identity_is_honest` DID move, and it
+  is the good kind: it asserted "SIMANTW imports ordinals nothing names yet",
+  which the sweep made false.  Replaced by the stronger fact it became — **no
+  import is unnamed**, and **every TRIPWIRE is named from the ordinal table** (a
+  tripwire has no handler to borrow a name from, so the table is its only honest
+  source), while an implemented target may still be handler-named (a few KERNEL
+  ordinals are absent from the Wine tables).
+- **What the owner can do now that they could not**: open the Load and Save As
+  dialogs and actually save and load a game; open the About box; use the arrow
+  keys to move the pointer and the cheat keys; let the game repaint Windows'
+  system colours; draw the laser fire and the history graph (GDI lines).
+- Queue: the four sound-adjacent ordinals (audio agent); DlgDirList traversal
+  (needs the flat file model to grow paths — `system._canonical` drops the
+  directory part of every path today, which is the same lie one level down);
+  the dialog-crash-snapshot fix; irgen decoding past `file_length`.
+
 ## 2026-07-17 (cont.234) — the Quick Game scroll bars: the thumb that vanished at max, and the Win32 packing that told the game "go to the top" (win16_re 9089e12)
 - **Owner report (live `play_vmless`): "dragging the scrollbar thumb does not
   scroll the view; the arrows are not visible by default, so I have to click

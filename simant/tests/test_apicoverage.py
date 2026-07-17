@@ -66,12 +66,38 @@ def test_identity_is_honest(report):
     assert peek["name_source"] == "ordinal-table"
     assert peek["implemented"] == "handler"
     assert peek["static_sites"] > 0
-    unnamed = [t for t in report["targets"].values() if t["unnamed"]]
-    assert unnamed, "SIMANTW imports ordinals nothing names yet"
+    # An unnamed target must SAY so rather than carry a guess.  This used to
+    # assert the set was non-empty (25 of SIMANTW's imports had no name); the
+    # tripwire-tier sweep resolved every one, so the invariant now holds
+    # vacuously — and the stronger fact it became is pinned below.
     assert all(t["name"] is None and t["name_source"] == "unnamed"
-               for t in unnamed)
+               for t in report["targets"].values() if t["unnamed"])
     # The known equates ride along as data imports, never dispatched.
     assert report["targets"]["KERNEL.114"]["classification"] == "equate"
+
+
+def test_every_import_is_named_and_named_from_the_ordinal_table(report):
+    # What the tripwire-tier sweep bought: no import is a bare number any more,
+    # so every Win16ApiGap names the API it stopped on.  `unnamed` is the honest
+    # fallback and is now empty; if a future EXE imports an ordinal the Wine
+    # spec tables do not cover, this fails and the answer is to extend
+    # win16/api/ordinals.py FROM THAT SOURCE — never to guess a name here.
+    unnamed = sorted(label for label, t in report["targets"].items()
+                     if t["unnamed"])
+    assert unnamed == [], f"unnamed imports: {unnamed}"
+    # Every name comes from a source that can be checked — never a guess.
+    sources = {t["name_source"] for t in report["targets"].values()}
+    assert sources <= {"ordinal-table", "handler-name", "registry-entry"}
+    # A TRIPWIRE has no handler to borrow a name from, so the ordinal table is
+    # its ONLY honest source; a tripwire named any other way would mean someone
+    # guessed.  (An implemented target may legitimately be handler-named: a few
+    # KERNEL ordinals — GlobalFlags and friends — are absent from the Wine spec
+    # tables entirely.)
+    tripwires = {label: t for label, t in report["targets"].items()
+                 if t["implemented"] == "tripwire"}
+    assert tripwires, "the fail-loud tier still exists"
+    assert all(t["name_source"] == "ordinal-table" for t in tripwires.values()), \
+        {k: v["name_source"] for k, v in tripwires.items()}
 
 
 def test_raw_int_static_surface_is_reported(report):
