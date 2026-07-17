@@ -1,5 +1,33 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.239) — CPUless (M4) baseline: the promotion census over the SimAnt corpus
+- With dos_re at a2ca7aa (the mature CPUless emitter), ran
+  `dos_re/tools/cpuless_census.py` over `artifacts/recovery_ir.json`
+  (`artifacts/cpuless_census.json`). Over 1904 functions:
+  **419 leaf** (no refusals — the first CPUless emitter targets),
+  **1417 calls-only** (promote bottom-up as callees promote — the 8913
+  "call-abi-composition" sites are that composition, not a blocker),
+  **68 blocked**.
+- Blocked frontier (ranked): x87 is the whole story — opcodes 9B (FWAIT,
+  168 sites) + DD/D9/DB/DE/DF/DC/D8 (~145 sites) = the same FPU the VMless
+  emitter already handles via shared `execute_fpu` delegation; plus
+  `indirect-or-far-transfer` (103) and a trivial `opcode-82` decoder gap (1);
+  `_DoInt3` the lone ir-not-liftable. **Zero manual-corpus functions are
+  blocked** — the hand-recovered gameplay never touches x87.
+- Key architectural finding (cross-ref vs `recovered_map.json`): all 309
+  hand-recovered functions fall in leaf (137) / calls-only (172) — **and
+  they are ALREADY the CPUless implementation** (pure Python on the state
+  views, no CPU object). For them CPUless "promotion" = the CPU-ABI adapter
+  M2b already generates (166 routed). So the manual corpus is a large CPUless
+  head start; the mechanical work is the ~282 leaves with no manual impl.
+- Plan (M4, [[dos-re-2-adoption]] + [[manual-recovery-is-authoritative]]):
+  (1) leaf vertical slice — promote the ~282 no-manual leaves via
+  `cpuless_promote`, route the 137 leaf∩manual through existing impls, gate
+  with `lint_cpuless` + the oracle differential; (2) x87 in the CPUless
+  emitter (dos_re, mirror the VMless `execute_fpu` delegation); (3)
+  calls-only composition bottom-up; (4) `play_cpuless`. The CPU carrier
+  leaves the graph; the interpreter stays the oracle.
+
 ## 2026-07-17 (cont.238) — the dos_re a2ca7aa bump does NOT regress the VMless graph: the "divergence at checkpoint 0" was a CHECK-FIELD artifact, not a state difference; the whole-demo masked differential is byte-exact GREEN
 - **The report was: the ce620ab→a2ca7aa dos_re bump (35 commits, the mature
   CPUless emitter) flipped the whole-demo differential — DIVERGED at checkpoint
