@@ -1,5 +1,124 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.237) — the digitized sound effects are AUDIBLE: the MMSYSTEM waveOut device, completed on the VIRTUAL clock (win16_re)
+- **Owner request: "Could you make sounds working?"  They do now.**  The SFX
+  path was silent because `waveOutOpen` was a deliberate stub returning
+  MMSYSERR_BADDEVICEID (cont.231 recovered the contract and parked the slice
+  for its re-pin ceremony).  This lands the real device.
+- **cont.231's contract re-verified from the bytes, not inherited.**  All of
+  it held: `_CheckMMWave` (2:77D2) stores the LoadLibrary handle at [8D08]
+  BEFORE testing `waveOutGetNumDevs` and returns 0 without clearing it, so
+  `_myBeginSound`'s [8D08] gate passes with zero devices — that is why the
+  stub saw 59 open attempts.  The PCMWAVEFORMAT at 2:9D72..9D99 is literally
+  {1, 1, 0x1000, 0x1000, 1, 8} = **4096 Hz mono 8-bit**, rebuilt identically
+  by the fallback's RIFF builder (2:9E6B..9E9E).  `waveOutOpen(&hwo,
+  WAVE_MAPPER, &fmt, hwnd@CD78, 0, CALLBACK_WINDOW)`; on success
+  `_MciOutWave`, on failure GetProcAddress("sndPlaySound").  Two readings in
+  that entry were operand-order slips and are corrected here: 2:9FC6 is
+  `add ax,[bp-0x20]` and 2:9C0B is `cmp dx,[123a]` (opcodes 03/3B are
+  reg,rm) — so the deadline is `GetTickCount + MMTIME.ms`, and the branch is
+  **now vs deadline**: `now > deadline` (the effect FINISHED) tears the device
+  down and reopens it for the new one; `now <= deadline` DROPS the new effect
+  rather than interrupting.  The 0x3BD poll is a **drain** loop, not a wait.
+- **The decode is not ours to write.**  The delta-PCM loop at 2:9660 runs in
+  GUEST code (16-byte table, high nibble then low, `running = (running +
+  table[n]) & 0xFF` seeded 0x80, two samples per input byte); the game hands
+  `waveOutWrite` plain 8-bit unsigned PCM.  So win16_re grew a wave DEVICE and
+  no codec — the platform plays back what the program declares and writes.
+- **The device (win16_re, generic): waveOutGetNumDevs/Open/PrepareHeader/
+  Write/Reset/UnprepareHeader/Close/GetPosition** — exactly the set SIMANTW
+  resolves by name, nothing speculative.  WAVEFORMATEX and WAVEHDR are read
+  faithfully out of guest memory; a non-PCM tag, an unknown callback type, an
+  unknown open flag, a wrong sizeof(WAVEHDR) and an unknown MMTIME unit all
+  raise.  Position reports what has PLAYED (elapsed since open/reset, clamped
+  to what was queued) — the real contract, and the reason the game preempts
+  effects rather than dropping them.
+- **DETERMINISTIC COMPLETION — the design constraint.**  New generic
+  `Win16System.schedule_message(due_ms, ...)`: a deferred post released into
+  msg_queue once `tick_count()` reaches its due time — the same lazy ask-time
+  rule as an armed timer, wrap-safe over the 32-bit tick.  A buffer's duration
+  is arithmetic (bytes / the program's declared nAvgBytesPerSec, rounded up),
+  so MM_WOM_DONE lands at a computed GUEST instant — **never a host-audio
+  callback**, which would make replay depend on host scheduling.
+  `waveOutReset` cancels the pending completion (scoped by wParam, so one
+  device cannot silence another); the WAVEHDR flags and the in-flight list
+  settle from the SAME clock at every entry point, so the message and the
+  header can never disagree.  Host audio is a pure sink: a test drives the
+  identical timeline with no backend, a slow backend and a silent one.
+- **Which path the game actually takes: waveOut.**  Over cold_nohooks: 22
+  waveOutWrites, **zero sndPlaySound** — the fallback runs only when the
+  device is refused, and it is implemented and tested because it is real code
+  the game runs on a machine with no wave hardware (`sndPlaySound` also had to
+  be registered BY NAME — it was ordinal-only, so GetProcAddress handed the
+  fallback NULL and it played nothing).
+- **The completion ledger balances**: 22 scheduled = 9 cancelled by a reset
+  mid-play + 13 delivered on the virtual clock and consumed by the game's own
+  pump; 0 stranded, 0 left in the queue.  Honest nuance: the 0x3BD drain loop
+  itself consumed 0 of them — it runs at `_myBeginSound` entry and the main
+  GetMessage pump gets there first.  The loop terminates either way (it is a
+  drain, not a wait), and the ledger is the real proof.
+- **Cross-check against artifacts/sounds_wav/ — and its provenance settled.**
+  Every effect reaching the device is byte-for-byte an extracted reference:
+  the waveOut buffers are a reference + exactly 6 samples (4/4 distinct
+  sounds), and the fallback's RIFFs are **7/7 EXACT** matches — so that corpus
+  is the game's own sndPlaySound output, and it is tagged 4096 Hz, agreeing
+  with the game's own declaration (cont.231's 11025 Hz note was the old zip).
+  Both paths apply the same `(len - 0x10) * 2` (identical bytes at 2:95FB,
+  2:9A25, 2:9E17), so the 6 samples are two different length accessors;
+  1.5 ms, not pinned down further.
+- **A real bug found on the way — SimAnt's, not ours.**  Its RIFF builder
+  writes `RIFF size = data chunk + header`, omitting the "WAVE" tag and the
+  whole "fmt " chunk: **28 bytes short**.  Windows' MMIO reader finds chunks
+  by WALKING, so the file plays whole; our reader trusted the field and
+  clipped the tail off every fallback effect.  `riff_image_length()` now walks
+  the chunks, and `riff_with_consistent_size()` corrects the FIELD (never a
+  sample) before handing an image to a strict host decoder, which clamps
+  subchunks to the parent.  Both generic, both tested.
+- **The ceremony (the pin moved; the gate did not).**
+  - **Whole-demo differential: MATCH** — literal graph vs a fresh interpreted
+    oracle, both with sound on, `checkpoints.py --api-aligned` over
+    cold_nohooks: all 39 aligned checkpoints AND the final state identical
+    (instr 199,619,366, digest bcfaad65addf69ad; was 199,612,996).  Both sides
+    shifted identically, which is exactly what proves host audio never reaches
+    guest state.
+  - **Re-pinned** `test_vmless_walls` 45,102,443 / 50365479… →
+    **45,107,077 / f9ad9c8b…** (+4,634 instructions, 9 effects over the
+    prefix).  **Attribution proven the cont.228/232 way**: `git stash` of the
+    win16_re hunks reproduces the OLD pin EXACTLY (45,102,443 / 50365479…,
+    sound_log empty) on this same tree, so the move is this change and nothing
+    else.  Parks stay transparent (test_boundary_parks reaches the identical
+    45,107,077).
+  - **A pickle-compat wall closed while re-pinning**: `artifacts/vmless_boot/
+    system.pickle` and every saved snapshot predate the new field, and pickle
+    restores `__dict__` verbatim — so the first PeekMessage died with
+    AttributeError.  `Win16System.__setstate__` now fills defaults for fields
+    a snapshot predates (defaults only, never overriding a saved value): a
+    field's default IS the correct value for a state saved before the concept
+    existed.  Snapshots outlive the class that wrote them; without this every
+    future field addition breaks every crash dump.
+- **cold_nohooks does NOT need re-recording to serve as a gate** — it replays
+  cleanly end to end (all 4212 events, no divergence) and the differential
+  above still matches, which is the property the gate asserts.  But its input
+  is instruction-count-keyed and control flow now shifts from ~41M, so what
+  the recorded clicks *mean* after that point has drifted by up to ~6.4k
+  instructions of guest time; if a future slice needs the demo to represent a
+  specific play-through again, re-record it (standing directive: demos are
+  recreatable).
+- **What the owner hears**: `pypy scripts/play_vmless.py` (PlayApp wires the
+  backends; `mute` defaults off) — the ant effects at 4096 Hz mono 8-bit,
+  resampled by SDL to the open mixer (verified: a 4096 Hz 8-bit mono image
+  decodes to the right duration and a real signal, not silence), mixing over
+  the Mapper-filtered GAMETHME MIDI from cont.231.  Effects preempt one
+  another rather than overlapping — that is the game's own single-device
+  design, straight out of its own deadline arithmetic.
+- **Gates**: win16_re 341 passed (289 + 52 new: the device, the deferred-post
+  contract incl. the tick wrap, the RIFF walk/normalise, the fail-loud paths,
+  pickle compat), simant_port 2265 passed (+7: `simant/tests/test_sfx.py` —
+  the declared format read out of seg 2, both paths driven on the strict graph
+  against the reference corpus, the game's 28-byte RIFF bug, the ledger).
+  Commits: win16_re (the deferred-post primitive; the waveOut device) + the
+  port's bump/re-pin/tests/journal.
+
 ## 2026-07-17 (cont.236) — the API tripwire tier closed: 20 of 28 imports implemented from their call sites, 4 left failing loud ON EVIDENCE — and the file dialogs, opened for the first time, turned out to be broken three ways (win16_re 3be222a, 4db04b6, 084c717)
 - **The problem: 28 of SIMANTW's 196 imported ordinals had a thunk slot and NO
   handler, so each raised `Win16ApiGap` the moment the game reached it — and
