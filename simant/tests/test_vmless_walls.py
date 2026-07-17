@@ -37,14 +37,20 @@ DATA_DIR = REPO_ROOT / "assets" / "ANTWIN"
 
 #: The clean-room pin: cold_nohooks truncated to records due by instruction
 #: 45,000,000, replayed on the strict boot-image machine (poison armed).
-#: Re-pinned 2026-07-16 (same end instruction — presentation-only change):
-#: win16 InvertRect now inverts in the 16-colour device's palette-index
-#: domain (idx ^ 0xF, grey -> light grey) instead of per-RGB-channel, the
-#: original 4-bit device behaviour — window pixels under the map-cursor
-#: rubber band (first InvertRect at ~36.8M instrs) changed intentionally.
+#: Re-pinned 2026-07-17 — the digitized sound effects went LIVE (win16_re:
+#: the MMSYSTEM waveOut device).  waveOutOpen now SUCCEEDS where the old
+#: stub reported MMSYSERR_BADDEVICEID, so from ~41M the game takes its
+#: _MciOutWave path (decode the 4-bit delta-PCM, prepare/write the buffer,
+#: poll for MM_WOM_DONE) instead of backing off: +4,634 instructions of real
+#: guest work, 9 effects played over the prefix.  Attribution checked by
+#: reverting the win16_re hunks — the run returns EXACTLY to the previous pin
+#: (45,102,443 / 50365479…, sound_log empty), so this move is that change and
+#: nothing else.  The whole-demo differential still MATCHES (both sides shift
+#: identically: 39/39 aligned checkpoints + the final state), which is what
+#: proves host audio never reaches guest state.
 PREFIX_LIMIT = 45_000_000
-PREFIX_END_INSTR = 45_102_443
-PREFIX_DIGEST = "50365479eb0e454d3bd82bd49a848d7c688efb7f73bdf31d3d6ca7b3cfce41d0"
+PREFIX_END_INSTR = 45_107_077
+PREFIX_DIGEST = "f9ad9c8b10413b76da5649fc40fde8777c999b75fd4d91c103104f0adccdda81"
 
 _have_image = (BOOT_DIR / "manifest.json").exists() and IR_PATH.exists()
 _have_graph = (GRAPH_DIR / "graph_manifest.json").exists()
