@@ -78,10 +78,12 @@ def _machine(args):
         # engine scripts/play_vmless.py runs; here it is driven through the
         # checkpoint harness for the masked-digest oracle comparison.
         import simant.vmless_boot as vb
-        m, _manifest, installed = vb.boot_strict(args.boot_image)
+        kw = {"lift_dir": args.lift_dir} if args.lift_dir else {}
+        m, _manifest, installed = vb.boot_strict(args.boot_image, **kw)
         sys.setrecursionlimit(200_000)
         print(f"[checkpoints] boot image: {len(installed)} lifted modules, "
-              f"poison armed, EXE-free load from {args.boot_image}")
+              f"poison armed, EXE-free load from {args.boot_image}"
+              + (f" (graph {args.lift_dir})" if args.lift_dir else ""))
         return m
     if args.from_snapshot:
         m = load_snapshot(args.from_snapshot, create_machine)
@@ -207,6 +209,12 @@ def main(argv=None) -> int:
                     help="run the STRICT machine: EXE-free load from this "
                          "data-only boot image, graph installed, interpreter "
                          "poison armed (scripts/play_vmless.py's engine)")
+    ap.add_argument("--lift-dir", metavar="DIR", default=None,
+                    help="with --boot-image, install the lifted graph from "
+                         "this directory instead of the default "
+                         "simant/lifted/graph (e.g. the CPUless-routed graph "
+                         "graph_cpuless; the boot image's poison is graph-"
+                         "independent, so one image serves either graph)")
     ap.add_argument("--mask-poison", metavar="BOOT_DIR", default=None,
                     help="record an additional per-checkpoint 'mdigest' with "
                          "the boot image's zeroed ranges masked -- the only "
