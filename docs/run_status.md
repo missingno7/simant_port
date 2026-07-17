@@ -1,5 +1,125 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.244) — the capture↔close FIXPOINT (generic dos_re) + the binary-wide CPUless census: two views, the pin bumped, both cold_nohooks gates byte-exact
+- **The generic graph-completeness improvement, landed in dos_re** (branch
+  `cpuless-composable-fixpoint` off origin/main aa6162b, commit **e67d060**).
+  `walk_closure` measured REACHABILITY; it never answered how much of the
+  reachable set is CPUless-**composable**, which is a second, COUPLED fixpoint
+  over the callee graph: a caller composes only when every callee it reaches —
+  near call, static far call, AND every observed dynamic-dispatch target — is
+  itself composable, and the dispatch targets are reached ONLY by following the
+  evidence captured at the caller's indirect sites.  New **`composable_closure`**
+  (`tools/cpuless_closure.py`, `--fixpoint`): condenses the reachable callee
+  graph into SCCs (iterative Tarjan) and promotes a component ALL-OR-NOTHING
+  once every edge leaving it lands on a composable target — the message-pump /
+  ant-sim dispatch clusters (a naive "compose when all callees compose" pass
+  DEADLOCKS on them) close atomically.  Resume-address coverage + the observed
+  runtime/static-only split carry over.  Regression test
+  `test_cpuless_closure_fixpoint.py` (4 cases): atomic SCC promotion, the
+  without-evidence differential (dispatch targets fall OUT of the closure),
+  blocked-by-callee tagging, resume coverage, static-only split.  **Convergence
+  is by construction** — the SCC condensation is a DAG, one reverse-topo pass IS
+  the fixed point (`converged: True`).  dos_re **679** green.
+- **The CAPTURE side (port), the actual missing half.**  `entry_probe.py`'s
+  docstring promised per-site dispatch evidence but only emitted `executed`.  It
+  now also captures **`indirect_sites.json`** — per NEAR-indirect site (`call
+  [..]`/2, `jmp [..]`/4) + ISR-chain far `jmp`/5, the resolved runtime target is
+  the VERY NEXT interpreted instruction, stashed in a single `pending` slot
+  (far-indirect CALLs /3 to API thunks excluded — their target is a Python hook,
+  not interpreted).  This is the FIRST runtime dispatch evidence ever captured
+  for SimAnt (dispatch entries were only ever derived statically).  Result over
+  cold_nohooks: **20 of 59 distinct dispatch sites fired, 82 site→target edges**
+  — feeds dos_re's `--dyn-evidence` gate and the fixpoint directly.  SimAnt has
+  **ZERO game-vectored INTs** (only platform int 21/2F), so vector-evidence is
+  empty — reported, not chased.
+- **The pin bumped + BOTH cold_nohooks gates byte-exact (mandatory
+  `--check-field mdigest`).**  Chain: dos_re e67d060 → win16_re **430ef7f**
+  (341 green) → simant_port (this).  cpuless_promote re-ran against the new pin:
+  **still 234 promoted, lint PASS** (aa6162b C-startup-bootstrap + 07726e0
+  de-SMC-far-chain don't touch SimAnt's reachable set — consistent with
+  cont.243).  Fresh interpreted oracle (`artifacts/oracle_cold.trace`, 40 cp,
+  demo ended) vs the strict boot image:
+  - **VMless graph: MATCH** — all 39 checkpoints + final, instr 199,619,366,
+    **mdigest 417cac5cd9aadb8c** (the exact cont.238/240/242 pin).
+  - **CPUless graph_cpuless: MATCH** — identical, same mdigest.
+  The changed dos_re files touch only the CPUless emitter/ABI/platform, never
+  the VMless literal emitter or the interpreter, so the byte-exact MATCH
+  confirms the whole pipeline is sound on the new pin without a redundant VMless
+  regen.
+- **The SECOND-demo question, settled with evidence.**  cold_nohooks (199.6M,
+  clean "demo ended") is the SOLE full-playthrough demo that replays cleanly
+  under the boot-image differential config.  `cold_nohooks2`/`cold_nohooks3`
+  (the longer cold recordings) both hit **`CallbackOverrun` under the pure
+  interpreter oracle itself** (callback 0100:2440 spins >20M steps at 430E:D1C7
+  / 275F:0A6F) — demo drift, not clean gates (wait-vs-symptom: the callback
+  polls for input the demo timeline no longer delivers; not a lift regression —
+  it desyncs under the interpreter with no lifting involved).  The
+  snapshot-anchored gameplay demos (`demo_004053` etc.) are hook-config-specific
+  ([[demos-are-hook-config-specific]]) and desync under the no-hooks boot-image
+  config.  So per the owner's allowance: ONE clean gate, used; both graphs pass
+  on it.
+- **View A — observed runtime closure (reproduced, `cpuless_wall_gap.json`).**
+  cold_nohooks closure = **597** functions; **85 cpuless-promoted + 132
+  manual-adapter + 366 literal-lift + 14 blocked (ALL indirect, 0 x87)**.  Rung
+  cascade reproduces cont.243 to the function: today 110 → +manual **+136** →
+  +frame **+100** → +cflow **+53** → +sp/+boundary +5 → +indirect **+81** → +x87
+  **+0** → +dispatch-cluster **+112** (atomic) = **597, wall CLOSES, 0
+  not-composable**.  x87 unblocks ZERO reachable.
+- **View B — binary-wide CPUless census (NEW, `cpuless_binary_census.json`,
+  `scripts/cpuless_binary_census.py`).**  All **1904** discovered functions, a
+  9-bucket partition (sum 1904, 0 unclassified):
+  ```
+    auto-cpuless-composable        320   (234 byte-exact today + 86 bottom-up)
+    manual-cpuless-override        309   (authoritative recovered/ bodies)
+    native-platform-replacement     20   (pure boundary thunks)
+    fail-loud-unsupported-shape    570   (own + via-callee shape; exact reason)
+    blocked-indirect-dispatch      684   (26 own far-indirect + transitive)
+    proven-runtime-dead              0   (no positive dead-path evidence)
+    proven-unreachable               0   (no dead island under the maximal roots)
+    likely-data-or-false-entry       1   (_DoInt3, ir-not-liftable)
+    unclassified                     0
+  ```
+  "Not observed" is NOT conflated with dead/unreachable — proven-dead/unreachable
+  demand affirmative evidence and honestly stay 0 (the maximal root set — call-
+  graph sources ∪ boundary heads ∪ observed — reaches every function; a single
+  demo cannot prove deadness).  Composable **TODAY 636 game functions** (strict
+  emitter gates), **IN PRINCIPLE 1130** (+ planned frame/control-flow shape
+  emitters; x87 & far-indirect still hard).  fail-loud top reasons:
+  leave-without-enter 184 (+106 via-callee), tail-dispatch 12 (+47), frame-pop 15
+  (+43), ret-n 5 (+36), x87 31 (+16).  Max dispatch SCC = **20** (the ant-sim
+  `_DoAntSim` command cluster).
+- **ABI metadata (the memoryless bridge): 1904/1904 coverage.**  Per function,
+  keyed by address: register inputs/outputs (candidate params/returns), mem
+  read/write side-effect flags, max stack use, direct + platform + observed-
+  indirect callees, ints, and the manual-recovery ABI (impl/ret/args/views/
+  callbacks) for the 309 overrides.  Surfaces exactly what
+  `dos_re/lift/cpuless.py` computes; the one KNOWN GAP is memory-RANGE
+  granularity (the analyzer records read/write booleans, not byte ranges) —
+  flagged as the next ABI-recovery item.
+- **Capability ranking for the next rung (dual criteria: observed-closure +
+  binary-wide/dos_re-reuse).**
+  1. **frame-shape + control-flow-shape emitters** (generic dos_re): observed
+     **+153** (100+53); binary-wide unblocks ~**500 of 570** fail-loud
+     (leave-without-enter 290, tail 59, frame-pop 58, ret-n 41, frame-clobber
+     26…).  Biggest dual lever, and pure emitter frame/control-flow-shape work
+     that generalises beyond SimAnt.
+  2. **manual direct-compose**: observed **+136** (largest single, reaches the
+     ant sim); binary-wide dissolves the manual boundary transitively.
+     Port-architectural (adaptgen), less dos_re-generic.
+  3. **far-indirect / dispatch composition** (generic dos_re): observed +81 plus
+     the **+112** atomic message-pump cluster (the SCC algorithm now EXISTS in
+     `composable_closure`; the remaining work is the far-indirect reg-3 bundle in
+     the emitter); binary-wide the LARGEST single class at **684**.
+     Register-indirect capture + resume-address closure generalise.
+  4. **x87** — deferred: **0** observed, 47 binary-wide.  Still last.
+- **Suites green per repo.**  dos_re 679 (+4 fixpoint), win16_re 341,
+  simant_port 2265 (2 script edits + gitlink + journal; generated
+  artifacts gitignored).  v0.1.0 dist/ + tag + `simant/recovered/` untouched.
+  Reproduce: `pypy scripts/entry_probe.py cold_nohooks` (observed +
+  indirect_sites) → `python scripts/cpuless_binary_census.py` (View B) →
+  `python scripts/cpuless_wall_gap.py` (View A) → the two `checkpoints.py
+  --check-field mdigest` differentials (VMless + `--lift-dir graph_cpuless`).
+
 ## 2026-07-17 (cont.243) — CPUless WALL-GAP measured: the runtime-reachable closure is 597 functions, x87 is DEFINITIVELY NOT in it, and the wall closes with NO new blocked-tier work
 - **The measurement, not the capstone.**  cont.242 left the play_cpuless wall
   (#46) blocked on an unknown: how much of the *reachable* closure the 234
