@@ -1,5 +1,94 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.243) — CPUless WALL-GAP measured: the runtime-reachable closure is 597 functions, x87 is DEFINITIVELY NOT in it, and the wall closes with NO new blocked-tier work
+- **The measurement, not the capstone.**  cont.242 left the play_cpuless wall
+  (#46) blocked on an unknown: how much of the *reachable* closure the 234
+  byte-exact promotions cover, and exactly what stands between here and a closed
+  wall.  cont.241 flagged `cpuless_closure --observed` couldn't run for lack of a
+  runtime trace.  This builds that trace and produces the ACCURATE map — no wall
+  is closed, no capability built (per scope).  Two new disposable tools; nothing
+  in `simant/recovered/`, dos_re, or win16_re touched.
+- **The runtime function-entry probe (task #44), `scripts/entry_probe.py`.**  A
+  cold_nohooks replay under the plain INTERPRETER (`create_machine` — no islands,
+  no graph, so EVERY guest instruction interprets) with a tight
+  `cpu.coverage_telemetry` that tests each executed address against the IR
+  function-entry set.  A boot-image/graph run would fire promoted functions as
+  HOOKS (never touching that telemetry), so the interpreter is exactly the right
+  engine for an execution-reachability probe.  Result: the pinned demo runs to
+  **instr 199,619,366** (identical to the cont.238/240 oracle) and **597 of 1904
+  functions execute** — the runtime-reachable closure, sharper than the static
+  near-call estimate (~472, which under-counts by missing far/indirect edges).
+  Output `artifacts/observed.json` is exactly `cpuless_closure --observed`'s input.
+- **`cpuless_closure --observed` runs (deliverable #2).**  From the 597 observed
+  roots the tool's static near+far walk reaches 1015; runtime frontier **512**,
+  static-only 380.  The 512 = **366 literal-lift (reasons match the promote census
+  exactly) + 146 "not-promoted"** — and those 146 are precisely the 132 manual +
+  14 blocked the tool CANNOT see as CPUless (the mis-key cont.242 predicted:
+  adapters use symbolic names, the manual bodies aren't `func_CCCC_IIII` in
+  `native/cpuless`).  `scripts/cpuless_wall_gap.py` corrects that seam.
+- **THE WALL-GAP MAP (`artifacts/cpuless_wall_gap.json`), reachable closure = 597:**
+  - **cpuless-promoted (pure auto body already): 85** — of the 234 total, 85 are
+    reachable; the other 149 promotions serve unreached code.
+  - **manual-adapter: 132** — hand-recovered pure bodies (`simant/recovered/`)
+    reached via a CPU-ABI adapter.  The BODY is CPUless; the WALL gap is the
+    adapter layer (it marshals cpu-state), so each must be composed DIRECTLY as a
+    CPUless callee.  Not a body to write — a composition seam to build.
+  - **literal-lift (the real work-list): 366**, by strict-gate refusal:
+    contains-call 309, leave-without-enter 31, frame-pointer-pop-without-save 8,
+    frame-restore-without-establish 5, tail-dispatch-at-nonzero-depth 4,
+    tail-dispatch-with-unbalanced-stack 2, boundary-or-dispatch-address 2,
+    ret-n-stack-args 2, frame-pointer-clobbered 2, sp-as-data 1.  The 309
+    contains-call are calls-only bodies that are already gate-clean and compose
+    bottom-up as their callees promote (NOT 309 units of work).
+  - **blocked: 14 — ALL indirect-or-far-transfer, ZERO x87.**
+- **x87 IN THE REACHABLE CLOSURE?  DEFINITIVELY NO (0 functions).**  Of the 31
+  x87-blocked functions, **0 execute** in cold_nohooks; 1 (`_AdjustWndMinMax`, the
+  boot-wndproc x87 the hypothesis named) is one static near-call hop from an
+  observed function but the WM_GETMINMAXINFO path never fires; 4 appear only in
+  the deeper static-only reach.  The reachable sound functions (`_myBeginSound`,
+  `_myBeginSong`, `_MciMessage`, `_MciOutWave`) ARE in the closure but are blocked
+  by **indirect dispatch** (MCI/wave through function pointers), not x87 — the
+  digitized decode is integer delta-PCM (cont.237), no x87.  **x87-in-CPUless
+  (#42) unblocks ZERO reachable functions and stays deferred out of the closure.**
+- **THE RUNG PLAN (bottom-up cascade over the 597, ranked by reachable functions
+  unblocked).**  Modeled as a composability fixpoint under the `--observed` wall
+  rule (a call whose target never ran = a fail-loud stub, not a blocker):
+  ```
+    capability added                  composable  marginal
+    today (auto, --observed on)              110      +110
+    +manual direct-compose                   246      +136   <- biggest lever
+    +frame-shape emitter                     346      +100
+    +control-flow-shape emitter              399       +53
+    +sp-as-data                              400        +1
+    +boundary/dispatch entry                 404        +4
+    +indirect/dispatch composition           485       +81
+    +x87 (deferred)                          485        +0   <- unblocks nothing
+    +dispatch-cluster (message-pump)         597      +112   <- atomic recursive
+    closure target                           597               cluster
+  ```
+  (Note: "today" is 110 not 85 because the fixpoint assumes `cpuless_promote
+  --observed` is enabled — the dead-call-stub already lifts the standalone base
+  85→110; that flag is not yet on in the byte-exact graph.)  The final 112 are a
+  single mutually-recursive component (MAINWNDPROC / WINMAIN / MYTIMERFUNC /
+  _DoEvent / _DoMouse / _UpdateWindows and their case_* jump-table arms):
+  VERIFIED that **0 of the 112 bottom out in a genuinely unclean callee** — they
+  are all body-clean and blocked ONLY by each other, so the dos_re promoter's
+  atomic dispatch-cluster / self-recursion composition closes the whole remainder.
+- **The bottom line: the wall CAN close over the reachable closure with NO new
+  blocked-tier (x87) capability.**  Ranked capstone work-list: (1) manual-body
+  direct composition (+136, the largest and the one that reaches the ant sim),
+  (2) the strict-gate frame/control-flow emitter variants (+154 combined),
+  (3) indirect/dispatch composition (+81, incl. the reachable sound path),
+  (4) the message-pump dispatch-cluster atomic composition (+112, the recursive
+  core).  Plus turning on `cpuless_promote --observed` (dead-call stubbing) for
+  the standalone corpus.  x87 is out.
+- **Suites green** (simant_port 2265; no source touched — two new `scripts/`
+  tools + gitignored artifacts only).  No dos_re change was needed: `--observed`
+  consumed the trace as-is (its schema already matches `entry_probe`'s output).
+  Reproduce: `pypy scripts/entry_probe.py cold_nohooks --out artifacts/
+  observed.json` then `python scripts/cpuless_wall_gap.py` (+ optionally the
+  `cpuless_closure --observed` cross-check with the observed set as roots).
+
 ## 2026-07-17 (cont.242) — CPUless (M4) THIRD SLICE: plat.farcall — the platform far-call gateway; 234 promoted, byte-exact
 - **The seg-0060 frontier is DISSOLVED.** cont.241 stalled with 1203
   calls-only refusals bottoming out in far-calls to the API import-thunk
