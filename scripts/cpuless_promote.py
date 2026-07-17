@@ -95,10 +95,22 @@ def manual_para_keys(map_doc: dict, seg_base: dict[int, str]) -> set[str]:
     return out
 
 
-def promote_entries(census: dict, manual: set[str]) -> list[str]:
-    """leaf ∩ ¬manual — the mechanical-promotion candidates."""
-    leaf = {k.upper() for k in census["tiers"]["leaf"]}
-    return sorted(leaf - manual)
+def promote_entries(census: dict, manual: set[str],
+                    tiers: tuple[str, ...] = ("leaf",)) -> list[str]:
+    """(⋃ tiers) ∩ ¬manual — the mechanical-promotion candidates.
+
+    The leaf slice promotes ``leaf ∩ ¬manual``; the calls-only widening adds
+    the ``calls-only`` tier, which the dos_re promoter composes BOTTOM-UP over
+    the near/far call DAG (its fixpoint promotes a caller only once every
+    direct callee already has a CPUless contract).  The manual corpus is always
+    excluded — adaptgen owns those bodies ([[manual-recovery-is-authoritative]])
+    and they stay literal lifts in graph_cpuless, so a candidate that calls one
+    naturally refuses ``call-abi-composition`` (an honest frontier item, not a
+    parallel body)."""
+    cand: set[str] = set()
+    for t in tiers:
+        cand |= {k.upper() for k in census["tiers"].get(t, [])}
+    return sorted(cand - manual)
 
 
 def route_graph(from_dir: Path, graph_dir: Path, adapter_dir: Path,
@@ -178,6 +190,12 @@ def main(argv=None) -> int:
                     help="@FILE of boundary-head CS:IP (paragraph) addresses "
                          "whose functions must not promote")
     ap.add_argument("--census-out", default=str(DEFAULT_CENSUS_OUT))
+    ap.add_argument("--tiers", default="leaf,calls-only",
+                    help="comma-separated census tiers to feed the promoter "
+                         "(default: leaf,calls-only — the calls-only widening; "
+                         "'leaf' alone reproduces the leaf slice). The promoter "
+                         "composes bottom-up, so extra tiers only widen the "
+                         "reachable set, never weaken the gate.")
     ap.add_argument("--dry-run", action="store_true",
                     help="run the promotion census only; write no files")
     args = ap.parse_args(argv)
@@ -186,14 +204,18 @@ def main(argv=None) -> int:
     census = json.loads(Path(args.census).read_text(encoding="utf-8"))
     map_doc = json.loads(Path(args.map).read_text(encoding="utf-8"))
 
+    tiers = tuple(t.strip() for t in args.tiers.split(",") if t.strip())
     seg_base = para_of_seg(ir)
     manual = manual_para_keys(map_doc, seg_base)
-    entries = promote_entries(census, manual)
-    leaf_n = len(census["tiers"]["leaf"])
-    print(f"leaf tier: {leaf_n}; manual-recovered (adaptgen owns): "
-          f"{len(manual & {k.upper() for k in census['tiers']['leaf']})} "
-          f"leaf∩manual; CPUless-promotion candidates (leaf∩¬manual): "
-          f"{len(entries)}")
+    entries = promote_entries(census, manual, tiers)
+    cand_all: set[str] = set()
+    for t in tiers:
+        cand_all |= {k.upper() for k in census["tiers"].get(t, [])}
+    tier_sizes = ", ".join(f"{t}={len(census['tiers'].get(t, []))}"
+                           for t in tiers)
+    print(f"tiers [{tier_sizes}]; manual-recovered (adaptgen owns): "
+          f"{len(manual & cand_all)} ∩manual; CPUless-promotion candidates "
+          f"(⋃tiers ∩ ¬manual): {len(entries)}")
 
     rec_dir = Path(args.recovered_dir)
     graph_dir = Path(args.graph_dir)

@@ -1,5 +1,98 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.241) — CPUless (M4) SECOND SLICE: the calls-only tier — bottom-up call composition promoted byte-exact (166 total, +10 composed) — and the frontier is now the seg-0060 platform far-call wall
+- **The composition mechanism, confirmed.**  dos_re's `cpuless_promote`
+  ALREADY composes the calls-only tier: a FIXPOINT over the near/far call DAG
+  (tier 4) promotes a caller only once every direct callee already carries a
+  CPUless contract, and the emitted caller body imports the promoted callee and
+  calls it as a PLAIN PYTHON function — e.g. `func_430e_8e58` opens with
+  `from simant.native.cpuless.func_275f_042c import func_275f_042c` and inlines
+  `_o, _c = func_275f_042c(mem, _df=..., ax=ax, ...)`, threading the callee's
+  outputs dict `_o` and its compat `_c` (exit-flags + `owns_time` cost) back
+  into the caller.  Carrier-free composition — no CPU, no graph re-entry.  So
+  the port wrapper only had to WIDEN the candidate set: `scripts/
+  cpuless_promote.py` grew `--tiers` (default `leaf,calls-only`) and
+  `promote_entries` now yields `(⋃tiers) ∩ ¬manual`; the promoter does the
+  bottom-up ordering itself.
+- **The slice: 166 promoted, +10 over the leaf baseline.**  Candidates
+  `(leaf 419 ∪ calls-only 1417) ∩ ¬manual(309) = 1527`; fixpoint reaches in 3
+  rounds → **166 promotable**.  Of these **156 are leaf∩¬manual** (the leaf
+  baseline MOVED 145→156 purely from the dos_re pin bump 74fe1eb→e93f71e — the
+  upstream DAA/bp-frame emitter work lets 11 more leaves pass the strict frame
+  gate; orthogonal to this slice) and **+10 are calls-only∩¬manual COMPOSED**
+  — the new thing: `0E99:60CE, 275F:0DED, 275F:136C, 275F:37C2, 430E:8E58,
+  430E:DC5E, 430E:E4E8, 430E:EB96, 430E:EC0C, 430E:EC8A`.  By the (triage-grade)
+  domain classifier **6 of the 10 are CORE simulation**, 3 runtime, 1
+  presentation — the composition reaches into the ant sim, not just C-runtime.
+- **THE GATE HOLDS, byte-exact.**  Fresh interpreted oracle vs the strict
+  boot-image run with all 166 CPUless adapters installed (`checkpoints.py
+  --api-aligned --mask-poison artifacts/vmless_boot --boot-image
+  artifacts/vmless_boot --lift-dir simant/lifted/graph_cpuless cold_nohooks
+  --check-field mdigest`): **all 39 checkpoints AND the final state identical —
+  final instr 199,619,366, mdigest 417cac5cd9aadb8c** — the exact pin
+  (cont.238/240).  So interprocedural composition (caller inlining a promoted
+  callee + `owns_time` accounting) shifts the timeline by ZERO instructions and
+  the whole-machine state by ZERO bytes.  The CPUless wall (`lint_cpuless`, 169
+  modules): **PASS** — the composed bodies import only sibling recovered modules.
+- **THE FRONTIER: seg-0060, the platform far-call wall (biggest lever).**  Of
+  the 1527 candidates, **1203 refuse `contains-call`** — a callee lacks a
+  CPUless contract.  Categorized against the call graph: **ALL 175 distinct
+  not-in-IR call targets live in NE segment 0060** (the import / inter-segment
+  thunk table), hit at **1226 call sites** — nearly every non-trivial
+  calls-only function far-calls seg 0060 (the API/platform boundary), so it
+  cannot compose until the emitter models a PLATFORM FAR-CALL contract
+  (a `plat.farcall`, analogue of the leaf slice's `plat.intr`).  Cascade
+  measurement (a caller unblocks when all callees compose): seg-0060 composed
+  → **+237**; the manual-authoritative boundary → +105; both → +361; +blocked
+  tier (x87/indirect) → +433.  The 485 pure-`transitive-contains-call`
+  refusals all bottom out in one of these.  The other refusals are the SAME
+  leaf strict-gate frame-shape variants as cont.240 (leave-without-enter 107,
+  frame-pointer-clobbered 21, frame-restore-without-establish 11, tail-dispatch
+  9+2, ret-n-stack-args 3, sp-as-data 3, mixed-return-kinds 1, op-6B-grp3 1).
+- **Why the manual boundary is a WALL, not a bug.**  The ~172 calls-only∩manual
+  (137 leaf∩manual too) stay excluded — adaptgen owns them
+  ([[manual-recovery-is-authoritative]]) and they remain LITERAL lifts in
+  graph_cpuless.  They CANNOT compose into the byte-exact gate even in
+  principle: the manual corpus deliberately stubs presentation effects and the
+  adaptgen adapters do not preserve virtual time (+1 per dispatch), so inlining
+  one into a CPUless caller would break both the mdigest and the instruction
+  count.  Generating a parallel auto-body for them is forbidden.  So the manual
+  track (pure-Python CPUless via adaptgen) and the byte-exact auto-promoted
+  track are two fidelity regimes that do not merge — this is architectural, and
+  it is the ceiling for calls-only until seg-0060 is modeled.
+- **Ant-simulation coverage (triage-grade).**  Of **1113 core functions**:
+  **64 core auto-promoted** (byte-exact graph_cpuless) + **284 core
+  manual-recovered** = **348 core CPUless by either route ≈ 31.3%**; 765 core
+  remain, gated on the seg-0060 far-call wall and x87.  The core sim is
+  carrier-free about a third of the way, mostly via the hand-recovered corpus,
+  now plus 6 freshly-composed calls-only sim functions in the byte-exact graph.
+- **No dos_re change this slice.**  There was no SMALL composition capability
+  to fix — the seg-0060 platform far-call is a substantial new emitter
+  capability (per-thunk platform contracts), so per the scope rule it is
+  REPORTED as the frontier, not attempted.  dos_re/win16_re untouched; the only
+  edit is `scripts/cpuless_promote.py` (the `--tiers` widening).  Generated
+  bodies (`simant/native/cpuless/`, 166) + routed graph
+  (`simant/lifted/graph_cpuless/`) are disposable/gitignored; `simant/
+  recovered/`, v0.1.0 dist/+tag untouched.
+- **Suites green.**  simant_port **2265**; dos_re **650** / win16_re **341**
+  unchanged at the pin (no submodule edit).
+- **Note: `cpuless_closure --observed` needs a runtime-executed trace the port
+  does not yet emit** (only a STATIC callgraph probe exists,
+  `simant/probes/callgraph.py`); coverage above was measured statically over
+  the recovery IR instead.  A runtime function-entry probe (feeding
+  `--observed`) is a small future tooling item to split the core frontier into
+  runtime-reachable vs static-only.
+- **Next step.**  The clear lever is the **seg-0060 platform far-call
+  composition** capability in the CPUless emitter (a `plat.farcall` contract,
+  mirroring `plat.intr`) — it unblocks +237 immediately and is the gateway to
+  the deep calls-only sim tier; then x87 (deferred, #42); then Stage 3
+  (memoryless / DOS-layout dissolution).  Reproduce: `python
+  scripts/cpuless_promote.py` (regenerate 166), save the oracle
+  (`checkpoints.py --api-aligned --mask-poison artifacts/vmless_boot
+  cold_nohooks --save O.trace`), then differential with `--boot-image
+  artifacts/vmless_boot --lift-dir simant/lifted/graph_cpuless ... --check
+  O.trace --check-field mdigest`.
+
 ## 2026-07-17 (cont.240) — CPUless (M4) FIRST VERTICAL SLICE: the leaf tier promoted byte-exact — 145 recovered bodies + adapters, whole-demo differential GREEN — and it found a real dos_re INT-flags bug
 - **The slice, end to end.**  New `scripts/cpuless_promote.py` (the M4 analogue
   of the M2b `adaptgen.py`): reads the promotion census (`artifacts/
