@@ -1,5 +1,72 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.245) — CPUless FRAME-SHAPE emitter (generic dos_re): a fused `leave` established by a hand-rolled `push bp; mov bp,sp` — promoted 234→339 (+105), binary composable-today 636→780 (+144), byte-exact
+- **The capability (generic dos_re), landed on branch `cpuless-frame-hand-rolled-leave`
+  off origin/main 747a253, commit `90028a3`.** `leave` is the one-byte encoding of
+  `mov sp,bp; pop bp`, and a compiler freely pairs a hand-rolled `push bp; mov bp,sp`
+  prologue with a `leave` epilogue instead of the atomic `enter`. The CPUless frame
+  gate refused that whole idiom `leave-without-enter`: `_check_frame_pointer`'s SHALLOW
+  establish check accepted only `enter` (0xC8) — even though the DEEP prover
+  `_prove_bp_framebase_at_teardowns` already treats `mov bp,sp` as a valid establish
+  (the two were inconsistent). The shallow check now accepts the hand-rolled establish
+  for a fused leave, but ONLY together with its matching `push bp` (leave's own pop
+  consumes a saved word, so a bare `mov bp,sp` with no push is not a balanced frame).
+  Pure Borland/MSC/Watcom frame idiom — no game specifics. The depth walker needed NO
+  change: a fused leave resets to the entry depth (0) regardless of establish form.
+- **Differential regression `test_cpuless_hand_rolled_leave` (dos_re):** the composed
+  CPUless body is exec'd and diffed byte-for-byte — WHOLE register file + stack memory
+  — against stepping the identical bytes through the interpreter (`CPU8086`), over a
+  synthetic `push bp; mov bp,sp; sub sp,4; <locals>; leave; ret`. FAILS on the old gate
+  (2 of 5 tests raise `leave-without-enter`, verified via stash). Three negative guards
+  pin the soundness: a bare `mov bp,sp` (no push), an alt-entry epilogue fragment
+  (`leave; ret`, its frame base in the container), and the unchanged `enter` path.
+- **SimAnt promoted: 234 → 339 (+105).** The 86 own hand-rolled-leave functions
+  unblock, plus their transitive calls-only callers compose bottom-up (the fixpoint
+  reaches in 4 rounds). `leave-without-enter` refusals in the 1527-candidate promote
+  census: 184-era → 130 remaining (the 98 alt-entry epilogue fragments — `leave; retf`
+  jump-table arms whose frame base lives in the container — plus a few via-callee).
+  lint_cpuless **PASS** (342 modules; recovered corpus reaches no CPU).
+- **Binary-wide census (View B): composable TODAY 636 → 780 (+144).** Buckets:
+  auto-cpuless-composable 320→**459**, fail-loud-unsupported-shape 570→**449** (own
+  leave-without-enter 184→122), blocked-indirect-dispatch 684→**666** (−18: some
+  via-callee:indirect functions composed once their frame-blocked callees promoted).
+  composable IN PRINCIPLE stays 1130 — my fix REALISES 144 of the previously-"planned
+  frame emitter" functions into the today-reach (in-principle already assumed it built).
+- **Byte-exact gate: MATCH (mandatory `--check-field mdigest`).** Fresh interpreted
+  oracle regenerated under pypy (`artifacts/oracle_fresh.trace`, 40 cp) — byte-identical
+  to `oracle_cold.trace` (0 mdigest diffs), confirming the emitter-only change leaves
+  the interpreter and VMless path untouched. Candidate = boot-image + graph_cpuless (339
+  adapters) replay of cold_nohooks: **all 39 checkpoints + final MATCH, instr
+  199,619,366, mdigest 417cac5cd9aadb8c** — the exact cont.238/240/242/244 pin. A
+  divergence would have been a real emitter bug; there was none.
+- **Capability #1 (register/dispatch-indirect) TRIAGED, not the emitter-bundle case the
+  census framing assumed.** The near/register-indirect dispatch is ALREADY emitted
+  (`_is_dyn`: CALL_IND/JMP_IND reg /2,/4, mod=3 register form included, through the
+  `_dyn` runtime registry). The 35 own `indirect-or-far-transfer` blockers are ALL
+  FF /3 FAR-indirect calls through function pointers in stack locals (`call far [bp-N]`)
+  — the sound-driver dispatch tables (`_myBeginSound`, `_MciMessage`, `_snd_Install`,
+  `_myBeginSong`, `_PaintStuff`…), whose targets are win16 API/MCI **Python hooks**, not
+  game code. They carry ZERO capture evidence (indirect_sites.json deliberately excludes
+  /3 far-indirect-to-thunk sites — the target is a hook, never interpreted), so there is
+  no resolved target set to compose through. This is the genuinely-hard
+  platform-far-indirect case (a `plat.farcall`-through-a-pointer contract + capture
+  inclusion), NOT the "analysis-built, bundle-missing" easy win — reported as the
+  frontier per scope discipline, not forced.
+- **Chain (NOT pushed — owner reviews + pushes dos_re→win16_re→simant_port):** dos_re
+  **90028a3** → win16_re **4b40617** (Bump dos_re) → simant_port (this). Suites green
+  per repo: dos_re **703** (+5 hand-rolled-leave), win16_re **341**, simant_port
+  **2265**. Watch: stray `pynuked_opl3/` untracked gitlink in dos_re working tree — added
+  files explicitly, never `-A`. `simant/recovered/`, v0.1.0 dist/+tag untouched;
+  generated `simant/native/cpuless/` + `graph_cpuless/` disposable/gitignored.
+- **Next highest-leverage rung toward a fully-CPUless binary.** (1) **control-flow-shape
+  emitter** (+~100 in-principle): tail-dispatch-at-nonzero-depth (23 own + 79 via) +
+  ret-n-stack-args/retf-N (6 own + 39 via). (2) the residual **frame variants** —
+  frame-pointer-pop-without-save (15) / frame-pointer-clobbered (9) ride the deep prover
+  on bp-scratch joins; frame-restore-without-establish (11) are alt-entry epilogue
+  fragments needing container/dispatch-cluster composition, not a standalone gate fix.
+  (3) **manual direct-compose** (+136 observed, reaches the ant sim). (4) far-indirect /
+  platform-far-indirect (the 35 sound path) + x87 (0 reachable, deferred).
+
 ## 2026-07-17 (cont.244) — the capture↔close FIXPOINT (generic dos_re) + the binary-wide CPUless census: two views, the pin bumped, both cold_nohooks gates byte-exact
 - **The generic graph-completeness improvement, landed in dos_re** (branch
   `cpuless-composable-fixpoint` off origin/main aa6162b, commit **e67d060**).
