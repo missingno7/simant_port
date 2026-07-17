@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.242) — CPUless (M4) THIRD SLICE: plat.farcall — the platform far-call gateway; 234 promoted, byte-exact
+- **The seg-0060 frontier is DISSOLVED.** cont.241 stalled with 1203
+  calls-only refusals bottoming out in far-calls to the API import-thunk
+  segment. New generic dos_re capability **`plat.farcall`**
+  (`dos_re/lift/emit_cpuless.py` + `platform.py`, commit dos_re 933cd7c on a
+  branch off the upstream tip): a `CALL_FAR` into a declared platform-boundary
+  segment emits `plat.farcall(seg, off, regs, argbytes, anchor)` through the
+  CPU-free platform seam instead of refusing. Contract (per-slot pascal
+  argbytes, reg in/out, clobbers, SP-cleanup, DYNAMIC service-reported cost)
+  handed in as DATA — dos_re stays boundary-segment-agnostic. Differential
+  regression test: composed body == interpreter byte-for-byte.
+- **SimAnt wiring** (`scripts/cpuless_promote.py`): `build_plat_farcalls`
+  derives the per-slot argbytes straight off the win16 api registry (the same
+  number `ret_far` pops — a win16 fact, nothing game-specific); a raw-register
+  API or an unimplemented slot gets NO contract → the far-call REFUSES
+  `platform-farcall-contract-unknown` (honest frontier, never a guessed count).
+- **Result: 234 CPUless-promoted** (was 166; plat.farcall + the 8 upstream
+  cpuless-emitter commits it rebased onto — 3-op imul, cs-access fix, INT 13h,
+  runtime-dead stub, resume-address, bp-scratch). CPUless wall `lint_cpuless`
+  PASSES (recovered corpus reaches no CPU). Byte-exact gate GREEN — the
+  234-adapter graph_cpuless replays cold_nohooks identical to the oracle (all
+  39 checkpoints + final, mdigest 417cac5c…). VMless graph re-verified on the
+  same pin (boot sha 9ec8beb2, MATCH).
+- Chain: dos_re 933cd7c → win16_re f543678 → simant_port (this). Process
+  notes: the killed plat.farcall agent's work was ~95% done (1 stale
+  source-text test assertion re a fixed→dynamic cost, corrected); rebased over
+  active upstream (2 additive param conflicts resolved); a stray `pynuked_opl3`
+  gitlink caught+removed before the dos_re push.
+- Next toward the **CPUless hard wall** (play_cpuless, #46): the reachable-
+  closure frontier + x87-if-reached (#42) + indirect/dispatch, then the runner
+  + runtime wall + `lint_cpuless --root`.
+
 ## 2026-07-17 (cont.241) — CPUless (M4) SECOND SLICE: the calls-only tier — bottom-up call composition promoted byte-exact (166 total, +10 composed) — and the frontier is now the seg-0060 platform far-call wall
 - **The composition mechanism, confirmed.**  dos_re's `cpuless_promote`
   ALREADY composes the calls-only tier: a FIXPOINT over the near/far call DAG
