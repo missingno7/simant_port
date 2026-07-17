@@ -232,6 +232,20 @@ def main(argv=None) -> int:
 
     if args.check:
         base = json.loads(Path(args.check).read_text())
+        # Footgun guard: a poisoned boot-image run zeroes the code partition
+        # that an EXE-full oracle keeps, so the UNMASKED `digest` differs at
+        # EVERY checkpoint by the poison region alone — a spurious "divergence"
+        # that is not a state difference.  The meaningful field for such a run
+        # is `mdigest` (poison masked).  If the baseline carries mdigest but the
+        # comparison is left on the default `digest`, say so unmistakably.
+        base_has_mdigest = any(
+            "mdigest" in c for c in base.get("checkpoints", ()))
+        if (args.boot_image or base_has_mdigest) and args.check_field == "digest":
+            print("[checkpoints] WARNING: comparing the UNMASKED `digest` while "
+                  "the poison partition is zeroed on one side — this will report "
+                  "a spurious divergence at the first checkpoint (the code "
+                  "region, not game state).  Pass --check-field mdigest for the "
+                  "masked whole-demo differential.")
         if (base.get("interval") != args.interval
                 or base.get("hooks") != args.hooks
                 or base.get("api_aligned", False) != args.api_aligned):

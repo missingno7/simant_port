@@ -1,5 +1,64 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-17 (cont.238) — the dos_re a2ca7aa bump does NOT regress the VMless graph: the "divergence at checkpoint 0" was a CHECK-FIELD artifact, not a state difference; the whole-demo masked differential is byte-exact GREEN
+- **The report was: the ce620ab→a2ca7aa dos_re bump (35 commits, the mature
+  CPUless emitter) flipped the whole-demo differential — DIVERGED at checkpoint
+  0 (~instr 5,000,059), oracle `153e16d0…` vs lifted `17c6448d…`, "same
+  instruction count, so a genuine state difference."  Triaged lifter-first;
+  bisect deferred until the divergence was actually localized.  It never
+  localized — because there is no divergence.**
+- **ROOT CAUSE: the repro compared the WRONG digest field.**  The gate is
+  `checkpoints.py --api-aligned --mask-poison … --boot-image …`, and the boot
+  image ZEROES the poison partition (the ~331 KB of code emitted as lifted
+  functions) while the interpreted oracle keeps the real EXE code bytes there.
+  The correct differential compares `mdigest` — the digest with the manifest's
+  poison ranges masked — which is exactly the field the WALL RUN and v0.1.0
+  always used (cont.233/237).  The repro omitted `--check-field mdigest`, so it
+  compared the UNMASKED `digest`, which by construction differs at EVERY
+  checkpoint (poisoned code vs real code).  The "153e16d0 vs 17c6448d" is
+  literally `oracle.digest` vs `lifted.digest`, and `lifted.digest ==
+  oracle.mdigest == 17c6448d` because the boot image already carries zeros where
+  the mask zeroes.  It reported checkpoint 0 only because that is the FIRST
+  checkpoint; the plain-`digest` comparison mismatches at all 40 and CANNOT
+  match on any pin, old or new.
+- **THE CORRECT GATE, on a2ca7aa: byte-exact MATCH.**  Fresh interpreted oracle
+  (`--mask-poison artifacts/vmless_boot cold_nohooks`) vs the strict boot-image
+  run (`--boot-image artifacts/vmless_boot`), `--api-aligned --check-field
+  mdigest`: **all 39 checkpoints AND the final state identical** — final instr
+  **199,619,366**, mdigest **417cac5cd9aadb8c**.  Per-checkpoint tally: 40/40
+  mdigest matches, 0/40 plain-digest matches (the expected poison signature).
+- **Stronger than an alignment argument.**  mdigest masks ONLY the code
+  partition (2410 declared instruction runs + 2362 code-as-data runs); DGROUP,
+  heap, stack and every window surface are UNMASKED — so any emitter behaviour
+  change reachable in the demo would surface as a data-state mdigest divergence
+  somewhere in 199M instructions.  None does.  And the final instruction count
+  **199,619,366 is byte-identical to the old-pin ce620ab differential**
+  (cont.237): the a2ca7aa emitter/interpreter changes (xlat CS-override, boundary
+  heads as re-entry points, INT re-entry, de-SMC, stuck-loop detection, 80186
+  frame ops) do not shift this demo's timeline by a single instruction.
+- **Classification: none of emitter-bug / stale-facts / interp-inconsistency —
+  no defect.**  The lifter-first triage terminates cleanly: the construct under
+  suspicion (the 8 prime-suspect commits) never produces an observable
+  difference on cold_nohooks.  No dos_re change, no simant facts change, no
+  boundary-head regen needed.  `simant/facts/boundary_heads.txt` and the graph
+  regenerated on a2ca7aa (irgen→liftemit→liftlink→adaptgen→boot image: VMless
+  wall HOLDS, 0 interp_one, 1903 liftable, poison 331358 bytes/2410 runs
+  unchanged) are correct as-is.
+- **Green footing for CPUless.**  The a2ca7aa graph is verified byte-exact over
+  the whole demo, so the pin-bump chain (dos_re ce620ab→a2ca7aa, win16_re pin,
+  simant_port pin) can land on a clean differential.  No artifacts committed
+  (graph/boot-image/traces are gitignored); v0.1.0's dist/ and tag untouched.
+- **Reproduce the correct gate** (fast oracle+boot-image, all under pypy):
+  ```
+  pypy scripts/checkpoints.py --api-aligned --mask-poison artifacts/vmless_boot \
+       cold_nohooks --save ORACLE.trace
+  pypy scripts/checkpoints.py --api-aligned --mask-poison artifacts/vmless_boot \
+       --boot-image artifacts/vmless_boot cold_nohooks \
+       --check-field mdigest --check ORACLE.trace
+  ```
+  The `--check-field mdigest` is load-bearing: without it the harness compares
+  the unmasked digest and reports a poison-region "divergence" that is not one.
+
 ## 2026-07-17 (cont.237) — the digitized sound effects are AUDIBLE: the MMSYSTEM waveOut device, completed on the VIRTUAL clock (win16_re)
 - **Owner request: "Could you make sounds working?"  They do now.**  The SFX
   path was silent because `waveOutOpen` was a deliberate stub returning
