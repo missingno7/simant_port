@@ -47,7 +47,7 @@ from win16.vmsnap import digest  # noqa: E402
 
 #: The standalone-release version (scripts/deploy_vmless.py packages this
 #: runner; the deploy and its smoke tests read the constant from here).
-VMLESS_RELEASE = "0.1.0-pre"
+VMLESS_RELEASE = "0.1.0"
 
 
 def banner(manifest: dict, installed: dict, *, exe_present: bool,

@@ -483,11 +483,11 @@ through a relocated pointer, not a taggable far call) yet dispatches at
 runtime — the instrumented run sees what static analysis cannot.
 Report: `artifacts/api_coverage.json` (gitignored, regenerable).
 
-## Standalone pre-release (deploy_vmless)
+## Standalone release (deploy_vmless)
 
 `scripts/deploy_vmless.py` packages the strict runner as a self-contained
-distribution — **v0.1.0-pre** (`VMLESS_RELEASE` in `scripts/play_vmless.py`,
-printed in the runner banner):
+distribution — **v0.1.0**, the first public release (`VMLESS_RELEASE` in
+`scripts/play_vmless.py`, printed in the runner banner):
 
 ```
 python scripts/deploy_vmless.py         # dist/simant_vmless/ + isolated smoke test

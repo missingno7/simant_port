@@ -144,8 +144,8 @@ if __name__ == "__main__":
 '''
 
 README = """\
-SimAnt for Windows — VMless port (standalone pre-release {release})
-===================================================================
+SimAnt for Windows — VMless port (standalone release {release})
+===============================================================
 
 A byte-exact source reconstruction of Maxis SimAnt for Windows (1991), running
 as recovered code on a Python Win16 OS layer — no emulator interpretation, no
@@ -193,11 +193,16 @@ Verify the walls (optional)
 replays a recorded session headlessly and must end with both
 "EXE-independence wall: HOLDS" and "VMless wall: HOLDS".
 
-Known limitations (pre-release {release})
------------------------------------------
-* Pre-release: expect rough edges.  Report issues WITH the console output —
-  every failure is designed to be loud and specific (a console window stays
-  attached for exactly that reason).
+Known limitations (release {release})
+-------------------------------------
+* First public release: expect rough edges.  Report issues WITH the console
+  output — every failure is designed to be loud and specific (a console window
+  stays attached for exactly that reason).
+* A borderless popup (double-click in a map view) draws behind its owner
+  window.  The popup itself works and dismisses correctly.
+* Recovered from ONE exact build of SIMANTW.EXE
+  (sha256 538fed3f0fd60a6528a5e5b20990361ac4d274c58266a81e71c24f751612589d).
+  Your data files come from your own copy; the recovered code is this build's.
 * Only the literal lifted-graph flavor ships; the routed-adapter flavor
   (readable recovered source routed through named state) is a separate build
   and is not included yet.
