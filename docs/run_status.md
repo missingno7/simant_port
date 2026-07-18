@@ -1,5 +1,138 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.247) — MANUAL DIRECT-COMPOSE: the unified override graph (generic dos_re seam + carrier-free shim) — 166 hand-recovered bodies compose as DIRECT CPUless overrides, composed 402→571; the override graph is BLOCKED on virtual-time, pinned gate untouched and green
+- **The architecture landed: one graph, address-keyed, `implementation =
+  overrides.get(addr, generated[addr])`.**  Until now the 309 hand-recovered
+  bodies were reachable only through `scripts/adaptgen.py`'s **CPU-carrier**
+  adapter (`def adapter(cpu):` reading `cpu.s`/the stack), so they lived in a
+  separate `graph_routed` world and every caller of a manual function refused
+  `contains-call` — the manual boundary blocked composition outright.  An
+  override is now a first-class composable CPUless callee at the SAME address as
+  its generated twin.
+- **(1) The GENERIC half, in dos_re** (branch `cpuless-manual-override` off
+  origin/main 6825851, commit **ed02917**).  `cpuless_promote --overrides @FILE`
+  takes per-address contracts ({name, inputs, outputs, ret_kind, ret_pop,
+  sp_delta, needs_plat, df_livein, flags_livein, exit_flags}) and **SEEDS** them
+  into the callee-contract maps before the fixpoint (near, plus far when
+  ret_kind is far), so callers compose an override exactly like a generated
+  callee; the key is marked done so the promoter never emits a PARALLEL body
+  ([[manual-recovery-is-authoritative]]).  A balanced near-return override joins
+  the dynamic-dispatch registry under the same rule as a promoted function; a
+  far/ret-pop/sp-varying one is reported static-call-reachable-only.  New
+  `emit_override_adapter` emits the identity-preserving CPU-ABI adapter for the
+  function's lifted slot — the same bridge `emit_adapter` builds, but driven by
+  the SUPPLIED contract instead of an abi scan (the override replaces a body the
+  strict emitter could not generate).  **dos_re learns nothing about SimAnt**:
+  the marshalling (which views, the `[bp+N]` map) stays entirely the consumer's.
+  Differential regression `test_cpuless_override` (3 cases): a caller composing a
+  seeded override diffed byte-for-byte (whole register file + stack memory)
+  against the interpreter over the identical bytes; the emitted adapter run on a
+  real CPU carrier pinning the far RET frame pop; the body name pinned as the
+  single running implementation.
+- **(2) The SimAnt half: the carrier-free marshalling shim
+  (`scripts/overridegen.py`).**  The CPUless-idiom analogue of adaptgen, sharing
+  its **exact** contract classifier (`adaptgen.classify` over
+  `recovered_map.json` + the IR + `adapter_facts.json`) so the two flavors can
+  never disagree on WHICH entries are mechanically closed.  Instead of a cpu
+  adapter it emits a body obeying the dos_re CPUless body ABI —
+  `func_CCCC_IIII(mem, *, ds, ss, sp) -> (outputs, compat)` — that (a) reads each
+  `[bp+N]` scalar arg off the CPUless caller's stack (`mem.rw(ss, sp+N-2)`: at
+  CPUless callee entry `ss:sp` points at the return frame, EXACTLY as at the
+  historical hook entry — the same arithmetic adaptgen proved against the ASM
+  oracle), (b) binds the dgroup/simant_data_group/pack views over that SAME mem
+  image (`SelectorBackend`, duck-typed, VM-free), (c) calls the authoritative
+  body, (d) returns AX / DX:AX in the CPUless output dict, (e) leaves the
+  ret/stack effect to the composing caller.  It touches **no `cpu` object at
+  all**, so `lint_cpuless` PASSES with the wall widened to the whole recovered
+  corpus (`simant/native/cpuless` + `simant/recovered` + `simant/bridge` — the
+  latter two verified CPU-free here rather than assumed): **586 modules, PASS**.
+- **Coverage: composed 402 → 571 (+169) = 405 generated + 166 direct overrides.**
+  Of the 309 manual entries, **166** have a mechanically closed contract and
+  compose carrier-free; **143 stay on the GENERATED body**, each with adaptgen's
+  own reason: args-incomplete 96, presentation-effects 48, result-convention 36,
+  proven-gated 18, sig-mismatch 13, callback-injected 12, views:table_view 4,
+  arg-frame-shape 3, callee-cleans 2, views:view 2, fact-excluded 1.  Registering
+  the 166 also unblocks **+3** generated callers that previously refused
+  `contains-call` (910→902; the reason simply shifts for the rest — those callers
+  hit `leave-without-enter` next, 153→158).  The **gated** entries
+  (`_YellowFight`/`_DoTroph`/`_GetRedBestDirs`) are among the 18 proven-gated and
+  correctly stay on the generated body, which carries the gate branch natively —
+  cont.223 policy (a) unchanged.
+- **Binary-wide census: composable-today stays 868 — and that number is the
+  honest one.**  All 166 overrides were ALREADY inside the census's
+  `manual-cpuless-override` bucket (309), so the total does not move; what
+  changed is HOW they compose — carrier-free DIRECT overrides in the unified
+  graph instead of carrier-touching adapters in a separate one, which is
+  precisely what the CPUless wall measures.  `cpuless_binary_census.py` does not
+  yet model the override seam (it cannot distinguish "manual via CPU adapter"
+  from "manual composed carrier-free"); teaching it that split is a reported
+  follow-up, not silently folded into the headline.
+- **THE GATE — the precise obstacle, and why the pin is untouched.**  The
+  override graph builds cleanly (571 adapters routed, lint PASS) but it **cannot
+  be validated against the pinned cold_nohooks oracle**, for a structural reason,
+  not a marshalling bug:
+  - An override is **ONE dispatch step** (`cost=1`, the island virtual-time
+    convention every hand-recovered body has followed since the first), whereas
+    the ASM it replaces took N instructions.  The 402 generated adapters ARE
+    virtual-time-exact (per-block `_cost`, `owns_time`), which is why the pin
+    holds for them; a semantic body cannot be, because it does not execute the
+    ASM's control flow.
+  - The demo is **instruction-count-keyed** (`win16/demo.py`: input is delivered
+    "exactly when the machine reaches that instruction count").  Measured drift:
+    **-16 instructions at cp0, accumulating to -2,211,796 by cp31** — so input
+    lands at the wrong game moments, the run desyncs, and only 32 of 40
+    checkpoints are reached.  This is exactly [[demos-are-hook-config-specific]]:
+    a cross-config replay silently desyncs; it is NOT a state divergence to
+    bisect.
+  - Evidence that the marshalling itself is sound as far as the gate can see:
+    **cp0 mdigest MATCHES the oracle byte-for-byte** (`17c6448d6a3d32a7`, with
+    only the -16 count differing) — the register-file/memory exactness concern
+    the whole-state digest raises did not materialise before the timeline drift
+    took over.  Beyond cp0 the comparison is meaningless (different game
+    moments), so it is reported as unproven, not as passing.
+  - Therefore **manual direct-compose is OPT-IN** (`--with-overrides`, default
+    OFF, pair with `--graph-dir .../graph_cpuless_override`).  The production
+    `graph_cpuless` stays generated-only and the **pinned gate is GREEN,
+    re-verified after the work: all 39 checkpoints + final MATCH, instr
+    199,619,366, mdigest 417cac5cd9aadb8c** — the exact cont.238/240/242/244/245/
+    246 pin.  The gate was never weakened; the override graph simply is not
+    admissible to it yet.
+- **What would unblock it (ranked).**  (1) **A virtual-time contract per
+  override** — the honest fix.  An override would declare (or compute) the ASM's
+  per-invocation instruction count; straight-line entries admit a static
+  constant, branchy ones need a path-dependent cost model, which is the part that
+  does not fall out of semantic recovery.  (2) **A re-recorded demo under the
+  override config** ([[demos-are-recreatable]] — the owner re-records), giving
+  the override graph its own self-consistent byte-exact baseline; this validates
+  the override graph but not against the generated graph's pin.  (3) **A
+  semantic-boundary clock** (cont.223's dissolution path): key demo input to a
+  game-observable boundary instead of raw instruction count, which would make
+  every island config comparable.  (2) is cheapest; (3) is the real fix and would
+  retire the whole class of hook-config-specific desync.
+- **Chain (NOT pushed — owner reviews + pushes dos_re→win16_re→simant_port):**
+  dos_re **ed02917** → win16_re **4b16664** (Bump dos_re) → simant_port (this),
+  each on branch `cpuless-manual-override` off its main.  Suites green per repo:
+  dos_re **704** (+3 override differential), win16_re **341**, simant_port
+  **2270** (+5 override marshalling tests).  `simant/recovered/`, v0.1.0
+  dist/+tag untouched; generated `simant/native/cpuless/` + `graph_cpuless/` +
+  `artifacts/overrides.json` disposable/gitignored.  Watch: stray
+  `pynuked_opl3/` untracked gitlink in dos_re — added files explicitly, never
+  `-A`.
+- **Reproduce.**  `python scripts/cpuless_promote.py` (pinned generated graph,
+  402) → the `checkpoints.py --check-field mdigest` gate above.  The override
+  graph: `python scripts/cpuless_promote.py --with-overrides --graph-dir
+  simant/lifted/graph_cpuless_override` (571 routed; `scripts/overridegen.py
+  --dry-run` alone prints the 166/143 split and writes the contracts).
+- **Remaining frontier toward a fully-CPUless binary.**  Unchanged in rank except
+  that manual direct-compose is now BUILT and gated on virtual time rather than
+  on the composition seam: (1) **dispatch-cluster arm-as-alt-entry** (the 6
+  evidence-gated tail-dispatch containers + `_UpdateUserButtons`); (2) **the
+  override virtual-time contract** above (what makes the +166 admissible to the
+  byte-exact gate and materially advances `play_cpuless`); (3) residual **frame
+  variants** (frame-pointer-pop-without-save 15, frame-pointer-clobbered 9);
+  (4) **far-indirect / platform-far-indirect** (the 35 sound-driver `call far
+  [bp-N]` path) + x87 (0 reachable) — still last.
+
 ## 2026-07-18 (cont.246) — CPUless CONTROL-FLOW-SHAPE emitter tier (generic dos_re): far retf-N callee-cleanup + shared-epilogue tail dispatch + a composed-plat virtual-time fix — promoted 339→402 (+63), binary composable-today 780→868 (+88), byte-exact
 - **Two generic CPUless emitter capabilities + one virtual-time fix, landed on
   dos_re branch `cpuless-control-flow-shape` off origin/main aea1813** (commits

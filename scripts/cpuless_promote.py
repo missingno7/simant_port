@@ -71,6 +71,7 @@ DEFAULT_CENSUS_OUT = REPO_ROOT / "artifacts" / "cpuless_promote_census.json"
 DEFAULT_MANIFEST = REPO_ROOT / "artifacts" / "vmless_boot" / "manifest.json"
 DEFAULT_PLAT_FARCALLS = REPO_ROOT / "artifacts" / "plat_farcalls.json"
 DEFAULT_DYN_EVIDENCE = REPO_ROOT / "artifacts" / "indirect_sites.json"
+DEFAULT_OVERRIDES = REPO_ROOT / "artifacts" / "overrides.json"
 IMPORT_BASE = "simant.native.cpuless"
 
 
@@ -167,10 +168,14 @@ def build_plat_farcalls(manifest_path: Path, out_path: Path) -> tuple[int, int, 
 
 
 def route_graph(from_dir: Path, graph_dir: Path, adapter_dir: Path,
-                promoted: list[str]) -> tuple[int, list[str]]:
+                promoted: list[str], overrides: list[str] | None = None
+                ) -> tuple[int, list[str]]:
     """Materialize the CPUless-routed graph: copy the literal corpus, then for
-    every promoted leaf swap its literal module for the generated adapter and
-    remap the manifest stem to the adapter's ``lifted_CCCC_IIII`` name.
+    every promoted leaf (and every authoritative OVERRIDE) swap its literal
+    module for the generated adapter and remap the manifest stem to the
+    adapter's ``lifted_CCCC_IIII`` name.  An override adapter is the identity-
+    preserving bridge to the hand-recovered body (the unified override-graph
+    seam); it occupies the SAME lifted slot a generated twin would.
 
     Returns (adapters routed, missing-adapter keys)."""
     from dos_re.lift.naming import GraphNaming
@@ -191,7 +196,7 @@ def route_graph(from_dir: Path, graph_dir: Path, adapter_dir: Path,
     mapping = dict(naming.mapping)
     routed = 0
     missing: list[str] = []
-    for key in promoted:
+    for key in list(promoted) + list(overrides or []):
         cs, ip = key.split(":")
         adapter_stem = f"lifted_{cs.lower()}_{ip.lower()}"
         adapter_src = adapter_dir / f"{adapter_stem}.py"
@@ -211,13 +216,26 @@ def route_graph(from_dir: Path, graph_dir: Path, adapter_dir: Path,
 
 
 def run_lint(rec_dir: Path) -> int:
-    """CPUless recovered-purity wall: the promoted bodies import nothing but
-    sibling recovered modules (no CPU carrier at any level)."""
+    """CPUless recovered-purity wall: the promoted bodies (and the carrier-free
+    override bodies) import nothing but sibling recovered modules and the
+    authoritative recovered corpus (``simant.recovered`` / ``simant.bridge``,
+    both proven VM-free) -- no CPU carrier at any level.
+
+    The override seam widens the wall to the WHOLE recovered corpus: an override
+    body binds a bridge view (``simant.bridge.dgroup_view.SelectorBackend``) and
+    calls a hand-recovered function (``simant.recovered.*``), so those two
+    packages are scanned for purity and admitted as sibling-recovered prefixes.
+    They reach neither ``dos_re.cpu`` nor ``simant.lifted`` (checked here), so
+    the standalone runtime still never touches a CPU."""
     lint = load_dosre_tool("lint_cpuless")
     return lint.main([
         "--repo-root", str(REPO_ROOT),
         "--recovered-root", str(rec_dir.relative_to(REPO_ROOT).as_posix()),
+        "--recovered-root", "simant/recovered",
+        "--recovered-root", "simant/bridge",
         "--recovered-prefix", IMPORT_BASE,
+        "--recovered-prefix", "simant.recovered",
+        "--recovered-prefix", "simant.bridge",
         "--forbidden-module", "dos_re.cpu",
         "--forbidden-module", "dos_re.cpu386",
         "--forbidden-module", "simant.lifted",
@@ -262,6 +280,24 @@ def main(argv=None) -> int:
     ap.add_argument("--no-plat-farcalls", action="store_true",
                     help="disable platform far-call composition (reproduce the "
                          "pre-plat.farcall calls-only slice)")
+    ap.add_argument("--overrides-out", default=str(DEFAULT_OVERRIDES),
+                    help="where the authoritative-override contracts are "
+                         "written (scripts/overridegen.py output, fed to the "
+                         "dos_re promoter --overrides)")
+    ap.add_argument("--with-overrides", action="store_true",
+                    help="build the UNIFIED OVERRIDE GRAPH: the 166 "
+                         "mechanically-closed hand-recovered bodies compose as "
+                         "DIRECT carrier-free CPUless overrides at their own "
+                         "address (impl = overrides.get(addr, generated[addr])) "
+                         "instead of staying literal lifts, so their callers no "
+                         "longer refuse contains-call.  OFF by default: an "
+                         "override is ONE dispatch step (the island virtual-"
+                         "time convention), so the override graph does NOT "
+                         "preserve the instruction-count timeline the pinned "
+                         "cold_nohooks oracle (and the instruction-count-keyed "
+                         "demo) require -- see docs/run_status.md cont.247.  "
+                         "Pair it with --graph-dir simant/lifted/"
+                         "graph_cpuless_override to keep the pinned graph.")
     ap.add_argument("--tiers", default="leaf,calls-only",
                     help="comma-separated census tiers to feed the promoter "
                          "(default: leaf,calls-only — the calls-only widening; "
@@ -326,6 +362,26 @@ def main(argv=None) -> int:
             "--plat-far-segs", f"{thunk_seg:04X}",
             "--plat-farcalls", f"@{args.plat_farcalls_out}",
         ]
+    # AUTHORITATIVE OVERRIDES (the unified override-graph seam,
+    # [[manual-recovery-is-authoritative]]): the mechanically-closed hand-
+    # recovered bodies compose as DIRECT carrier-free CPUless overrides at their
+    # own address (impl = overrides.get(addr, generated[addr])) -- so a caller
+    # of a manual function no longer refuses contains-call.  overridegen emits
+    # the contracts here (the bodies are dropped in AFTER --apply, so the
+    # promoter's clean regen does not wipe them); the SAME adaptgen classifier
+    # picks the routable set, so dos_re stays game-agnostic.
+    overrides: list[str] = []
+    if args.with_overrides:
+        import overridegen
+        og_rc = overridegen.main([
+            "--ir", args.ir, "--map", args.map,
+            "--out", args.overrides_out, "--dry-run",
+        ])
+        if og_rc != 0:
+            return og_rc
+        overrides = sorted(json.loads(
+            Path(args.overrides_out).read_text(encoding="utf-8"))["overrides"])
+        promote_argv += ["--overrides", f"@{args.overrides_out}"]
     if args.dry_run:
         print("\n=== promotion census (dry run) ===")
         return promote.main(promote_argv)
@@ -347,12 +403,25 @@ def main(argv=None) -> int:
         " -- disposable; regenerate, do not hand-edit.\"\"\"\n",
         encoding="utf-8", newline="\n")
 
+    # Drop the carrier-free override BODIES into the recovered corpus (AFTER the
+    # promoter's clean regen, so they survive); the override ADAPTERS were
+    # already emitted by the dos_re promoter (--overrides) into adapter_dir.
+    if args.with_overrides:
+        import overridegen
+        print("\n=== emit carrier-free CPUless override bodies ===")
+        og_rc = overridegen.main([
+            "--ir", args.ir, "--map", args.map,
+            "--bodies-dir", str(rec_dir), "--out", args.overrides_out,
+        ])
+        if og_rc != 0:
+            return og_rc
+
     promoted = json.loads(
         Path(args.census_out).read_text(encoding="utf-8"))["promotable"]
     print("\n=== route the CPUless-routed graph "
           f"({graph_dir.relative_to(REPO_ROOT).as_posix()}) ===")
     routed, missing = route_graph(Path(args.from_dir), graph_dir, adapter_dir,
-                                  promoted)
+                                  promoted, overrides)
     shutil.rmtree(adapter_dir)                    # staging consumed
     if missing:
         raise SystemExit(f"cpuless_promote: {len(missing)} promoted leaf/leaves "
