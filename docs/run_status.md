@@ -1,5 +1,104 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.253) — the Win16 far-entry prologue DISSOLVED: the whole MSC C-runtime bottom tier now lifts (skeleton 404 -> 461, gate unmoved), dos_re learned the mechanism WITHOUT learning Windows, and win16_re finally has a lifting FENCE of its own — plus the CPUless callback seam (host->guest with no interpreter)
+- **THE HEADLINE.**  The single idiom cont.252 identified is closed.  dos_re
+  models **a frame pointer carried at a CONSTANT BIAS** — `bp = framebase + k`,
+  with the epilogue's symmetric undo verified and the teardown depth computed
+  as `framebase - bias` — and the Windows `inc bp` far-frame marker falls out
+  with **no special case**.  A parametrized test drives `add bp,6`,
+  `sub bp,0x1234` and sign-extended `add bp,-2` through the same rule.  The
+  whole MSC C-runtime bottom tier promotes: `_malloc`, `_free`, `_read`,
+  `_close`, `_lseek`, `_getenv`, `__openfile`, `__getstream`, `__fmalloc`,
+  `__ncalloc`, `__fcalloc`, `__nmsize`, `__fptostr`, `__forcdecpt`.  Both
+  frame-pointer refusal categories **24 -> 0**.
+- **THE GATE, re-run twice (459 routed, then 461): all 39 checkpoints + final
+  MATCH, instr 199,619,366, mdigest `417cac5cd9aadb8c`** — the cont.238...252
+  pin, UNMOVED.  57 functions that were interpreted literal lifts are now
+  generated CPUless bodies and the trace is byte-identical.  The capability is
+  proven on the real binary, not only on synthetic fixtures.
+- **A second dos_re slice, composing with the first.**  `sp` read without being
+  written is not `sp-as-data` (the ABI keeps sp exact; the body carries it as an
+  integer local) — this SUBSUMES two earlier narrow recognisers.  And
+  `lea sp,[bp+k]` is `mov sp,bp` with a displacement, so a biased frame torn
+  down at an offset resolves to `framebase - bias - disp` with a case for
+  neither.  `sp-as-data` 4 -> 2.
+- **win16_re gains a HOME and a FENCE (the real architectural fix).**
+  `win16/lift.py` is the OS/ABI fact producer — the plat far-call contracts,
+  moved out of `simant_port/scripts/` where they never belonged (that code's own
+  docstring already asserted nothing SimAnt-specific was encoded in it, which is
+  precisely why it should never have lived in the game repo).
+  `tests/test_win16_lifting_conformance.py` is **21 synthetic Win16 fixtures** —
+  the far-entry prologue, all three `__loadds` preambles (incl. the
+  loader-PATCHED `mov ax,DGROUP`), DS != SS, a boundary far call — each
+  differentialled against `CPU8086` over identical bytes, diffing the whole
+  register file and the whole address space.
+  **Why this mattered:** until now the only Win16 evidence in existence was this
+  game, in a third repo, so a dos_re change could only be validated against
+  Windows by a downstream port.  Verified **non-vacuous by mutation**: stubbing
+  dos_re's `_bp_const_bias` back to the pre-fix model fails **9 of 21**, in
+  win16_re, with no game checked out.
+- **The CPUless callback seam (win16_re).**  The mirror of the `invoke_values`
+  refactor: `invoke_values` solved guest->host, this solves **host->guest** — an
+  API that calls back into game code (WndProc via DispatchMessage/SendMessage,
+  dialog procs, TimerProc), which the VM services by pushing a frame and running
+  the interpreter to a sentinel.  A CPU-free host dispatches into the recovered
+  corpus instead.  The frame layout is NOT renegotiable (the body's `[bp+6]` is
+  the original compiler's), so a test asserts the CPUless frame is **byte-for-
+  byte equal** to what `call_far` pushes rather than trusting two
+  implementations to agree.  OPT-IN: with no resolver installed those APIs still
+  raise `CpuFreeExecutionAttempt` naming the target — a host that quietly
+  skipped a WndProc would be fabricating behaviour.
+- **THE SKIN shipped too (task #53).**  `cpuless_promote --skin` builds a SECOND
+  corpus, `simant/native/cpuless_skin/`: **667 bodies = 466 generated skeleton +
+  201 manual skin**, the hand-recovered bodies laid over the generated ones as
+  direct carrier-free overrides at the same addresses.  Two DIRECTORIES rather
+  than a flag, deliberately: a generated body and its override share the
+  `func_<para>_<ip>` module name, so an island-cost override written into the
+  production corpus would clobber the instruction-exact twin the gate depends
+  on.  `--skin` refuses to target it.
+- **METHOD CORRECTION, twice over — the dependency CONE is a weak upper bound.**
+  I ranked work by cone size (how many `contains-call` refusals sit above a
+  root) and twice over-claimed from it.  The frame slice had cone **634** and
+  realized **+55**.  The sp slice drained its cone **483 -> 0** and realized
+  **+2**.  Reason: a caller frees only when EVERY callee promotes, and those 483
+  also sat under `mixed-return-kinds` (485) and `boundary-or-dispatch-address`
+  (232), so removing one root moved none of them.  **Cone = upper bound; only a
+  re-run fixpoint is the answer.**  Report both, always.
+- **Hypotheses I got wrong, corrected by evidence.**  (a) The 143
+  `leave-without-enter` are ALL `entry_origin: dispatch-fact` case-arm fragments
+  — entry bytes like `5E C9 CB` (`pop si; leave; retf`, a function's EPILOGUE)
+  — and **not one is a static call target anywhere in the IR**.  Unlock 0, not
+  the big category it looked like.  (b) The seven `sp`/return refusals are FOUR
+  idioms, not one: `__aNchkstk` is the pop-and-jmp stack probe, `__aFchkstk`
+  returns normally, `_stackavail` only READS sp, `_matherr` is
+  `lea sp,[bp-2]`.  (c) The indirect blocker is **Win16 dynamic linking**
+  (`GetProcAddress`/`MakeProcInstance` far pointers), not computed goto.  (d)
+  x87 is a C-runtime fact (30 of 31 in seg 4), **0 reachable** — not game inline
+  float.  (e) Virtual time: my claim that the CPUless runner escapes the
+  instruction-count constraint is **half right** — true for `--entry`/`--sweep`,
+  FALSE for `--demo` (`Win16CpulessPlatform.call` accumulates `compat["cost"]`
+  into `carrier.instruction_count`, which `DemoDriver._instr` reads).  Deferred,
+  not absent.
+- **The design this settled** (three buckets, one test — *would a DOS binary
+  from a different compiler plausibly contain this?*): **yes -> generic
+  mechanism -> dos_re** (biased frame pointer, sp-source, lea-restore; dos_re
+  learns no OS); **no, it is an OS/ABI property -> fact producer -> win16_re**
+  (prologue naming, `__loadds`, API argument contracts, dynamic-link evidence);
+  **no, it is this EXE -> fact -> simant_port**.  The rule that stops it
+  becoming a fork: **shared code must never branch on platform identity** — the
+  platform enters only as data and strategy objects, which is what the existing
+  `plat_farcalls` injection already proved works.
+- **Pins.**  dos_re `27388c9` -> win16_re `98ce0d5` -> simant_port `2d51d6b`.
+  Suites: dos_re **986**, win16_re **373**, simant_port **2325**.  `lint_cpuless`
+  PASS on both corpora (474 production, 682 skin) + the 25-module runner closure.
+- **NEXT, ranked but with the cone caveat attached.**  `mixed-return-kinds`
+  (cone 485) whose two largest members (`__myalloc`, `internal_25DB`) tail-jump
+  into a *foreign* function's shared far epilogue — a function-boundary/CFG
+  attribution question, not an emitter idiom.  Then Win16 dynamic-link evidence
+  (~52), the raw-API values form (~16, 3 of 4 tractable), boundary/dispatch
+  entries (~10).  The 143 arms and the 11 epilogue fragments are completeness,
+  not coverage.
+
 ## 2026-07-18 (cont.252) — THE SKELETON'S LARGEST HOLE IS THE MANUAL CORPUS ITSELF (unlock 148, the top lever), and EVERY shape refusal the lifter has is ONE Windows-specific idiom: the Win16 far-entry prologue `inc bp; push bp; mov bp,sp` (0% promotion rate over 56 occurrences, all in the C runtime). Task #53's skin corpus SHIPPED; the pinned gate is unmoved.
 - **THE HEADLINE, and it inverts the framing.**  "Complete the skeleton before
   the skin" is measurably backwards.  Ranking the 856 `contains-call` refusals
