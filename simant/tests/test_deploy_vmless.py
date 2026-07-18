@@ -52,7 +52,11 @@ def test_static_closure_ships_the_spine_and_nothing_denied(deploy):
         "simant/vmless_boot.py", "simant/_env.py",
         "win16_re/win16/bootimage.py", "win16_re/win16/vmsnap.py",
         "win16_re/win16/demo.py", "win16_re/win16/api/surface.py",
-        "win16_re/win16/loader.py", "win16_re/win16/ne.py",  # class carriers (pickles)
+        # The machine RECORD + memory map, split out of win16/loader.py so the
+        # CPUless runner can hold a machine without the interpreter (cont.251).
+        # win16/loader.py itself is the NE→VM mapping and is NOT in the closure:
+        # the release boots EXE-free from the boot image and never parses an NE.
+        "win16_re/win16/machine.py", "win16_re/win16/ne.py",  # class carriers (pickles)
         "win16_re/dos_re/dos_re/cpu.py", "win16_re/dos_re/dos_re/memory.py",
         "win16_re/dos_re/dos_re/independence.py",
         "win16_re/dos_re/dos_re/lift/install.py",

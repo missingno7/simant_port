@@ -226,10 +226,17 @@ def run_lint(rec_dir: Path) -> int:
     calls a hand-recovered function (``simant.recovered.*``), so those two
     packages are scanned for purity and admitted as sibling-recovered prefixes.
     They reach neither ``dos_re.cpu`` nor ``simant.lifted`` (checked here), so
-    the standalone runtime still never touches a CPU."""
+    the standalone runtime still never touches a CPU.
+
+    The ``--root`` half is the RUNNER closure (cont.251): every module
+    ``scripts/play_cpuless.py`` can import — its own lazy imports followed,
+    then module-level edges transitively — must be CPU-free too.  The runtime
+    import guard the runner arms only fires on an executed import; this is the
+    static proof for the paths a given run does not take."""
     lint = load_dosre_tool("lint_cpuless")
     return lint.main([
         "--repo-root", str(REPO_ROOT),
+        "--root", "scripts/play_cpuless.py",
         "--recovered-root", str(rec_dir.relative_to(REPO_ROOT).as_posix()),
         "--recovered-root", "simant/recovered",
         "--recovered-root", "simant/bridge",
@@ -238,8 +245,17 @@ def run_lint(rec_dir: Path) -> int:
         "--recovered-prefix", "simant.bridge",
         "--forbidden-module", "dos_re.cpu",
         "--forbidden-module", "dos_re.cpu386",
+        "--forbidden-module", "dos_re.lift.install",
+        "--forbidden-module", "dos_re.lift.runtime",
+        "--forbidden-module", "dos_re.runtime",
         "--forbidden-module", "simant.lifted",
+        "--forbidden-module", "simant.hooks",
+        "--forbidden-module", "win16.loader",
+        "--forbidden-module", "win16.bootimage",
         "--local-prefix", "dos_re", "--local-prefix", "simant",
+        "--local-prefix", "win16",
+        "--package-dir", "win16=win16_re/win16",
+        "--package-dir", "dos_re=win16_re/dos_re/dos_re",
     ])
 
 

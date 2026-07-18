@@ -1,5 +1,135 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.251) — play_cpuless: the CPUless RUNNER exists and RUNS — SimAnt executes with no CPU anywhere and Windows answers it: 376 of 404 promoted bodies run to completion and 259 Win16 API calls are serviced through a new CPU-FREE API path (win16_re); the program entry is the first witness, and the frontier is now MEASURED instead of modelled
+- **THE HEADLINE.**  `scripts/play_cpuless.py` boots SimAnt EXE-free **and
+  CPU-free** — the memory image is the data-only boot image, the code is the
+  promoted corpus in `simant/native/cpuless/` (404 bodies), and the import wall
+  is armed before the host is even imported.  It reaches Windows through a
+  brand-new **CPU-free API invocation path** in win16_re.  Measured, not
+  claimed: `--sweep` runs every promoted body as a root on a fresh CPU-free
+  host — **376 of 404 run to completion**, delivering **259 Win16 service calls
+  across 58 distinct APIs** (`GlobalLock`, `SelectObject`, `FillRect`,
+  `CreateSolidBrush`, `GetTickCount`, `LoadCursor`, `lstrcat`, …) with no `cpu`
+  object anywhere in the process.
+- **THE CRUX, solved generically in win16_re: `ApiRegistry.invoke_values`.**
+  win16's API layer was CPU-COUPLED at its heart: `_invoke` read the pascal
+  arguments off the *emulated stack via `cpu`* and finished with
+  `ret_far(cpu, …)`.  A CPUless host has no `cpu`.  So `invoke_values(carrier,
+  entry, label, args) -> (ax, dx)` is now the primitive — **explicit args in,
+  explicit result out**, no stack read, no return mechanics — and the existing
+  `_invoke` is a **thin cpu shim** over it (`read_pascal_args` + `invoke_values`
+  + `ret_far`).  Both paths run the SAME handler, which is exactly why the
+  byte-exact gate is untouched by the refactor.
+- **The CPU-free Win16 host (`win16/cpuless.py`, new, game-agnostic).**
+  - `CpuFreeCarrier` — what the handlers see as `ctx.cpu`: memory, a register
+    record, the hook tables, a clock.  State is what a CPUless host may hold
+    (lint_cpuless's own rule: `CPUState` is a VALUE record); what it must never
+    hold is something that RUNS.  So the executing members are **absent by
+    construction** — `step`/`run`/`call_far`/`emulate_int` raise
+    `CpuFreeExecutionAttempt`, while an ordinary typo still raises
+    `AttributeError`.
+  - `load_cpuless_image` — the loader-FREE boot: same image and the same
+    integrity gates as `load_boot_image` (schema, memory hash, EXE-free program
+    identity, the registry-drift equate cross-check), importing neither
+    `win16.loader` nor `dos_re.cpu`.
+  - `Win16CpulessPlatform(FailLoudPlatform)` — `farcall` resolves the thunk
+    slot to its `(module, ordinal)`, decodes the pascal frame the recovered
+    body already pushed **out of memory at ss:sp**, and services it through
+    `invoke_values`; the body keeps its own stack arithmetic (the host performs
+    no far return).  `intr` applies the bundle and runs the machine's own INT
+    21h/2Fh surface — the SAME service the VM path uses, because it only ever
+    touched `cpu.s`/`cpu.mem`.  Every boundary is loud: a raw (-register) API,
+    an unbound slot, a stale `argbytes` contract, an out-of-thunk-segment
+    target.  The virtual-time `cost` is **1** per serviced call and is never
+    guessed (a callback would add nested guest instructions — that path raises).
+- **The enabling refactor: `win16/machine.py` (new).**  `win16.loader` builds a
+  `CPU8086` at module level, so the wall forbids it outright — yet the machine
+  RECORD and the memory map lived there.  `Win16Machine`, `THUNK_SEG`,
+  `WIN16_MEM_SIZE`, `GLOBAL_LIN_START`, `IMAGE_BASE_PARA`, `LoaderError` and
+  `BOOT_MANIFEST_SCHEMA` moved to a CPU-carrier-free module; `win16.loader`
+  re-exports them unchanged.  `vmsnap.restore_machine_state` now takes
+  `CPUState` from the ISA leaf `dos_re.x86` (a value record) instead of
+  `dos_re.cpu`, which makes the whole snapshot-restore path CPU-free — that is
+  what lets the CPUless boot REUSE it instead of forking it.  One consequence,
+  caught by the deploy-closure test and a genuine improvement: **`win16/
+  loader.py` is no longer in the VMless release closure at all** (the release
+  boots from the image and never parses an NE).
+- **THE FIRST WITNESS, named precisely.**  From the program entry the runner
+  stops immediately and honestly: `275F:0061: no recovered module
+  (func_275f_0061) in simant.native.cpuless`, and the runner prints the census's
+  own reason — **`tier=blocked, call-abi-composition x17,
+  indirect-or-far-transfer x2`**.  `__astart` is `liftable` with zero scan
+  refusals; what blocks it is 17 unpromoted callees and 2 indirect/far
+  transfers.  From that root the observed closure is **1015 reached, 123 with a
+  promoted body, 892 on the frontier**.  Exit code 3, no fallback, no stub.
+- **The frontier, MEASURED for the first time (the `--sweep` classification).**
+  Of the 404 promoted roots, **376 ran to completion**; the 28 stops split into
+  - **6 `UnknownDispatchTarget`** — genuine dynamic-dispatch frontier
+    (`0100:87BA -> 0100:880E`, `0E99:1902 -> 0E99:1934`,
+    `18C0:2BE0 -> 18C0:2C2C`, `18C0:727E -> 18C0:72AA`, +2);
+  - **4 INT 21h services the CPU-free `intr` path surfaced as missing**
+    (AH=41h/56h/00h/0Eh) plus 1 unknown file handle;
+  - 13 synthetic-input artifacts (`handle 0000 is NoneType, wanted DC/Menu/
+    Window`, div-by-zero) — an arbitrary root fed the boot-ENTRY register file
+    gets garbage arguments, which is a property of the sweep, not of the host;
+  - 5 spin-guard trips, same cause.
+  **Zero `CpuFreeExecutionAttempt`** in the sweep: the callback seam lives in
+  `CreateWindow`/`DispatchMessage`, which are still unpromoted, so it has not
+  been reached yet.
+- **THE NAMED BOUNDARY the host does NOT cross, and will have to.**  A Win16
+  API that CALLS BACK into guest code — window proc, dialog proc, enum proc,
+  timer proc, all serviced on the VM path by `win16.callback.call_far` — cannot
+  be serviced by a host that owns no execution engine.  Under the wall those
+  callbacks must dispatch into the RECOVERED CORPUS, which already has the
+  machinery (`_dyncall` / `DISPATCH` / `HANDLERS`).  Reaching one today raises
+  `CpuFreeExecutionAttempt` naming the API.  This is the single biggest piece of
+  remaining work and it is a *design* item, not a materialisation item.
+- **Gates.**  The pinned production gate, re-run AFTER the work: `checkpoints.py
+  --api-aligned --mask-poison artifacts/vmless_boot --boot-image
+  artifacts/vmless_boot cold_nohooks --lift-dir simant/lifted/graph_cpuless
+  --check artifacts/oracle_fresh2.trace --check-field mdigest` -> **all 39
+  checkpoints + final MATCH, instr 199,619,366, mdigest 417cac5cd9aadb8c** —
+  the cont.238…249 pin, unmoved by the API refactor.  `lint_cpuless` **PASS**
+  with the new `--root` half wired into `cpuless_promote.run_lint`: **419
+  modules recovered-purity + a 25-module runner closure**, function-local
+  imports FOLLOWED.
+- **The ordered remaining work to a fully-closed CPUless wall** (unchanged in
+  kind from cont.249, now with the runner's own evidence behind it):
+  1. **the Win16 callback seam** — dispatch window/dialog/enum/timer procs into
+     the recovered corpus instead of `call_far`.  Nothing above the message
+     pump runs without it;
+  2. **materialise the closure** along cont.249's rungs — `+manual
+     direct-compose (all)` +144 (the 143 kept-generated contracts,
+     args-incomplete first), `+frame-shape emitter` +39,
+     `+indirect/dispatch composition` +85, `+boundary/dispatch entry` +6,
+     `+sp-as-data` +1 — until `__astart`'s 17 `call-abi-composition` callees and
+     2 indirect transfers are gone and the atomic 128-cluster closes;
+  3. **the 6 dyn targets** the sweep named and the **4 INT 21h services** it
+     surfaced;
+  4. a **scheduler/boundary seam** for the CPUless host (`plat.boundary` is in
+     the contract and is not yet bound here), which is what turns `--demo` into
+     a real headless replay rather than a driver install;
+  5. only then a demo-to-completion CPUless run — at which point the byte-exact
+     claim must state its configuration (cont.248: a generated-only closure is
+     virtual-time-exact; overrides are not).
+- **Honest scope statement.**  `play_cpuless --demo` installs the demo driver,
+  but the run still stops at the entry witness, so **no demo has been replayed
+  CPUless and nothing byte-exact is claimed for this runner**.  What IS proven:
+  the wall holds (statically and dynamically), the boot is CPU-free, the Windows
+  API answers a CPU-free caller correctly across 58 distinct services, and the
+  frontier is now an enumerated list instead of a model prediction.
+- **Chain (NOT pushed — owner reviews + pushes win16_re -> simant_port):**
+  win16_re **(this)** -> simant_port **(this)**, each on branch `cpuless-runner`
+  off its main; dos_re **unchanged** at 652bad0 (the shared standalone host
+  needed nothing).  Suites green per repo: dos_re **733**, win16_re **347** (+6,
+  `tests/test_cpuless_host.py`), simant_port **2325** (+6,
+  `simant/tests/test_cpuless_runner.py`).  `simant/recovered/`, v0.1.0
+  dist/+tag and `scripts/play.py` untouched.
+- **Reproduce.**  `python scripts/play_cpuless.py` (the witness);
+  `python scripts/play_cpuless.py --entry 0E99:547C` (a promoted body reaching
+  Windows with no CPU); `python scripts/play_cpuless.py --sweep` (the frontier
+  classification); the `checkpoints.py --check-field mdigest` gate above.
+
 ## 2026-07-18 (cont.250) — MANUAL OVERRIDE CONTRACTS: 35 kept-generated contracts CLOSED mechanically (166→201 carrier-free overrides, the +manual-direct-compose rung 24→39), each proven per-call against the ASM — and 6 recovery-boundary defects the oracle found
 - **THE HEADLINE.**  `scripts/argmapgen.py` (new) DERIVES the missing `[bp+N]`
   arg maps from the binary instead of guessing them, closing **34** of the 96
