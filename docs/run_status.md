@@ -1,5 +1,124 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.249) - DISPATCH-ARM AS ALTERNATE ENTRY: the last wall blocker is CLOSED - the 597-function observed closure is fully CPUless-composable (gate GREEN, 402->404, cluster residual 130->128 and it CLOSES)
+- **THE HEADLINE: the message-pump cluster CLOSES.**  `scripts/cpuless_wall_gap.py`
+  now reports `residual recursive cluster (atomic): 128 -> CLOSES the wall` and
+  **`NOT composable even with every capability + cluster: 0`** (was 130 / "does
+  NOT close").  The 597-function runtime-reachable closure has an end-to-end
+  CPUless representation for the first time: nothing in it is structurally
+  unrepresentable any more.  The `dyn-target-unpromoted` refusal class is
+  **empty** (was 9).
+- **The mechanism: a switch ARM is an ALTERNATE ENTRY of its container.**  A
+  compiler lowers a dense switch into a jump table plus a SHARED EPILOGUE - the
+  container establishes the frame, tail-dispatches (`jmp cs:[bx*2+table]`), and
+  each arm runs its case body and falls into the ONE `leave; ret` the
+  container's prologue set up.  The IR carver follows only static edges, so the
+  arms (unreachable from the entry) were each carved as their own "function"
+  whose scan re-derives the same shared tail.  In isolation that tail is
+  structurally broken - `leave` with no `enter` - and the strict gate refused it
+  (`leave-without-enter`, `frame-restore-without-establish`).  Correct: the
+  arm's frame base genuinely lives in the container.  Also fatal: the
+  container's evidence gate then saw an unpromoted dynamic target and refused
+  the container, and because the cluster is ATOMIC that held out all ~130
+  functions.  ABSORPTION is the graph-completeness repair: union the arms'
+  instructions back into the container's scan and declare each arm ip an
+  alternate entry.  The container becomes one function with several entry
+  points - which is what SIMANTW's object code always was.  **Nothing is
+  suppressed**: establish and restore then live in the SAME scan, so the frame
+  and stack checks pass on their own terms, and the jump table resolves as an
+  intra-function `_LOCAL` landing (no `_dyn`, no registry hop).
+- **(1) The GENERIC half, in dos_re** (branch `cpuless-arm-alt-entry` off
+  origin/main 9845406, commit **b0b8146**).  `dos_re/lift/dispatch.py` gains
+  `dispatch_arm_candidates` (a scan's observed near jump-table landings) and
+  `absorb_dispatch_arms` (the fusion).  Soundness is CHECKED, never assumed:
+  every instruction the two scans share must be **byte-identical**, the arm must
+  not establish a frame of its OWN (that is a genuine tail-CALLED callee, not a
+  shared-epilogue arm), and it must itself be liftable - anything else raises
+  `ArmAbsorptionRefusal`.  `cpuless_promote --absorb-dispatch-arms` plans
+  ownership from the consumer's own facts: an address that is an observed near
+  jump-table target and is **never a static call target anywhere in the IR** is
+  an arm of the dispatching container, which owns it.  Arms leave the standalone
+  candidate set, join `dispatch_addrs` (forced block leaders + exported
+  alternate entries + dispatch-registry selectors), and count as intra-function
+  landings in `_gate_dyn_evidence`.  The census records `absorbed_arms` /
+  `absorbed_arm_refusals`.  dos_re still learns nothing about any game.
+  Differential regression `test_cpuless_arm_alt_entry` (7 cases): the standalone
+  arm's refusal pinned as the REASON absorption is needed, then the absorbed
+  container composed and diffed byte-for-byte against the interpreter over the
+  identical container+arm bytes - whole register file, stack memory AND
+  **virtual time** (`_cost`), per arm of the table, with `_dyn` wired to assert
+  if the dispatch ever leaves the function - plus both soundness refusals.
+- **(2) The SimAnt half is pure WIRING + facts.**  `scripts/cpuless_promote.py`
+  passes `--absorb-dispatch-arms` whenever it passes `--dyn-evidence`
+  (`--no-absorb-dispatch-arms` reproduces the old slice).  The facts are
+  `artifacts/recovery_ir.json` + `artifacts/indirect_sites.json`, both already
+  ours.  Measured on SIMANTW: **74 arms absorbed into 16 containers, 0 refused**
+  - every `case_XXXX` overlaps its container byte-for-byte, and every one of the
+  82 observed dyn targets in the binary is statically uncalled, so the
+  arm/head classification is unambiguous.
+- **All NINE of cont.248's blockers resolved.**  `430E:E6E2 _win_Recalc`
+  **promotes** (6 arms absorbed); `0100:02D6 case_02D6` and `0100:035A
+  case_035A` are recognised as ARMS owned by `0100:023A _UpdateUserButtons`
+  (they were duplicate carvings of its body, never functions); the remaining six
+  (`_UpdateUserButtons`, `_ProcEditEvent`, `_ProcYardEvent`,
+  `_ProcYardRibbonEvent`, `_ProcMapRibbonEvent`, `_win_DrawObjectI`) now refuse
+  only **`contains-call`** - an ordinary composition dependency that resolves
+  with the rest of the atomic cluster, not a dispatch dead end.
+  **`_UpdateUserButtons` needed no special case**: cont.246 already taught
+  `_check_stack_depths` the frameless stack-arg idiom (its `push di; push si`
+  tail records a nonzero exit depth as a runtime `sp` OUTPUT), and once its arms
+  are absorbed the pops execute inside the same body against the live `sp`
+  local - exact whether the arm balances or not.  The register-save epilogue
+  was never the obstacle; the missing GRAPH EDGE was.
+- **THE GATE: GREEN, at the exact pin.**  `checkpoints.py --api-aligned
+  --mask-poison artifacts/vmless_boot --boot-image artifacts/vmless_boot
+  cold_nohooks --lift-dir simant/lifted/graph_cpuless --check
+  artifacts/oracle_fresh2.trace --check-field mdigest` -> **all 39 checkpoints +
+  final MATCH, instr 199,619,366, mdigest 417cac5cd9aadb8c** - the
+  cont.238/240/242/244/245/246/247/248 pin, now reached by a graph in which a
+  composed body executes its absorbed arms inline.  `lint_cpuless` PASS (419
+  modules).
+- **NEGATIVE CONTROL.**  `scripts/cpuless_promote.py --dry-run
+  --no-absorb-dispatch-arms` reproduces cont.248 EXACTLY: 402 promotable, 9
+  `dyn-target-unpromoted`, wall-gap residual **130 -> does NOT close**, 130 not
+  composable even with every capability.  With absorption: 404 promotable, 0
+  `dyn-target-unpromoted`, residual **128 -> CLOSES**, 0 not composable.  The
+  delta is the seam, measured both ways.
+- **Numbers.**  Promoted **402 -> 404** (`_win_Recalc` + one cascade); the count
+  moves little BY DESIGN - the point is not more standalone bodies but that 74
+  fragments stop being bodies at all and 128 atomic functions stop being
+  unrepresentable.  Binary-wide census composable-today **868 -> 880 (+12)**,
+  max message-pump SCC 20.  Closure classification: cpuless-promoted 144->150,
+  literal-lift 307->234, blocked 14->13, `unclassified` **73 -> 0**.
+  `scripts/cpuless_wall_gap.py` was taught the seam (an absorbed arm composes
+  exactly when its OWNER does, and a container that absorbed arms inherits their
+  callees) - otherwise the model would still have counted the arms as orphans.
+- **WHAT `play_cpuless` NEEDS NOW - stated precisely, no overclaim.**  The
+  closure is composable *in the wall model's full-capability sense*; the rung
+  plan is the remaining work, and it is all previously-scoped levers, none of
+  them structural: (1) **+manual direct-compose (all)** +144 - close the 143
+  kept-generated contracts (args-incomplete 96 first) and give each a
+  virtual-time contract; (2) **+frame-shape emitter** +39
+  (frame-pointer-pop-without-save 8, clobbered 2, restore-without-establish 2 in
+  the closure); (3) **+indirect/dispatch composition** +85 - far-indirect and
+  `_myBeginSound` (13 blocked); (4) **+boundary/dispatch entry** +6;
+  (5) **+sp-as-data** +1; x87 stays 0-reachable.  Then the atomic 128 close
+  together.  The cost-MODEL tier for the 160 island overrides (cont.248 lever
+  (3)) remains the scale problem, and a semantic-boundary clock (cont.223)
+  remains its real fix.
+- **Chain (NOT pushed - owner reviews + pushes dos_re->win16_re->simant_port):**
+  dos_re **b0b8146** -> win16_re **1b1b3aa** -> simant_port (this), each on
+  branch `cpuless-arm-alt-entry` off its main.  Suites green per repo: dos_re
+  **724** (+7), win16_re **341**, simant_port **2282** (+4 arm-ownership facts,
+  `simant/tests/test_cpuless_dispatch_arms.py`).  `simant/recovered/`, v0.1.0
+  dist/+tag, `scripts/play.py` untouched; the cont.248 clobber guard
+  (`--only-time-exact`) intact.  Generated `simant/native/cpuless/` +
+  `simant/lifted/graph_cpuless/` + the artifacts remain disposable/gitignored.
+- **Reproduce.**  `python scripts/cpuless_promote.py` (404 routed, arms
+  absorbed) -> `python scripts/cpuless_wall_gap.py` (residual 128, CLOSES) ->
+  the `checkpoints.py --check-field mdigest` gate above.  The control:
+  `python scripts/cpuless_promote.py --dry-run --no-absorb-dispatch-arms`.
+
 ## 2026-07-18 (cont.248) - OVERRIDE VIRTUAL-TIME CONTRACTS: the override graph is GATE-ADMISSIBLE and PASSES the byte-exact gate (6 static-cost overrides, 402->408 composed) - and the 126-cluster's real blocker is re-derived: NOT virtual time
 - **THE HEADLINE: the override graph now PASSES the pinned byte-exact gate.**
   `checkpoints.py --api-aligned --mask-poison artifacts/vmless_boot

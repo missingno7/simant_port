@@ -93,6 +93,14 @@ def main() -> int:
                          json.loads(ovp.read_text(encoding="utf-8"))["overrides"]}
 
     promoted = {k.upper() for k in pcensus["promotable"]}
+    #: DISPATCH-ARM ABSORPTION (cont.249): a switch arm is an ALTERNATE ENTRY of
+    #: its container's body, not a function -- it composes exactly when its
+    #: OWNER does, and it never needs a standalone body.  arm key -> owner key.
+    arm_owner = {k.upper(): v.upper()
+                 for k, v in (pcensus.get("absorbed_arms") or {}).items()}
+    arms_of: dict[str, list[str]] = {}
+    for _a, _o in sorted(arm_owner.items()):
+        arms_of.setdefault(_o, []).append(_a)
     refused_reason: dict[str, str] = {}
     for reason, keys in pcensus["refused"].items():
         for k in keys:
@@ -106,6 +114,10 @@ def main() -> int:
         key = key.upper()
         if key in promoted:
             return "cpuless-promoted", ""
+        if key in arm_owner:
+            # an owned alternate entry: composed as part of its container
+            return ("cpuless-promoted" if arm_owner[key] in promoted
+                    else "dispatch-arm"), f"alt-entry of {arm_owner[key]}"
         if key in manual:
             return "manual-adapter", ""
         if key in blocked:
@@ -210,23 +222,32 @@ def main() -> int:
             return set()
         cs = key.split(":")[0]
         out = set()
-        for t in (rec.get("calls_near") or []):
-            nk = f"{int(cs, 16):04X}:{int(t, 16):04X}"
-            if nk in funcs:
-                out.add(nk)
-        for pair in (rec.get("calls_far") or []):
-            seg, off = pair
-            if int(seg, 16) == 0x0060:          # platform thunk -> plat.farcall
-                continue
-            fk = f"{int(seg, 16):04X}:{int(off, 16):04X}"
-            if fk in funcs:
-                out.add(fk)
-        return out
+        # A container that ABSORBED dispatch arms composes their code too, so
+        # their callees are its callees (the arms' own IR records carry them).
+        recs = [rec] + [funcs[a] for a in arms_of.get(key, ()) if a in funcs]
+        for r in recs:
+            for t in (r.get("calls_near") or []):
+                nk = f"{int(cs, 16):04X}:{int(t, 16):04X}"
+                if nk in funcs:
+                    out.add(nk)
+            for pair in (r.get("calls_far") or []):
+                seg, off = pair
+                if int(seg, 16) == 0x0060:      # platform thunk -> plat.farcall
+                    continue
+                fk = f"{int(seg, 16):04X}:{int(off, 16):04X}"
+                if fk in funcs:
+                    out.add(fk)
+        out.discard(key)
+        return out - set(arms_of.get(key, ()))
 
     def body_clean(key: str, caps: set[str]) -> bool:
         """The function's OWN body passes (given the enabled capabilities);
         only its callees may still block it (contains-call)."""
         if key in promoted:
+            return True
+        if key in arm_owner:
+            # An absorbed ARM has no body of its own to clean: it composes
+            # exactly when its container does (handled in the fixpoint).
             return True
         if key in manual:
             # A hand-recovered body composes carrier-free ONLY as an override,
@@ -267,6 +288,11 @@ def main() -> int:
             changed = False
             for k in observed:
                 if k in comp or not body_clean(k, caps):
+                    continue
+                if k in arm_owner:
+                    # an owned alternate entry composes with its container
+                    if arm_owner[k] in comp:
+                        comp.add(k); changed = True
                     continue
                 if (game_callees(k) & observed) <= comp:
                     comp.add(k); changed = True

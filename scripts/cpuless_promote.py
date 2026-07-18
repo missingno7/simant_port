@@ -277,6 +277,10 @@ def main(argv=None) -> int:
                          "unpromoted fragments is gated out, never crashing live "
                          "play with UnknownDispatchTarget.  Omit the file to "
                          "promote every dispatch optimistically (unsound).")
+    ap.add_argument("--no-absorb-dispatch-arms", action="store_true",
+                    help="disable dispatch-arm absorption (reproduce the "
+                         "pre-cont.249 slice, where every framed tail-dispatch "
+                         "container refused dyn-target-unpromoted)")
     ap.add_argument("--no-plat-farcalls", action="store_true",
                     help="disable platform far-call composition (reproduce the "
                          "pre-plat.farcall calls-only slice)")
@@ -356,6 +360,16 @@ def main(argv=None) -> int:
     # containers out until the dispatch-cluster composition lands.
     if args.dyn_evidence and Path(args.dyn_evidence).is_file():
         promote_argv += ["--dyn-evidence", str(args.dyn_evidence)]
+        # DISPATCH-ARM ABSORPTION: SIMANTW's switch arms (the SIMANTW.SYM
+        # `case_XXXX` fragments) are carved as their own IR "functions" because
+        # nothing but the jump table reaches them.  They are really ALTERNATE
+        # ENTRIES into their container's body -- which is why each refuses
+        # `leave-without-enter` standalone and, through the evidence gate,
+        # held the whole message-pump dispatch cluster out of composition.
+        # dos_re fuses them into their container (proving the overlap
+        # byte-identical); the FACTS are the dyn evidence + the IR, both ours.
+        if not args.no_absorb_dispatch_arms:
+            promote_argv += ["--absorb-dispatch-arms"]
     # PLATFORM far-call composition (plat.farcall): a `call far THUNK_SEG:slot`
     # into the win16 import-thunk table becomes a platform effect, not a refusal
     # -- the gateway to the calls-only sim tier (nearly every non-trivial sim
