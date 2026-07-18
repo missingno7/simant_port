@@ -1,12 +1,4 @@
-# Handover — SimAnt port, 2026-07-19
-
-> **STALE PIN NUMBERS BELOW.** Written mid-session before cont.255–257 landed
-> (the ListBox host widget, the Quick-Game ghosting fix, and the callback
-> no-progress-detector fix that lets `cold2` — the owner's 31766-record wide
-> session — replay clean). Current pins: `dos_re 8ccd3e1` → `win16_re 2e8e96e`
-> → `simant_port ec1b845`. Read `docs/run_status.md` cont.257 down to cont.249
-> for the up-to-date picture; sections 2–7 below (the architecture rule, the
-> hard-won lessons, the priority list) are still accurate.
+# Handover — SimAnt port, 2026-07-19 (updated)
 
 A point-in-time snapshot for an agent picking this up. The durable record is
 `docs/run_status.md` (newest on top; read **cont.249–257**). This file says
@@ -23,11 +15,11 @@ Read first: `CLAUDE.md`, `AGENTS.md`, `win16_re/CLAUDE.md`, `win16_re/docs/READM
 
 ```
 dos_re      8ccd3e1
-win16_re    c34695b   (pins dos_re 8ccd3e1)
-simant_port 088f2b5   (pins win16_re c34695b)
+win16_re    2e8e96e   (pins dos_re 8ccd3e1)
+simant_port adae368   (pins win16_re 2e8e96e)
 ```
 
-**Suites:** dos_re **1266**, win16_re **396**, simant_port **2325** — all green.
+**Suites:** dos_re **1266**, win16_re **409**, simant_port **2325** — all green.
 
 **The pinned byte-exact gate** (run this after ANY change that touches the
 lifter, the generated corpus, or the Win16 API layer):
@@ -40,7 +32,8 @@ pypy scripts/checkpoints.py --api-aligned --mask-poison artifacts/vmless_boot \
 ```
 
 Expected: **all 39 checkpoints + final MATCH, instr 199,619,366, mdigest
-`417cac5cd9aadb8c`**. This has not moved since cont.238.
+`417cac5cd9aadb8c`**. This has not moved since cont.238, across every slice
+landed through cont.257.
 
 > **FOOTGUN:** you MUST pass `--check-field mdigest`. The default `digest` field
 > false-alarms on a boot-image run because the boot image zeroes the poisoned
@@ -64,8 +57,8 @@ share the `func_<para>_<ip>` module name, so writing an island-cost override int
 the production corpus would clobber the instruction-exact twin the gate depends
 on. `--skin` refuses to target the production directory.
 
-**Observed runtime closure** (the `cold_nohooks` demo, 597 functions) as last
-measured by `scripts/cpuless_wall_gap.py`:
+**Observed runtime closure** (the `cold_nohooks` demo, 597 functions), current
+bucket counts from `scripts/cpuless_wall_gap.json`:
 
 ```
 cpuless-promoted   175      manual-adapter  132
@@ -73,9 +66,16 @@ literal-lift       209      dispatch-arm     68
 blocked             13   <- all indirect-or-far-transfer
 ```
 
-`play_cpuless.py --sweep` over the production corpus: **431 of 461 bodies run to
-completion**, delivering **309 Win16 service calls across 66 distinct APIs**, with
-no `cpu` object in the process.
+Unchanged since cont.253 — the frame-pointer/sp-source/indirect-far capability
+slices and the evidence-widening all landed in `literal-lift`/`dispatch-arm`
+territory without moving a function across a closure bucket boundary yet. The
+`rung_plan` in the same file gives the bottom-up cascade: 190 composable today
+→ 597 with every capability + the atomic 128-function message-pump cluster; 0
+functions are NOT composable even with everything.
+
+**Production far-call evidence** (`artifacts/indirect_sites.json`, disposable,
+gitignored): **47 sites / 150 edges**, the union of `cold_nohooks` +
+`artifacts/demos/cold2.jsonl` (see §5 — `cold2` now replays clean end to end).
 
 ---
 
@@ -112,97 +112,144 @@ in shipped generated code and **the gate stayed green through it** — correctly
 because the stale flag never reached memory on that path. The differential caught
 it. Use both.
 
-win16_re also now has its own lifting fence,
+win16_re also has its own lifting fence,
 `win16_re/tests/test_win16_lifting_conformance.py` — 21 synthetic Win16 fixtures,
 no game required. Verified non-vacuous by mutation: reverting dos_re's
 constant-bias frame model fails 9 of the 21.
+
+A third, less obvious lesson from cont.255–257: **owner-reported symptoms are
+not automatically Win16-API gaps.** Two of the three findings in §5 turned out
+to be bugs in *this project's own tooling* (a host dialog widget never built; a
+step-budget heuristic mistaken for a hang detector; a surface-version ordering
+bug in the compositor) — not in the recovered game logic or the Win16 API
+surface. Triage before assuming which layer owns a symptom.
 
 ---
 
 ## 3. Hard-won lessons — do not relearn these
 
-1. **A dependency CONE is an upper bound, not a forecast.** Three measurements
-   this session: cone 634 → realized **+55**; cone 483 → realized **+2**; cone 35
-   → realized **+2**. A caller frees only when *every* callee promotes. Always
+1. **A dependency CONE is an upper bound, not a forecast.** Four measurements
+   across this work: cone 634 → realized **+55**; cone 483 → realized **+2**;
+   cone 35 → realized **+2**; the indirect-far capability's own cone → realized
+   **+2** (the binding constraint was evidence coverage, not the capability —
+   see task #60). A caller frees only when *every* callee promotes. Always
    report the re-run fixpoint number as the headline, and label cones as bounds.
 2. **Rank by unlock, never by count.** `leave-without-enter` had 143 members and
    unlocks **zero** (they are all `entry_origin: dispatch-fact` case-arm
    fragments that nothing calls). 24 frame-pointer refusals gated 634.
 3. **Suspect the lifter first** — every glitch is triaged as a possible
    automatic-lifter bug (oracle differential at the site) *before* being called a
-   game fact, env-wait, or API gap.
+   game fact, env-wait, or API gap. But also: not every glitch IS a lifter or
+   API bug — cont.255–257 found two real bugs in `scripts/play.py`/`win16_re`
+   tooling that had nothing to do with the recovered corpus.
 4. **Check `git push` exit codes.** `git push … | tail` masks a rejection and has
    silently left a submodule pinned at an unpushed SHA. Use `git push …; echo
    "exit: $?"`. dos_re `main` advances upstream frequently — expect to rebase.
 5. **Add files explicitly**, never `git add -A` (a stray `pynuked_opl3/` gitlink
-   got swept in once).
+   got swept in once; a stray `scratch_symbols.txt` sits at the repo root —
+   leave it alone, it predates this work and isn't yours to clean up).
 6. **Demos are hook-config-specific.** A v4 demo replays faithfully only under the
    hook config it was recorded with; cross-config replay silently desyncs.
+7. **When running independent background agents on the same working tree,
+   verify each one's claims yourself before integrating.** cont.255–257 ran two
+   agents concurrently with a file-scope split (one on `callback.py`/`demo.py`,
+   one on `gdi.py`/`objects.py`); both landed real, independently-verified
+   fixes. Always re-run the new tests against the OLD code yourself (`git show
+   main:path > path`, run, restore) rather than trusting a "verified failing on
+   old code" claim at face value.
 
 ---
 
-## 4. In flight right now
+## 4. Nothing in flight as of this writing
 
-Two background agents were running when this was written. **Check their state
-before touching these files.**
-
-| agent | scope | files to avoid |
-|---|---|---|
-| MIDI switching + `CallbackOverrun` | why `cold2` replay spins in `_TickCount`, and whether it shares a cause with "music doesn't always switch" | `win16/api/mmsystem.py`, `win16/audio.py`, `win16/demo.py`, `win16/callback.py` |
-| Quick-Game window ghosting | stale pixels reported late in a session | `win16/compositor.py`, repaint/update-region paths |
+The two agents active at the previous handover (MIDI/`CallbackOverrun`,
+Quick-Game ghosting) both finished, were independently verified, and are
+merged — see §5. No background work is currently running against this repo.
 
 ---
 
-## 5. Owner feedback from the latest play session, and its triage
-
-> "music is not always switching when it should" — **in flight** (agent above).
-> Suspected shared cause with the replay hang: `MAINWNDPROC` (`0100:2930`) spins
-> in `_TickCount` (`0E99:18AC`, stopped at `18B6`) for >20M steps, plausibly
-> waiting on an MCI state transition that never occurs headlessly. **Hypothesis,
-> not established** — the agent was told to test it, not assume it.
-
-> "ghosting on the SimAnt - Quick game window" — **in flight** (agent above).
-> Check whether it is actually task #33 (popup z-order) in disguise.
+## 5. Owner feedback from play sessions, and its resolution
 
 > "at file save as I see text [ListBox] and not the real list box" — **FIXED**
-> (`088f2b5`). Note the owner guessed "probably win api inaccuracies" and that
-> was wrong: the `LB_*` message surface in `win16/api/dialogs.py` is fully
-> implemented and the game's `DlgDirList`/`LB_GETCURSEL`/`LB_GETTEXT` round trip
-> worked. The missing piece was the **host widget** in `scripts/play.py`, whose
-> tkinter dialog renderer handled Static/Button/Edit/ComboBox and dropped
-> everything else onto an `f"[{cls}]"` placeholder. The box was functional and
-> invisible — the game could read a selection the user had no way to make.
+> (cont.255, `088f2b5`). Not a Win16 API gap: the `LB_*` message surface in
+> `win16/api/dialogs.py` was already fully implemented and the game's
+> `DlgDirList`/`LB_GETCURSEL`/`LB_GETTEXT` round trip worked. The missing piece
+> was the **host widget** in `scripts/play.py`'s tkinter dialog renderer, which
+> handled Static/Button/Edit/ComboBox and dropped everything else onto an
+> `f"[{cls}]"` placeholder label. The box was functional and invisible — the
+> game could read a selection the user had no way to make.
+
+> "later in game I saw some ghosting on that SimAnt - Quick game window" —
+> **FIXED** (cont.256). Root cause: `Surface.version` is the only signal a host
+> uses to know a surface has new pixels, and six drawing primitives
+> (`blit`/BitBlt, `_fill_rect`, `_fill_polygon`/TrapFill, `TextOut`,
+> `StretchBlt`) bumped it **before** writing pixels instead of after. A
+> compositor sampling mid-write could latch a half-drawn buffer under the
+> *final* version number and then never redraw again, since every later tick
+> sees that same unchanged version. Fixed by moving `touch()` to after the
+> write in all six primitives — a Windows ordering rule, not a SimAnt one.
+> **Confirmed NOT task #33** (still open): a headless probe over the full
+> `cold_nohooks` replay found zero version/image desyncs, which rules this fix
+> out as #33's cause. #33 is wrong-window-in-front (z-order); this was stale
+> pixels in a correctly-stacked window.
+
+> "I think that music is not always switching when it should" — **STILL OPEN**
+> (task #62). A related symptom — `cold2` (see below) failing to replay with a
+> `CallbackOverrun` in `MAINWNDPROC` — turned out to be unrelated: a PC
+> histogram showed the callback was legitimately resident in
+> `_AboutDialog`/`_TickCount`, pumping input and repainting, not hung, and NOT
+> making any MCI call (confirmed: no `0xB903`/`MM_MCINOTIFY` immediate exists
+> anywhere in the whole IR). That hang is **fixed** (cont.257, see below) but
+> the actual music-switching symptom is separate and still unexplained. What IS
+> known: `_myBeginSong` sends `MCI_STATUS` (0x0814) flags 0x340, and
+> `win16/api/mmsystem.py` returns a benign `0` for every `dwItem` except
+> `MCI_STATUS_MODE`; the `cold2` MCI log shows tracks going
+> open→play→close back-to-back, matching the "starts then immediately
+> switches" symptom. Next step (task #62): decode the real `dwItem` from
+> `services["mci_log"]` captured over `cold2` and implement the observed
+> contract — do not guess it.
+
+**A second finding, not from feedback but from using the owner's `cold2`
+recording as a stress test:** `call_far`'s step cap was a fixed length limit,
+not a hang detector — a callback the game legitimately resides in for
+unbounded wall time (a modal dialog message loop) would overrun it even while
+making real progress. Fixed (cont.257) by making the cap a **no-progress**
+detector: `yield_check` may report progress and reset the budget; what stays
+capped is a callback that burns the whole budget with genuinely no external
+progress. The cap itself was **not raised**. Result: `artifacts/demos/cold2.jsonl`
+(31766 records, the owner's widest session, reaching four MIDI tracks including
+a defeat) now replays to a clean end — instr 489,923,305, 658 functions
+executed, all records consumed. Was a hard `CallbackOverrun` at instr
+92,489,660 / 496 functions. This is the project's first wide-coverage session
+to replay end to end.
 
 ---
 
 ## 6. What to do next, in priority order
 
-### A. Widen far-call evidence coverage (task #60) — the current bottleneck
+### A. Widen far-call evidence coverage further (task #60)
 
-Indirect far-call composition **landed and is guarded**, but realized only **+2**,
-because the binding constraint is evidence, not capability: only **22 of 85**
-`FF /3` sites in the IR carry observed evidence, and of the 9 functions whose
-*sole* blocker is far-indirect, **7 have no evidence at their site at all**.
+Indirect far-call composition **landed and is guarded** (an unwitnessed pointer
+at runtime raises rather than falling through), but realized only **+2**
+`promotable`, because the binding constraint is evidence, not capability. With
+`cold2` now replaying clean, the union evidence (`cold_nohooks` + `cold2`) is
+**47 sites / 150 edges** (was 42/115 on `cold_nohooks` alone) — regenerating
+against it took `absorbed_arms` 74 → 102 and `contains-call` 819 → 791, i.e. 28
+more far-indirect sites compose as dispatch **arms** of an already-promoted
+container, not as new standalone functions. That is a real gain of a different
+shape than a `promotable` increase.
 
-`scripts/entry_probe.py` now captures far-indirect sites (it previously skipped
-them for a real reason — such a call usually targets an import thunk, which is a
-Python *hook*, so "next interpreted instruction" would have recorded the
-post-return continuation; fixed by closing the pending binding in **both**
-telemetry callbacks).
-
-Concretely:
-- `artifacts/demos/cold2.jsonl` (31766 records, four MIDI tracks, real gameplay)
-  is the wide demo — **blocked on the `CallbackOverrun` agent above**.
-- Unioning `cold_nohooks` with an earlier wide demo already took sites 42 → 46
-  and edges 115 → 146. Unioning is safe: the composition guard *raises* on any
-  pointer outside the evidence set, so bad evidence cannot silently corrupt a
-  lift. But the evidence file should carry **provenance** before unioning becomes
-  routine, so a stale capture cannot quietly widen an arm set.
+Still open: only a fraction of the 85 `FF /3` sites in the IR carry evidence
+even after the union. The evidence file should carry **provenance** before
+unioning becomes routine, so a stale capture cannot silently widen an arm set.
+`cold2` is now a second demo worth recording evidence from routinely — see
+task #49 below, which it also serves.
 
 ### B. Route the skin into the composable graph (task #53)
 
 The single largest remaining number in the observed closure, and **the bodies
-already exist**. Of the 209 still-interpreted closure functions:
+already exist**. Of the 209 still-interpreted closure functions (unchanged
+count from cont.253's measurement — re-verify before relying on it):
 
 ```
 depend on a MANUAL body (skin)        159
@@ -215,9 +262,9 @@ depend on NEITHER                      44
 not achievable in the closure — they have to land together. Standalone, the skin
 frees ~53 and the indirect work ~6.
 
-Watch the virtual-time constraint: island-cost overrides are **not** admissible to
-the instruction-count-keyed byte-exact gate. Also note that a CPUless *demo*
-replay **is** instruction-count-keyed (`Win16CpulessPlatform.call` accumulates
+Watch the virtual-time constraint: island-cost overrides are **not** admissible
+to the instruction-count-keyed byte-exact gate. A CPUless *demo* replay **is**
+instruction-count-keyed (`Win16CpulessPlatform.call` accumulates
 `compat["cost"]` into `carrier.instruction_count`, which `DemoDriver._instr`
 reads) — so the constraint is deferred, not absent, for `--demo`. It genuinely
 does not apply to `--entry`/`--sweep`.
@@ -249,15 +296,25 @@ is the simant-side resolver: `(seg, off) -> recovered callable`, which the
 corpus's `simant/native/cpuless/dispatch.py` `DISPATCH` registry already has the
 data for. Without it, nothing above the message pump runs CPU-free.
 
-### E. Smaller, well-specified
+### E. MIDI: decode the real `MCI_STATUS` `dwItem` (task #62, new)
+
+See §5 above. `services["mci_log"]` over a `cold2` replay is the evidence
+source. Implement in win16_re (game-agnostic — this is an MCI/MMSYSTEM
+contract, not a SimAnt fact) once the real value is known; do not guess it.
+
+### F. Smaller, well-specified
 
 - **Raw-API values forms**: 3 of 4 closed (`wsprintf`, `DOS3Call`, `InitTask`).
   `WIN87EM.1 __fpMath` deliberately still refuses — `win16/fpu.py` is unbuilt by
   design and the FP frontier measures **0 reachable**. Pinned by a test so it
   stays a decision, not an oversight.
-- **Task #33** popup-behind z-order (may be the ghosting report's real cause).
+- **Task #33** popup-behind z-order (host promotion) — confirmed still open and
+  distinct from the ghosting fix; see §5.
 - **Task #52** recovery-boundary defects (state-store contract for `_srand`;
   sub-function re-splits for `_GetMap`/`_GetLife`/`_IsClearTile`).
+- **Task #49** re-record a gameplay demo as a second behavioral gate — `cold2`
+  is now a strong candidate, since it replays clean and reaches far more of the
+  game than `cold_nohooks` (658 vs 597 functions executed).
 - **`play_cpuless --sweep` on the skin corpus never completes** — it reloads a
   4 MB boot image per root, 669 times. Make it reuse one image before chasing
   that number.
