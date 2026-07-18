@@ -1,9 +1,17 @@
 # Handover — SimAnt port, 2026-07-19
 
+> **STALE PIN NUMBERS BELOW.** Written mid-session before cont.255–257 landed
+> (the ListBox host widget, the Quick-Game ghosting fix, and the callback
+> no-progress-detector fix that lets `cold2` — the owner's 31766-record wide
+> session — replay clean). Current pins: `dos_re 8ccd3e1` → `win16_re 2e8e96e`
+> → `simant_port ec1b845`. Read `docs/run_status.md` cont.257 down to cont.249
+> for the up-to-date picture; sections 2–7 below (the architecture rule, the
+> hard-won lessons, the priority list) are still accurate.
+
 A point-in-time snapshot for an agent picking this up. The durable record is
-`docs/run_status.md` (newest on top; read **cont.249–254**). This file says where
-things stand *right now* and what to do next; when it disagrees with the journal,
-the journal and git win.
+`docs/run_status.md` (newest on top; read **cont.249–257**). This file says
+where things stand *right now* and what to do next; when it disagrees with the
+journal, the journal and git win.
 
 Read first: `CLAUDE.md`, `AGENTS.md`, `win16_re/CLAUDE.md`, `win16_re/docs/README.md`.
 
