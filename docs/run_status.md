@@ -1,5 +1,130 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.248) - OVERRIDE VIRTUAL-TIME CONTRACTS: the override graph is GATE-ADMISSIBLE and PASSES the byte-exact gate (6 static-cost overrides, 402->408 composed) - and the 126-cluster's real blocker is re-derived: NOT virtual time
+- **THE HEADLINE: the override graph now PASSES the pinned byte-exact gate.**
+  `checkpoints.py --api-aligned --mask-poison artifacts/vmless_boot
+  --boot-image artifacts/vmless_boot cold_nohooks --lift-dir
+  simant/lifted/graph_cpuless_override --check artifacts/oracle_fresh2.trace
+  --check-field mdigest` -> **all 39 checkpoints + final MATCH, instr
+  199,619,366, mdigest 417cac5cd9aadb8c** - the exact cont.238/240/242/244/245/
+  246/247 pin, now reached by a graph in which hand-recovered bodies RUN.
+  cont.247's blocker is closed, honestly and with a negative control.
+- **The mechanism: an override declares its VIRTUAL-TIME contract.**  A composed
+  callee returns `cost` in the compat channel and the caller accumulates it into
+  `_cost`, which anchors every downstream plat effect and - because the demo is
+  instruction-count-keyed - decides WHERE recorded input lands.  A GENERATED
+  body is instruction-exact by construction; a semantic override is not.  So an
+  override now says what its cost MEANS:
+  `virtual_time: {"kind": "static", "cost": N}` (every entry->ret path through
+  the original executes exactly N instructions), `{"kind": "model"}` (the body
+  computes its exact per-invocation cost), or `{"kind": "island"}` (one dispatch
+  step - exact in state, NOT in time; the historical convention, and the default
+  when absent).
+- **(1) The GENERIC half, in dos_re** (branch `cpuless-override-vtime` off
+  origin/main 7ed71af, commit **a450073**).  `cpuless_promote --overrides`
+  parses the contract (`_read_virtual_time`; a malformed one is a hard
+  `SystemExit` - a guessed cost is worse than none) and the new
+  **`--overrides-time-exact-only`** seeds ONLY the exact kinds, so an `island`
+  address falls back to its instruction-exact GENERATED body and the graph as a
+  whole stays admissible.  The census records `override_virtual_time` /
+  `override_time_inexact`.  The DERIVATION of a cost stays entirely the
+  consumer's - dos_re still learns nothing about any game.  Differential
+  regression `test_cpuless_override_vtime` (9 cases): the composed caller's
+  accumulated `_cost` diffed against the INTERPRETER's own instruction count
+  over the identical caller+override bytes - exact under a static contract, and
+  the island convention's under-count pinned as the drift the contract removes.
+- **(2) The SimAnt half: mechanical cost derivation
+  (`scripts/overridegen.py static_cost`).**  Walks the recovery-IR CFG from the
+  entry: `ret/retf` = 1, `seq`/`jmp` = 1 + successor, `jcc` = 1 + arm (both arms
+  must be EQUAL, else path-dependent), `call`/`call_far` = 1 + the callee's own
+  static cost + successor (a `0060` platform thunk is dynamic -> refused).  A
+  back edge, unequal arms, recursion or a plat call => **island, never
+  approximated**.  This is exactly the total dos_re's generated twin accumulates
+  (`_cost += count` at the RET), which is what a composing caller adds.
+- **THE HONEST SPLIT: 6 static / 0 model / 160 island of the 166 routed
+  overrides.**  Non-admissible by reason: **path-dependent 94, loop 66**.  The 6
+  with a derived constant: `2F99:30E8 _ClearListB` (3), `2F99:30F4 _ClearListR`
+  (3), `2F99:53D4 _KillSpider` (7), `430E:1378 _InitSimYard` (77), `430E:2096
+  _InitGrassMap` (12), `430E:5A70 _InitSimVars` (17).  The straight-line tier is
+  a **small** tier: SimAnt's hand-recovered corpus is overwhelmingly loops and
+  unequal branches, because that is what was worth recovering by hand.  No cost
+  was guessed and no gate was weakened to widen it.
+- **The gate is NOT vacuous, and the negative control proves the cost is
+  load-bearing.**  4 of the 6 (`_ClearListB`, `_ClearListR`, `_InitSimYard`,
+  `_InitSimVars`) are in `observed.json` - they RUN in the gated demo.  Patching
+  those four back to `cost: 1` and re-running the gate reproduces cont.247's
+  measurement EXACTLY: **DIVERGED at cp0, instr 5,000,043 vs baseline 5,000,059
+  = -16**, with mdigest still identical (`17c6448d6a3d32a7`) - i.e. the state
+  was always right and the TIME was the whole defect, and -16 is precisely
+  `_InitSimVars`' 17-1.  Restoring the derived costs restores the MATCH.
+- **Coverage: 408 routed (402 generated + 6 gate-admissible overrides), lint
+  PASS (423 modules).**  `--with-overrides` is now the *gate-admissible*
+  configuration by default and no longer carries a warning; the old maximal
+  behaviour moved behind **`--overrides-any-time`** (seeds all 166 at island
+  cost - explicitly NOT gate-admissible, for a re-recorded demo only).
+  `overridegen --only-time-exact` is required alongside it: a generated body and
+  its override share the `func_<para>_<ip>` module name, so writing an un-seeded
+  island body would silently CLOBBER the instruction-exact generated twin (found
+  while wiring, not by the gate).
+- **Binary-wide census: composable-today stays 868** - unchanged, as cont.247
+  predicted: `cpuless_binary_census.py` still does not model the override seam
+  (all 309 manual entries already sit in its `manual-cpuless-override` bucket).
+  Teaching it the routed/gate-admissible split remains a reported follow-up, not
+  folded into the headline.
+- **RE-DERIVED, and the framing premise was wrong in two ways.**  The task
+  framed the 126-function message-pump cluster as blocked by manual-adapter
+  leaving-edges (`_win_IsWinOpen` 42x, `_DeadAntHere` 28x, `_SRand*`,
+  `__aFldiv`, `_win_GetObjRect`) that "compose ONLY as overrides".  Measured:
+  - **None of those functions is a routed override.**  Every one is in the 143
+    **kept-generated** set (`args-incomplete`, `result-convention`,
+    `presentation-effects`, `sig-mismatch`, `callee-cleans`), so it already
+    composes through its instruction-exact generated body.  `_myBeginSound` is
+    not even in `recovered_map.json`.  Their cost contracts were never the
+    blocker.
+  - **`scripts/cpuless_wall_gap.py`'s own model says the cluster is blocked by
+    `dyn-target-unpromoted`.**  The cluster is ATOMIC, so one unclean body keeps
+    all of it out; re-run on a FRESH census the residual is **130** and the
+    blockers are **9**: `0100:023A _UpdateUserButtons`, `0100:02D6 case_02D6`,
+    `0100:035A case_035A`, `18C0:0B7A _ProcEditEvent`, `18C0:A51E
+    _ProcYardEvent`, `18C0:A6CE _ProcYardRibbonEvent`, `18C0:C3D4
+    _ProcMapRibbonEvent`, `430E:B710 _win_DrawObjectI`, `430E:E6E2 _win_Recalc`
+    - all the cont.246 evidence-gated tail-dispatch containers.  That is
+    frontier lever **(1) dispatch-cluster arm-as-alt-entry**, explicitly out of
+    scope here.  (The cont.247-era artifact said 126/6; the delta is a stale
+    census, not a regression - 402 promoted either way.)
+  - The wall-gap tool was also **optimistic about manual**: it treated all 132
+    manual entries in the closure as composable.  It now reads
+    `artifacts/overrides.json` and splits the rung into **+manual direct-compose
+    (routed) +24** (what exists) vs **+manual direct-compose (all) +148** (the
+    ceiling once the remaining contracts close), and NAMES the unclean bodies
+    that keep the atomic cluster out instead of printing "does NOT close" with
+    no next step.
+- **The remaining path to `play_cpuless`**, re-ranked on this evidence: (1)
+  **dispatch-cluster arm-as-alt-entry** for the 9 `dyn-target-unpromoted`
+  containers - the ONLY thing between the fixpoint and a closed 597-function
+  wall; (2) **close the 143 kept-generated contracts** (args-incomplete 96 first
+  - a `[bp+N]` map per entry) to convert the +148 ceiling into real overrides,
+  each of which then needs its own virtual-time contract; (3) **a cost MODEL
+  tier** for the 160 island overrides (per-block counts from the generated twin
+  + a path witness the recovered body returns) - the only way the manual corpus
+  becomes gate-admissible at scale; (4) far-indirect / `_myBeginSound`; (5) x87
+  (0 reachable).  Note (3) is what a **semantic-boundary clock** (cont.223)
+  would retire wholesale - it remains the real fix.
+- **Chain (NOT pushed - owner reviews + pushes dos_re->win16_re->simant_port):**
+  dos_re **a450073** -> win16_re **9b8731c** -> simant_port (this), each on
+  branch `cpuless-override-vtime` off its main.  Suites green per repo: dos_re
+  **717** (+13), win16_re **341**, simant_port **2278** (+8 virtual-time tests).
+  `simant/recovered/`, v0.1.0 dist/+tag untouched; the PINNED production gate
+  re-verified green after the work (graph_cpuless, 402, all 39 cp + final
+  MATCH).  Generated `simant/native/cpuless/` + both graph dirs +
+  `artifacts/overrides.json` disposable/gitignored.
+- **Reproduce.**  Pinned graph: `python scripts/cpuless_promote.py`.  The
+  gate-admissible override graph: `python scripts/cpuless_promote.py
+  --with-overrides --graph-dir <ABS>/simant/lifted/graph_cpuless_override` (408
+  routed) -> the `checkpoints.py --check-field mdigest` gate above.  `python
+  scripts/overridegen.py --dry-run` alone prints the 6/160 virtual-time split
+  with each derived cost.
+
 ## 2026-07-18 (cont.247) — MANUAL DIRECT-COMPOSE: the unified override graph (generic dos_re seam + carrier-free shim) — 166 hand-recovered bodies compose as DIRECT CPUless overrides, composed 402→571; the override graph is BLOCKED on virtual-time, pinned gate untouched and green
 - **The architecture landed: one graph, address-keyed, `implementation =
   overrides.get(addr, generated[addr])`.**  Until now the 309 hand-recovered

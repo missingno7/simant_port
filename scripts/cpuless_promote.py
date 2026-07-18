@@ -290,14 +290,24 @@ def main(argv=None) -> int:
                          "DIRECT carrier-free CPUless overrides at their own "
                          "address (impl = overrides.get(addr, generated[addr])) "
                          "instead of staying literal lifts, so their callers no "
-                         "longer refuse contains-call.  OFF by default: an "
-                         "override is ONE dispatch step (the island virtual-"
-                         "time convention), so the override graph does NOT "
-                         "preserve the instruction-count timeline the pinned "
+                         "longer refuse contains-call.  Only the overrides "
+                         "carrying an EXACT virtual-time contract are seeded "
+                         "(cont.248) -- the rest keep their instruction-exact "
+                         "generated body -- so the graph stays admissible to "
+                         "the byte-exact gate.  Pair it with --graph-dir "
+                         "simant/lifted/graph_cpuless_override to keep the "
+                         "pinned graph untouched.")
+    ap.add_argument("--overrides-any-time", action="store_true",
+                    help="seed EVERY routable override, including the ones "
+                         "whose per-invocation cost is path-dependent and so "
+                         "run at the ISLAND cost (one dispatch step).  Maximum "
+                         "manual coverage, but the graph no longer preserves "
+                         "the instruction-count timeline the pinned "
                          "cold_nohooks oracle (and the instruction-count-keyed "
-                         "demo) require -- see docs/run_status.md cont.247.  "
-                         "Pair it with --graph-dir simant/lifted/"
-                         "graph_cpuless_override to keep the pinned graph.")
+                         "demo) require -- cont.247 measured -16 instructions "
+                         "at cp0 accumulating to -2.2M by cp31.  NOT "
+                         "gate-admissible; use only with a demo re-recorded "
+                         "under this exact config.")
     ap.add_argument("--tiers", default="leaf,calls-only",
                     help="comma-separated census tiers to feed the promoter "
                          "(default: leaf,calls-only — the calls-only widening; "
@@ -379,9 +389,26 @@ def main(argv=None) -> int:
         ])
         if og_rc != 0:
             return og_rc
-        overrides = sorted(json.loads(
-            Path(args.overrides_out).read_text(encoding="utf-8"))["overrides"])
+        ov_doc = json.loads(
+            Path(args.overrides_out).read_text(encoding="utf-8"))["overrides"]
         promote_argv += ["--overrides", f"@{args.overrides_out}"]
+        if args.overrides_any_time:
+            overrides = sorted(ov_doc)
+            print("WARNING: --overrides-any-time seeds ISLAND-cost overrides; "
+                  "the graph is NOT admissible to the instruction-count-keyed "
+                  "byte-exact gate (cont.247/248).")
+        else:
+            # Gate-admissible subset: only the overrides whose per-invocation
+            # virtual time is EXACT (overridegen derives it from the IR CFG).
+            # The dos_re promoter applies the same filter when seeding, so the
+            # routed adapter set and the seeded contract set stay identical.
+            promote_argv += ["--overrides-time-exact-only"]
+            overrides = sorted(
+                k for k, v in ov_doc.items()
+                if v.get("virtual_time", {}).get("kind", "island") != "island")
+            print(f"overrides: {len(overrides)}/{len(ov_doc)} carry an EXACT "
+                  f"virtual-time contract and are seeded; the rest stay on "
+                  f"their instruction-exact generated body.")
     if args.dry_run:
         print("\n=== promotion census (dry run) ===")
         return promote.main(promote_argv)
@@ -412,7 +439,7 @@ def main(argv=None) -> int:
         og_rc = overridegen.main([
             "--ir", args.ir, "--map", args.map,
             "--bodies-dir", str(rec_dir), "--out", args.overrides_out,
-        ])
+        ] + ([] if args.overrides_any_time else ["--only-time-exact"]))
         if og_rc != 0:
             return og_rc
 

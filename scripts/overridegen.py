@@ -34,11 +34,23 @@ Because the shim reaches no ``dos_re.cpu`` and no ``simant.lifted``, it PASSES
 as the body dos_re's ``cpuless_promote --overrides`` seeds a contract for and
 every caller composes.
 
-VIRTUAL TIME: an override is ONE dispatch step (``cost=1``), the island
-convention every hand-recovered body has followed since the first -- not the
-generated body's instruction-exact timeline.  The boot-image gate samples at API
-boundaries where that difference is not observable (the 402 generated adapters
-already ride it).
+VIRTUAL TIME (cont.248): an override that runs at the ISLAND cost (one dispatch
+step) is exact in STATE but not in TIME -- it does not execute the original's
+control flow, so it under-counts, shifting every downstream platform effect and
+desyncing the instruction-count-keyed demo (cont.247 measured -16 at cp0 ->
+-2.2M by cp31).  Each override therefore derives a dos_re VIRTUAL-TIME CONTRACT
+(``virtual_time``) from the recovery IR (:func:`static_cost`):
+
+  * ``{"kind": "static", "cost": N}`` -- every entry->ret path through the
+    original executes exactly N instructions (a single-path body, or one whose
+    branch arms have equal length, or one whose calls are themselves static).
+    The emitted body returns N, so composition is virtual-time-EXACT and the
+    address is admissible to the byte-exact gate.
+  * ``{"kind": "island"}`` -- the cost genuinely depends on the executed path
+    (a loop, or unequal branch arms) and semantic recovery does not hand us the
+    path.  NOT gate-admissible; ``cpuless_promote --overrides-time-exact-only``
+    leaves the address on its instruction-exact GENERATED body.  We never GUESS
+    a cost.
 
 Emits, for each routed entry:
   * ``<bodies-dir>/func_<para>_<ip>.py``  -- the carrier-free override body
@@ -93,6 +105,122 @@ VIEW_BIND = {
 _VIEW_VAR = {"dgroup": "dgroup", "simant_data_group": "sdg", "pack": "pack"}
 
 
+class NotStatic(Exception):
+    """The original's per-invocation instruction count is not a constant."""
+
+
+def _insts(fn: dict) -> dict[int, tuple[dict, int]]:
+    """{ip: (instruction, next_ip)} over the whole function region."""
+    out: dict[int, tuple[dict, int]] = {}
+    for blk in fn["blocks"]:
+        for i in blk["instructions"]:
+            ip = int(i["ip"], 16)
+            out[ip] = (i, ip + len(i["bytes"]) // 2)
+    return out
+
+
+def static_cost(key: str, funcs: dict, _chain: tuple = (),
+                _memo: dict | None = None) -> int:
+    """The ORIGINAL's per-invocation instruction count, entry through its return
+    inclusive -- or raise :class:`NotStatic`.
+
+    This is the ground truth a ``static`` virtual-time contract declares, and it
+    is exactly what the generated twin accumulates (dos_re's emit_cpuless counts
+    every instruction including the terminating ``ret``/``retf``, and a composing
+    caller adds the callee's ``cost`` verbatim).  Derived MECHANICALLY from the
+    recovery IR, never hand-written:
+
+      seq/jmp     1 + cost of the successor
+      jcc         both arms must cost the SAME, else path-dependent
+      ret/retf    1 (the return instruction itself)
+      call        1 + the callee's own static cost + the successor's
+      call_far    same, unless the target is the 0060 platform thunk (the
+                  plat.farcall dispatch cost is dynamic)
+
+    Any loop (a back edge), unequal branch arms, recursion, or a platform call
+    makes the cost path-dependent -- reported, never approximated.
+    """
+    _memo = {} if _memo is None else _memo
+    if key in _memo:
+        v = _memo[key]
+        if isinstance(v, NotStatic):
+            raise v
+        return v
+    if key in _chain:
+        raise NotStatic("recursion")
+    fn = funcs.get(key)
+    if fn is None:
+        raise NotStatic("no-ir")
+    chain = _chain + (key,)
+    insts = _insts(fn)
+    cs = int(key.split(":")[0], 16)
+    seen: dict[int, int] = {}
+    on_path: set[int] = set()
+
+    def at(ip: int) -> int:
+        if ip in seen:
+            return seen[ip]
+        if ip in on_path:
+            raise NotStatic("loop")
+        on_path.add(ip)
+        rec = insts.get(ip)
+        if rec is None:
+            raise NotStatic("off-region")
+        i, nxt = rec
+        kind = i["kind"]
+        if kind in ("ret", "retf", "iret"):
+            cost = 1
+        elif kind == "seq":
+            cost = 1 + at(nxt)
+        elif kind == "jmp":
+            cost = 1 + at(int(i["target"], 16))
+        elif kind == "jcc":
+            taken, fall = at(int(i["target"], 16)), at(nxt)
+            if taken != fall:
+                raise NotStatic("path-dependent")
+            cost = 1 + taken
+        elif kind == "call":
+            tgt = f"{cs:04X}:{int(i['target'], 16):04X}"
+            cost = 1 + static_cost(tgt, funcs, chain, _memo) + at(nxt)
+        elif kind == "call_far":
+            seg, off = i["far_target"]
+            if int(seg, 16) == 0x0060:
+                raise NotStatic("platform-farcall")
+            tgt = f"{int(seg, 16):04X}:{int(off, 16):04X}"
+            cost = 1 + static_cost(tgt, funcs, chain, _memo) + at(nxt)
+        else:
+            raise NotStatic(kind)
+        on_path.discard(ip)
+        seen[ip] = cost
+        return cost
+
+    try:
+        total = at(int(key.split(":")[1], 16))
+    except NotStatic as exc:
+        _memo[key] = exc
+        raise
+    _memo[key] = total
+    return total
+
+
+def virtual_time_of(c: dict, funcs: dict, memo: dict) -> dict:
+    """The dos_re virtual-time contract for one routed override."""
+    try:
+        return {"kind": "static", "cost": static_cost(c["para_key"], funcs,
+                                                      _memo=memo),
+                "evidence": f"single-path original ({c['para_key']} "
+                            f"{c['symbol']}); instruction count derived from "
+                            f"the recovery IR CFG (scripts/overridegen.py "
+                            f"static_cost)"}
+    except NotStatic as exc:
+        return {"kind": "island", "reason": str(exc),
+                "evidence": f"per-invocation cost is path-dependent ({exc}); "
+                            f"semantic recovery does not yield the executed "
+                            f"path -- NOT gate-admissible, stays on the "
+                            f"generated body under "
+                            f"--overrides-time-exact-only"}
+
+
 def emit_body(c: dict) -> str:
     """Source of one carrier-free CPUless override body (function name matches
     the dos_re contract: ``func_<para>_<ip>``)."""
@@ -108,6 +236,8 @@ def emit_body(c: dict) -> str:
     A("")
     A(f"{c['key']} {c['symbol']} -> {c['impl']}")
     A(f"ABI: {c['ret']} return, views {views},")
+    A(f"     virtual time: {c['virtual_time']['kind']} "
+      f"(cost {c['virtual_time'].get('cost', 1)})")
     A(f"     args {[(n, f'[bp+{bp}]') for n, bp in args]}, result -> {c['result']}")
     A("")
     A("Obeys the dos_re CPUless body ABI (mem + register bundle -> outputs,")
@@ -151,7 +281,23 @@ def emit_body(c: dict) -> str:
     else:                                        # none
         A(f"    {call}")
         out = "{}"
-    A(f"    return {out}, {{'flags': 0, 'fmask': 0, 'cost': 1}}")
+    vt = c["virtual_time"]
+    cost = vt.get("cost", 1)
+    if vt["kind"] == "static":
+        A(f"    # virtual time: the ORIGINAL's per-invocation instruction count "
+          f"is the")
+        A(f"    # constant {cost} (every entry->ret path), so composing this "
+          f"override is")
+        A(f"    # virtual-time-EXACT -- the caller's _cost accumulates exactly "
+          f"as it")
+        A(f"    # would over the ASM.")
+    else:
+        A(f"    # virtual time: ISLAND (one dispatch step) -- the original's "
+          f"cost is")
+        A(f"    # path-dependent ({vt['reason']}), so this override is NOT "
+          f"admissible")
+        A(f"    # to an instruction-count-keyed gate.")
+    A(f"    return {out}, {{'flags': 0, 'fmask': 0, 'cost': {cost}}}")
     A("")
     return "\n".join(L) + "\n"
 
@@ -182,6 +328,7 @@ def contract_of(c: dict) -> dict:
         "flags_livein": False,
         "exit_flags": [],           # a semantic body guarantees no exit flags;
                                     # a caller that reads them stays refused
+        "virtual_time": c["virtual_time"],
         "evidence": f"authoritative hand-recovered ({c['impl']}); "
                     f"routed by adaptgen classify (recovered_map.json)",
     }
@@ -201,6 +348,14 @@ def main(argv=None) -> int:
                     help="the override-contract JSON fed to cpuless_promote "
                          "--overrides")
     ap.add_argument("--report", default=str(DEFAULT_REPORT))
+    ap.add_argument("--only-time-exact", action="store_true",
+                    help="emit body modules ONLY for the overrides carrying an "
+                         "EXACT virtual-time contract (the gate-admissible "
+                         "set).  Required whenever the dos_re promoter runs "
+                         "with --overrides-time-exact-only: a non-seeded "
+                         "address keeps its GENERATED body, which lives under "
+                         "the SAME func_<para>_<ip> module name, so writing an "
+                         "island override there would clobber it.")
     ap.add_argument("--dry-run", action="store_true",
                     help="classify + write overrides.json + report; emit no "
                          "body modules")
@@ -211,6 +366,11 @@ def main(argv=None) -> int:
     facts_doc = adaptgen.load_adapter_facts(Path(args.facts))
 
     routed, kept = adaptgen.classify(map_doc, ir_doc["functions"], facts_doc)
+
+    # the VIRTUAL-TIME contract (cont.248), derived mechanically per override.
+    _memo: dict = {}
+    for c in routed:
+        c["virtual_time"] = virtual_time_of(c, ir_doc["functions"], _memo)
 
     overrides = {c["para_key"]: contract_of(c) for c in routed}
     out = Path(args.out)
@@ -230,10 +390,19 @@ def main(argv=None) -> int:
             raise SystemExit(f"overridegen: bodies dir {bodies} missing -- run "
                              f"the dos_re promoter --apply first")
         for c in routed:
+            if (args.only_time_exact
+                    and c["virtual_time"]["kind"] == "island"):
+                continue
             stem = f"func_{c['para_key'].replace(':', '_').lower()}"
             (bodies / f"{stem}.py").write_text(emit_body(c), encoding="utf-8",
                                                newline="\n")
             written += 1
+
+    exact = sorted(k for k, v in overrides.items()
+                   if v["virtual_time"]["kind"] != "island")
+    inexact = Counter(v["virtual_time"].get("reason", "?")
+                      for v in overrides.values()
+                      if v["virtual_time"]["kind"] == "island")
 
     reason_counts = Counter()
     for k in kept:
@@ -247,9 +416,19 @@ def main(argv=None) -> int:
         "overrides": sorted(overrides),
         "kept_generated": sorted({k["key"]: k for k in kept}.values(),
                                  key=lambda k: k["key"]),
+        "virtual_time": {
+            "policy": "an override declares what its compat-channel cost MEANS; "
+                      "only a STATIC (or model) contract is admissible to the "
+                      "instruction-count-keyed byte-exact gate "
+                      "(cpuless_promote --overrides-time-exact-only).",
+            "gate_admissible": exact,
+            "not_admissible_by_reason": dict(sorted(inexact.items())),
+        },
         "totals": {
             "matched": len(routed) + len(kept),
             "overrides": len(routed),
+            "overrides_time_exact": len(exact),
+            "overrides_time_island": len(routed) - len(exact),
             "kept_generated": len(kept),
             "kept_by_reason": dict(sorted(reason_counts.items())),
         },
@@ -262,6 +441,13 @@ def main(argv=None) -> int:
           f"entries composed as CARRIER-FREE CPUless overrides"
           + ("" if args.dry_run else f" ({written} body modules -> "
                                      f"{args.bodies_dir})"))
+    print(f"VIRTUAL TIME: {len(exact)} override(s) carry an EXACT contract "
+          f"(gate-admissible); {len(routed) - len(exact)} stay ISLAND-cost:")
+    for reason, n in inexact.most_common():
+        print(f"  {n:4d}  {reason}")
+    for k in exact:
+        vt = overrides[k]["virtual_time"]
+        print(f"        {k}  cost={vt.get('cost')}")
     print(f"kept on the GENERATED body: {len(kept)} -- by reason:")
     for reason, n in reason_counts.most_common():
         print(f"  {n:4d}  {reason}")

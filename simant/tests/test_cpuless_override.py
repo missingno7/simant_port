@@ -45,12 +45,19 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture(scope="module")
-def routed():
-    ir = json.loads(IR.read_text(encoding="utf-8"))
+def ir_funcs():
+    return json.loads(IR.read_text(encoding="utf-8"))["functions"]
+
+
+@pytest.fixture(scope="module")
+def routed(ir_funcs):
     mp = json.loads(MAP.read_text(encoding="utf-8"))
     facts = adaptgen.load_adapter_facts(FACTS)
-    r, _kept = adaptgen.classify(mp, ir["functions"], facts)
+    r, _kept = adaptgen.classify(mp, ir_funcs, facts)
     assert r, "no routable manual entries -- the contract source regressed"
+    memo: dict = {}
+    for c in r:
+        c["virtual_time"] = overridegen.virtual_time_of(c, ir_funcs, memo)
     return r
 
 
@@ -135,6 +142,7 @@ def test_body_reads_stack_args_at_the_callee_entry_frame(tmp_path):
         "impl": "simant.tests.test_cpuless_override._IMPL",
         "ret": "far", "views": ["dgroup"],
         "args": [("x", 6), ("y", 8)], "result": "ax",
+        "virtual_time": {"kind": "island", "reason": "synthetic"},
     }
     src = overridegen.emit_body(c).replace(
         "from simant.tests.test_cpuless_override import _IMPL as _impl",
@@ -182,3 +190,126 @@ def test_override_bodies_reach_no_cpu_carrier(routed):
             if line.startswith(("import ", "from ")):
                 assert "dos_re" not in line and "simant.lifted" not in line, \
                     f"{c['key']}: {line}"
+
+
+# --------------------------------------------------------------------------
+# VIRTUAL-TIME contracts (cont.248) -- what makes an override gate-admissible.
+#
+# A composed override returns a `cost` in the compat channel and the caller
+# accumulates it, so an override that does not reproduce the ORIGINAL's
+# per-invocation instruction count shifts every downstream platform effect and
+# desyncs the instruction-count-keyed demo.  overridegen derives that count
+# mechanically from the recovery IR CFG; these tests pin the derivation itself
+# (against hand-computed CFGs) and pin that only an EXACT contract is offered
+# to the gate.
+# --------------------------------------------------------------------------
+
+def _synth_ir(blocks):
+    """A one-function IR doc from (leader, [(ip, kind, bytes, target)]) blocks."""
+    out = []
+    for leader, insts in blocks:
+        ii = []
+        for ip, kind, nbytes, target in insts:
+            d = {"ip": f"{ip:04X}", "kind": kind, "mnemonic": kind,
+                 "bytes": "90" * nbytes}
+            if target is not None:
+                d["target"] = f"{target:04X}"
+            ii.append(d)
+        out.append({"leader": f"{leader:04X}", "instructions": ii})
+    return {"blocks": out}
+
+
+def test_static_cost_counts_the_return_instruction():
+    """A straight-line body's cost is its instruction count INCLUDING the ret --
+    the same total dos_re's generated twin accumulates (`_cost += count` at the
+    RET), which is what a composing caller adds."""
+    funcs = {"1000:0000": _synth_ir([(0x0000, [
+        (0x0000, "seq", 1, None), (0x0001, "seq", 1, None),
+        (0x0002, "retf", 1, None)])])}
+    assert overridegen.static_cost("1000:0000", funcs) == 3
+
+
+def test_equal_branch_arms_are_still_a_constant():
+    """A branch whose arms have EQUAL length still costs a constant -- the cost
+    is path-INdependent even though the body is not single-path."""
+    funcs = {"1000:0000": _synth_ir([
+        (0x0000, [(0x0000, "jcc", 2, 0x0004)]),
+        (0x0002, [(0x0002, "seq", 1, None), (0x0003, "ret", 1, None)]),
+        (0x0004, [(0x0004, "seq", 1, None), (0x0005, "ret", 1, None)]),
+    ])}
+    assert overridegen.static_cost("1000:0000", funcs) == 3
+
+
+@pytest.mark.parametrize("blocks,reason", [
+    # unequal arms: 1 vs 2 instructions after the jcc
+    ([(0x0000, [(0x0000, "jcc", 2, 0x0003)]),
+      (0x0002, [(0x0002, "ret", 1, None)]),
+      (0x0003, [(0x0003, "seq", 1, None), (0x0004, "ret", 1, None)])],
+     "path-dependent"),
+    # a back edge: the trip count is data
+    ([(0x0000, [(0x0000, "seq", 1, None), (0x0001, "jcc", 2, 0x0000)]),
+      (0x0003, [(0x0003, "ret", 1, None)])],
+     "loop"),
+])
+def test_a_path_dependent_body_is_refused_never_approximated(blocks, reason):
+    """We never GUESS a cost: a body whose per-invocation count depends on the
+    executed path is reported, and stays on its instruction-exact generated
+    body."""
+    funcs = {"1000:0000": _synth_ir(blocks)}
+    with pytest.raises(overridegen.NotStatic) as exc:
+        overridegen.static_cost("1000:0000", funcs)
+    assert str(exc.value) == reason
+
+
+def test_a_platform_far_call_is_not_static():
+    """The 0060 import thunk dispatches through plat.farcall, whose cost is
+    dynamic -- a body reaching one can never carry a static contract."""
+    funcs = {"1000:0000": _synth_ir([(0x0000, [
+        (0x0000, "call_far", 5, None), (0x0005, "retf", 1, None)])])}
+    funcs["1000:0000"]["blocks"][0]["instructions"][0]["far_target"] = \
+        ["0060", "0018"]
+    with pytest.raises(overridegen.NotStatic) as exc:
+        overridegen.static_cost("1000:0000", funcs)
+    assert str(exc.value) == "platform-farcall"
+
+
+def test_a_static_call_adds_the_callee_cost():
+    """A call into a statically-costed callee keeps the caller static: the cost
+    is the call + the callee's own total + the rest, exactly as the interpreter
+    would count it."""
+    funcs = {
+        "1000:0000": _synth_ir([(0x0000, [
+            (0x0000, "call", 3, 0x0100), (0x0003, "ret", 1, None)])]),
+        "1000:0100": _synth_ir([(0x0100, [
+            (0x0100, "seq", 1, None), (0x0101, "ret", 1, None)])]),
+    }
+    assert overridegen.static_cost("1000:0100", funcs) == 2
+    assert overridegen.static_cost("1000:0000", funcs) == 1 + 2 + 1
+
+
+def test_the_emitted_body_returns_its_declared_cost(routed):
+    """The contract and the body agree: whatever virtual_time declares is
+    exactly what the body returns in the compat channel.  A drift between the
+    two is invisible to state differentials and would silently shift the
+    timeline."""
+    for c in routed:
+        vt = c["virtual_time"]
+        cost = vt.get("cost", 1)
+        assert f"'cost': {cost}}}" in overridegen.emit_body(c), c["key"]
+        assert overridegen.contract_of(c)["virtual_time"] == vt
+        if vt["kind"] == "island":
+            assert cost == 1                     # one dispatch step
+        else:
+            assert vt["kind"] == "static" and cost >= 1
+
+
+def test_only_exact_contracts_are_offered_to_the_gate(routed, ir_funcs):
+    """The gate-admissible set is exactly the overrides whose cost is a derived
+    constant -- and it is non-empty (the seam is proven by RUNNING overrides,
+    not just by the mechanism)."""
+    exact = [c for c in routed if c["virtual_time"]["kind"] != "island"]
+    assert exact, "no override carries an exact virtual-time contract"
+    for c in exact:
+        # re-derive independently: the declared cost IS the IR-derived count
+        assert c["virtual_time"]["cost"] == overridegen.static_cost(
+            c["para_key"], ir_funcs), c["key"]
