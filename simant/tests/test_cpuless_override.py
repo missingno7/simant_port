@@ -107,6 +107,7 @@ def test_override_set_is_exactly_adaptgen_routed(routed):
         assert got["name"] == f"func_{c['para_key'].replace(':', '_').lower()}"
         # the result convention maps 1:1 onto the CPUless output set
         assert got["outputs"] == {"ax": ["ax"], "dxax": ["ax", "dx"],
+                                  "tuple_ax_dx": ["ax", "dx"],
                                   "none": []}[c["result"]]
 
 

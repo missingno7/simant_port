@@ -278,6 +278,9 @@ def emit_body(c: dict) -> str:
     elif c["result"] == "dxax":
         A(f"    _r = {call} & 0xFFFFFFFF")
         out = "{'ax': _r & 0xFFFF, 'dx': (_r >> 16) & 0xFFFF}"
+    elif c["result"] == "tuple_ax_dx":
+        A(f"    _a, _d = {call}")
+        out = "{'ax': _a & 0xFFFF, 'dx': _d & 0xFFFF}"
     else:                                        # none
         A(f"    {call}")
         out = "{}"
@@ -312,7 +315,8 @@ def contract_of(c: dict) -> dict:
     if args:
         inputs += ["ss", "sp"]
     result = c["result"]
-    outputs = {"ax": ["ax"], "dxax": ["ax", "dx"], "none": []}[result]
+    outputs = {"ax": ["ax"], "dxax": ["ax", "dx"],
+               "tuple_ax_dx": ["ax", "dx"], "none": []}[result]
     stem = f"func_{c['para_key'].replace(':', '_').lower()}"
     return {
         "name": stem,

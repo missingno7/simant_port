@@ -18,6 +18,34 @@
   ]
  },
  "entries": {
+  "4:06F6": {
+   "route": false,
+   "evidence": "generated-adapter A/B divergence (2026-07-18, cont.250): the ASM at seg4:06F6 STORES the new state into DGROUP -- `mov [0xAE34],ax` + `mov word [0xAE36],0` (bytes a334ae / c70636ae0000) -- while `crt_math.c_srand(seed) -> int` is a PURE function that only RETURNS the new state; the adapter therefore leaves DGROUP unchanged and the A/B oracle reports `seg10 state differs`. The [bp+6] arg map is correct (argmapgen); what is missing is a state-STORE contract (an out-parameter/global-write fact class), which does not exist. Same class as _rand/_RRand/_SRand* whose recovered signatures thread the RNG state as an explicit in/out value."
+  },
+  "4:7360": {
+   "result": "tuple_ax_dx",
+   "evidence": "recovered docstring + disassembly (cont.250): `_FlipLong` (seg4:7360) takes the long as two words at [bp+6] (low) / [bp+8] (high) and returns AX = flip(high), DX = flip(low) -- i.e. a PAIR of independent word results, not a DX:AX dword. `byteops.flip_long(lo, hi)` returns exactly `(flip_word(hi), flip_word(lo))`, so the tuple maps positionally onto (AX, DX). Proven per-call by the generated-adapter A/B oracle."
+  },
+  "5:6040": {
+   "route": false,
+   "evidence": "generated-adapter A/B divergence (2026-07-18, cont.250): the recovered `gameplay.life_cell_offset` returns the DGROUP *OFFSET* of the cell, but the ASM entry at seg5:6040 returns the cell's *VALUE* (it dereferences the offset it computes; measured: for (plane,x,y)=(0,0,0) the ASM returns AX=0000, the impl returns 0x68E8, the base of the life-grid array) -- 0xFFFF appears only on the out-of-range path. The impl is therefore a SEMANTIC SUB-FUNCTION of the ABI entry, like 5:5B2C _IsClearTile: no result convention closes it, because the value the ABI returns is not the value the impl computes. An earlier `ax_or_ffff` result fact was retracted when the A/B oracle rejected it. Closing this needs the impl re-split at the ABI boundary (a recovery task, not a contract task). The [bp+6]/[bp+8]/[bp+0A] arg map derived by argmapgen is correct and stays."
+  },
+  "5:60E2": {
+   "route": false,
+   "evidence": "generated-adapter A/B divergence (2026-07-18, cont.250): the recovered `gameplay.map_cell_offset` returns the DGROUP *OFFSET* of the cell, but the ASM entry at seg5:60E2 returns the cell's *VALUE* (it dereferences the offset it computes; measured: for (plane,x,y)=(0,0,0) the ASM returns AX=0000, the impl returns 0x28E8, the base of the map array) -- 0xFFFF appears only on the out-of-range path. The impl is therefore a SEMANTIC SUB-FUNCTION of the ABI entry, like 5:5B2C _IsClearTile: no result convention closes it, because the value the ABI returns is not the value the impl computes. An earlier `ax_or_ffff` result fact was retracted when the A/B oracle rejected it. Closing this needs the impl re-split at the ABI boundary (a recovery task, not a contract task). The [bp+6]/[bp+8]/[bp+0A] arg map derived by argmapgen is correct and stays."
+  },
+  "5:5B2C": {
+   "route": false,
+   "evidence": "generated-adapter A/B divergence (2026-07-18, cont.250): the recovered `gameplay.is_clear_tile(plane, map_tile, life_value)` is a SEMANTIC SUB-FUNCTION of the ABI entry, not the entry itself. The ASM at seg5:5B2C takes (plane, x, y) at [bp+6]/[bp+8]/[bp+0A] and FETCHES the map/life cells itself (`mov cl,[bx*64+0x28E8]` / `+0x48E8` / `+0x58E8`, and the life planes at 0x68E8/0x88E8/0x98E8); the impl receives the already-fetched cell VALUES. So the three ABI slots do not correspond to the impl's three parameters and no [bp+N] map can close the contract -- routing it would feed coordinates where cell values are expected. Recorded as `arg_map_refused` in recovered_map.json. Closing this needs the impl re-split at the ABI boundary (a recovery task, not a contract task)."
+  },
+  "5:8C70": {
+   "result": "none",
+   "evidence": "generated-adapter A/B divergence + disassembly (2026-07-18, cont.250): `gameplay.set_my_health` returns the stored (clamped) health, but the ASM at seg5:8C70 computes in BX and NEVER writes AX on either exit path (8CC5 `leave; retf` and 8CD7 `leave; retf`; the only AX-shaped ops in the body are the `mov es,[Gxxxx]` segment loads). AX is therefore caller-scratch, not a result -- the entry is VOID and the adapter must not write AX. The A/B oracle caught the mis-inference (asm AX=0000 vs adapter AX=0003 for new_health=3) and passes with result=none."
+  },
+  "6:74BA": {
+   "route": false,
+   "evidence": "generated-adapter A/B UNPROVEN (2026-07-18, cont.250): `gameplay.get_out_r` and `gameplay.try_move_dir_r` are MUTUALLY RECURSIVE (mirroring the ASM: seg6:74BA calls near 6850, which calls back), and on the synthetic all-zero pre-state the A/B harness uses the recursion does not terminate within CPython's stack limit (`RecursionError`), so the contract cannot be proven per-call there. The [bp+6] arg map is mechanically derived and consistent, but an unproven contract is not routed (cont.250 policy). Closing this needs an A/B pre-state where the recursion terminates -- i.e. a live pre-state from `scripts/adaptverify.py` over a demo rather than a synthetic frame."
+  },
   "7:65CE": {
    "route": false,
    "evidence": "adaptverify divergence (2026-07-16, cont.223): on the live cold_nohooks worldgen pre-state at ~instr 37.73M, gameplay.place_black_queen applied directly to ByteBackend copies (state-diff style) produces a tunnel diverging from the interpreted ASM (46 dgroup + 17 seg8 + 34 seg9 bytes; first dgroup diff 0x4FAF; queen recorded at seg8[0x8362]=0x20/0x1E vs 0x22/0x21). The generated adapter reproduces the impl exactly (impl==adapter, both != ASM), so the divergence is in the recovered implementation on a path the state-diff seeds never exercised (likely the sticky-drift/reroll interaction against a partially dug map). Repro: install a probe at 7:65CE over the cold_nohooks replay, clone at entry, run ASM clone to continuation, diff. Stays on the literal lift until the impl is re-proven on this pre-state."

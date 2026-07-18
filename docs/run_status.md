@@ -1,5 +1,117 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.250) — MANUAL OVERRIDE CONTRACTS: 35 kept-generated contracts CLOSED mechanically (166→201 carrier-free overrides, the +manual-direct-compose rung 24→39), each proven per-call against the ASM — and 6 recovery-boundary defects the oracle found
+- **THE HEADLINE.**  `scripts/argmapgen.py` (new) DERIVES the missing `[bp+N]`
+  arg maps from the binary instead of guessing them, closing **34** of the 96
+  `args-incomplete` contracts; a `tuple_ax_dx` result convention closes a 35th
+  (`_FlipLong`).  Manual bodies composing CARRIER-FREE as CPUless overrides:
+  **166 → 201** of 309.  In the runtime-reachable closure the
+  `+manual direct-compose (routed)` rung moves **+24 → +39** (composable
+  **194 → 209**) and the ceiling rung `+manual direct-compose (all)` shrinks by
+  exactly that much (**+144 → +129**) — the cumulative 338 is unchanged, which
+  is the point: work moved from the ceiling into the floor.  The wall still
+  CLOSES (residual atomic cluster 128, `NOT composable even with every
+  capability + cluster: 0`).
+- **The mechanism: the frame EXTENT is derivable; the arg ORDER is provable.**
+  `argmapgen` decodes every instruction of the entry's IR record
+  (`dos_re.lift.decode`) and collects its BP-relative memory operands — plain
+  `[bp+disp]` (mod=1/2, rm=6) and BP-INDEXED `[bp+si/di+disp]` (rm=2/3).  A
+  positive indexed displacement means the frame is walked with a runtime index,
+  so the slot boundaries are not statically knowable -> REFUSE.  Otherwise the
+  set of positive plain displacements must equal EXACTLY the contiguous word
+  frame the arity implies (`{base, base+2, ...}`, base 4 near / 6 far, ret
+  closed the way adaptgen closes it).  An extra slot (a dword/far-pointer arg,
+  an arg the map does not name), a missing slot (an arg the body never reads, so
+  the extent is unpinned), or an odd displacement REFUSES.  That pins the extent
+  MECHANICALLY.  The name->slot assignment is the MSC cdecl order the corpus
+  already runs on, and it is not asserted — it is PROVEN per entry by the
+  generated-adapter A/B oracle over three arg vectors, **one of them
+  all-distinct ascending**, so a transposed pair moves the result register or
+  the data segments and the oracle diverges.  Every closed entry records
+  `arg_map_evidence` in `recovered_map.json`; nothing is a guessed offset.
+- **All 35 closed contracts A/B-PASS against the original ASM**, whole contract
+  (returned SP, callee-saved SI/DI/BP/DS/SS, the result register(s)) plus
+  byte-identical DGROUP sim band + SIMANT_DATA_GROUP + PACK, from an identical
+  pre-state — `simant/tests/test_adaptgen.py` tier 4
+  (`test_cont250_closed_contract_matches_asm`, 35 x 3 vectors, 2.8 s).  A
+  further live-pre-state pass with `scripts/adaptverify.py` over `cold_nohooks`
+  samples them at real call sites.
+- **THE ORACLE EARNED ITS KEEP: 6 entries it REFUSED, all real recovery-boundary
+  defects, none of them arg-map bugs.**  Each is recorded in
+  `simant/facts/adapter_facts.json` with its measurement:
+  - `4:06F6 _srand` — the ASM STORES the new state into DGROUP
+    (`mov [0xAE34],ax; mov word [0xAE36],0`); `crt_math.c_srand` is PURE and
+    only returns it.  Missing: a state-STORE contract class.  Same family as
+    `_rand`/`_RRand`/`_SRand*`, whose recovered signatures thread the RNG state
+    as an explicit in/out value — which is why 11 of the residue read NO stack
+    args at all.
+  - `5:5B2C _IsClearTile`, `5:60E2 _GetMap`, `5:6040 _GetLife` — the recovered
+    body is a SEMANTIC SUB-FUNCTION of the ABI entry, not the entry.
+    `_IsClearTile`'s ASM takes (plane, x, y) and fetches the map/life cells
+    itself; the impl takes the fetched VALUES.  `_GetMap`/`_GetLife`'s ASM
+    returns the cell's VALUE; the impl returns its OFFSET (measured: ASM
+    AX=0000 vs impl 0x28E8/0x68E8 at (0,0,0)).  **An `ax_or_ffff` result fact
+    was written for the latter two and RETRACTED when the A/B rejected it** —
+    the docstrings' "the caller reads the byte at DS:offset" was true of the
+    impl and false of the ABI entry.  Closing these is a RECOVERY task (re-split
+    the impl at the ABI boundary), not a contract task.
+  - `5:8C70 _SetMyHealth` — a genuine result-convention FIX, not an exclusion:
+    the ASM computes in BX and never writes AX on either exit path, so the entry
+    is VOID.  adaptgen had inferred `ax` from the impl's `-> int` (asm AX=0000
+    vs adapter AX=0003).  With `result: "none"` it routes and A/B-passes.
+  - `6:74BA _GetOutR` — UNPROVEN, not wrong: `get_out_r`/`try_move_dir_r` are
+    mutually recursive (as the ASM is), and on the synthetic all-zero pre-state
+    the recursion exhausts CPython's stack.  The derived `[bp+6]` map stands;
+    an unproven contract is not routed.
+- **PRESENTATION-EFFECTS: policy CHECKED, nothing routed.**  All 48 stay on the
+  generated body — routing them would silently DROP the balloon/sound/redraw
+  calls the recovered corpus deliberately omits (cont.223).  What DID change:
+  **46 of the 48 now carry a complete, evidence-backed arg map**, so when the
+  presentation-effect sink seam exists they are one policy flip from composing.
+  Same for the 18 `proven-gated` (the generated body carries the gate branch
+  natively) — untouched by design.
+- **The two classifiers still AGREE by construction.**  `overridegen` imports
+  `adaptgen.classify` verbatim, so the CPUless override split is the same split;
+  the new `tuple_ax_dx` result kind was added to BOTH emitters,
+  `adaptverify._compare` and the test oracle in the same slice.  Virtual-time
+  contracts: gate-admissible overrides **6 -> 10** (`_FlipWord` 6, `_FlipLong`
+  8, `_KillTailB` 17, `_KillTailR` 17 derive static costs).
+- **THE GATE: GREEN, at the exact pin.**  `checkpoints.py --api-aligned
+  --mask-poison artifacts/vmless_boot --boot-image artifacts/vmless_boot
+  cold_nohooks --lift-dir simant/lifted/graph_cpuless --check
+  artifacts/oracle_fresh2.trace --check-field mdigest` -> **all 39 checkpoints +
+  final MATCH, instr 199,619,366, mdigest 417cac5cd9aadb8c** — the
+  cont.238...249 pin, untouched (the production graph is generated-only;
+  contract facts do not reach it).  `lint_cpuless` PASS (419 modules), 404
+  promoted.
+- **RESIDUE — 108 kept-generated (was 143), with reasons.**  By class:
+  `args-incomplete` 96->**52**, `presentation-effects` 48 (policy, unchanged),
+  `result-convention` 36->**35**, `proven-gated` 18 (policy), `sig-mismatch` 13,
+  `callback-injected` 12, `fact-excluded` 1->**6**, `views` 6,
+  `arg-frame-shape` 3, `callee-cleans` 2.  The 52 `args-incomplete`, split by
+  what argmapgen measured: **26** name more args than the body has stack slots
+  (an arg the ASM never reads, so the extent is unpinned — e.g.
+  `_TileCanBeMovedOn` 8 named / 7 slots); **14** have MORE slots than named args
+  (a dword or far-pointer arg, or an unnamed one — the whole
+  `_XferTile*`/`_MakeTable*` render tier); **11** read NO stack args at all
+  (register/global conventions — the `_SRand*` family threads its state as a
+  value); **1** is the standing `arg_map_refused`.  None of these is closable by
+  a `[bp+N]` map; they need a recovery-side re-split or a new contract class
+  (dword args, state store, out-params), and are reported rather than forced.
+- **Chain (NOT pushed — owner reviews + pushes):** simant_port only, branch
+  `cpuless-manual-contracts` off main; **dos_re and win16_re unchanged** (this
+  is pure port-side contract work, as scoped).  `simant/recovered/` untouched
+  (contract corrections went to `recovered_map.json`/`adapter_facts.json` with
+  evidence), v0.1.0 dist/+tag and `scripts/play.py` untouched.
+- **Reproduce.**  `python scripts/argmapgen.py --dry-run` (45 derivable / 51
+  refused, each with its measurement) -> `python scripts/adaptgen.py --dry-run`
+  (201/309 routed) -> `python scripts/overridegen.py --dry-run` (201
+  carrier-free, 10 time-exact) -> `python scripts/cpuless_promote.py` ->
+  `python scripts/cpuless_wall_gap.py` (rung
+  `+manual direct-compose (routed) 209 +39`) -> the `checkpoints.py
+  --check-field mdigest` gate above.  `python -m pytest
+  simant/tests/test_adaptgen.py -q` is the per-call proof (59 tests).
+
 ## 2026-07-18 (cont.249) - DISPATCH-ARM AS ALTERNATE ENTRY: the last wall blocker is CLOSED - the 597-function observed closure is fully CPUless-composable (gate GREEN, 402->404, cluster residual 130->128 and it CLOSES)
 - **THE HEADLINE: the message-pump cluster CLOSES.**  `scripts/cpuless_wall_gap.py`
   now reports `residual recursive cluster (atomic): 128 -> CLOSES the wall` and

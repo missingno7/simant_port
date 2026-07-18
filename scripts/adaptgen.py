@@ -112,7 +112,13 @@ VIEW_EXPR = {
     "pack": f"SelectorBackend(m, m.rw(s.ds, {PACK_PTR_GLOBAL:#06x}))",
 }
 
-RESULTS = ("none", "ax", "dxax")
+#: Return conventions an adapter can marshal.  "none"/"ax"/"dxax" are inferred
+#: from the implementation's return annotation; the two below are NEVER
+#: inferred — they must be declared by an evidence-carrying ``result`` fact in
+#: adapter_facts.json, because they encode how a Python-level value maps onto
+#: the ASM's register result:
+#:   tuple_ax_dx — a ``(AX, DX)`` pair returned in declaration order
+RESULTS = ("none", "ax", "dxax", "tuple_ax_dx")
 
 
 class ContractError(RuntimeError):
@@ -415,6 +421,10 @@ def emit_adapter(c: dict, stem: str) -> str:
         A(f"    _r = {call} & 0xFFFFFFFF")
         A("    s.ax = _r & 0xFFFF")
         A("    s.dx = (_r >> 16) & 0xFFFF")
+    elif c["result"] == "tuple_ax_dx":
+        A(f"    _a, _d = {call}")
+        A("    s.ax = _a & 0xFFFF")
+        A("    s.dx = _d & 0xFFFF")
     A(f"    s.sp = (sp + {frame}) & 0xFFFF")
     if far:
         A("    s.cs = ret_cs")

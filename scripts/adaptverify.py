@@ -91,7 +91,9 @@ def _compare(contract: dict, live, clone) -> list[str]:
         lv, cv = getattr(ls, reg) & 0xFFFF, getattr(cs_, reg) & 0xFFFF
         if lv != cv:
             diffs.append(f"callee-saved {reg.upper()}: adapter={lv:04X} asm={cv:04X}")
-    result_regs = {"ax": ("ax",), "dxax": ("ax", "dx"), "none": ()}[contract["result"]]
+    result_regs = {"ax": ("ax",), "dxax": ("ax", "dx"),
+                   "tuple_ax_dx": ("ax", "dx"),
+                   "none": ()}[contract["result"]]
     for reg in result_regs:
         lv, cv = getattr(ls, reg) & 0xFFFF, getattr(cs_, reg) & 0xFFFF
         if lv != cv:

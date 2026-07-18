@@ -21,7 +21,7 @@
    "args": [
     {
      "name": "seed",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -29,7 +29,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "4:070A",
@@ -941,7 +942,7 @@
    "args": [
     {
      "name": "w",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -949,7 +950,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "4:7360",
@@ -1124,7 +1126,7 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -1134,7 +1136,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:0D18",
@@ -1416,19 +1419,19 @@
    "args": [
     {
      "name": "x1",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y1",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "x2",
-     "bp": null
+     "bp": 10
     },
     {
      "name": "y2",
-     "bp": null
+     "bp": 12
     }
    ],
    "views": [],
@@ -1436,7 +1439,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:1122",
@@ -1456,19 +1460,19 @@
    "args": [
     {
      "name": "x1",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y1",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "x2",
-     "bp": null
+     "bp": 10
     },
     {
      "name": "y2",
-     "bp": null
+     "bp": 12
     }
    ],
    "views": [],
@@ -1476,7 +1480,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:115C",
@@ -1496,11 +1501,11 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -1508,7 +1513,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:1182",
@@ -1528,7 +1534,7 @@
    "args": [
     {
      "name": "tile",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -1536,7 +1542,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:119C",
@@ -2324,7 +2331,7 @@
    "args": [
     {
      "name": "col",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -2339,7 +2346,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:1CBA",
@@ -2385,7 +2393,7 @@
    "args": [
     {
      "name": "col",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -2402,7 +2410,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:1F8E",
@@ -2655,7 +2664,7 @@
    "args": [
     {
      "name": "tile",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -2663,7 +2672,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:26E4",
@@ -3889,19 +3899,19 @@
    "args": [
     {
      "name": "x1",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y1",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "x2",
-     "bp": null
+     "bp": 10
     },
     {
      "name": "y2",
-     "bp": null
+     "bp": 12
     }
    ],
    "views": [],
@@ -3909,7 +3919,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:56DA",
@@ -3929,15 +3940,15 @@
    "args": [
     {
      "name": "plane",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "x",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 10
     }
    ],
    "views": [],
@@ -3948,7 +3959,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:5720",
@@ -3968,7 +3980,7 @@
    "args": [
     {
      "name": "caste",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -3976,7 +3988,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:573C",
@@ -4220,7 +4233,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_refused": "the ASM entry takes (plane, x, y) and fetches the map/life cells itself (map planes 0x28E8/0x48E8/0x58E8, life planes 0x68E8/0x88E8/0x98E8); the recovered gameplay.is_clear_tile takes the already-fetched cell VALUES, so the three ABI slots do not correspond to its parameters -- see adapter_facts.json 5:5B2C"
   },
   {
    "key": "5:5EC8",
@@ -4240,7 +4254,7 @@
    "args": [
     {
      "name": "marker",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -4248,7 +4262,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:5EE4",
@@ -4268,11 +4283,11 @@
    "args": [
     {
      "name": "plane",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "tile",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -4280,7 +4295,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:5F04",
@@ -4338,11 +4354,11 @@
    "args": [
     {
      "name": "plane",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "tile",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -4350,7 +4366,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:5F64",
@@ -4370,7 +4387,7 @@
    "args": [
     {
      "name": "tile",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -4378,7 +4395,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:5F7E",
@@ -4439,15 +4457,15 @@
    "args": [
     {
      "name": "plane",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "x",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 10
     }
    ],
    "views": [],
@@ -4457,7 +4475,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:60E2",
@@ -4479,15 +4498,15 @@
    "args": [
     {
      "name": "plane",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "x",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 10
     }
    ],
    "views": [],
@@ -4497,7 +4516,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:617A",
@@ -4516,19 +4536,19 @@
    "args": [
     {
      "name": "plane",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "x",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 10
     },
     {
      "name": "value",
-     "bp": null
+     "bp": 12
     }
    ],
    "views": [
@@ -4540,7 +4560,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:88A2",
@@ -4647,7 +4668,7 @@
    "args": [
     {
      "name": "new_health",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -4659,7 +4680,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:9342",
@@ -4768,15 +4790,15 @@
    "args": [
     {
      "name": "plane",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "tile",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "inside",
-     "bp": null
+     "bp": 10
     }
    ],
    "views": [],
@@ -4784,7 +4806,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:95C6",
@@ -5032,11 +5055,11 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -5044,7 +5067,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "5:9C26",
@@ -5064,11 +5088,11 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -5076,7 +5100,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:034A",
@@ -5183,7 +5208,7 @@
    "args": [
     {
      "name": "slot",
-     "bp": null
+     "bp": 4
     }
    ],
    "views": [
@@ -5194,7 +5219,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:0A74",
@@ -5213,7 +5239,7 @@
    "args": [
     {
      "name": "slot",
-     "bp": null
+     "bp": 4
     }
    ],
    "views": [
@@ -5228,7 +5254,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:0B1E",
@@ -5478,7 +5505,7 @@
    "args": [
     {
      "name": "slot",
-     "bp": null
+     "bp": 4
     }
    ],
    "views": [
@@ -5496,7 +5523,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:1676",
@@ -5859,7 +5887,7 @@
    "args": [
     {
      "name": "slot",
-     "bp": null
+     "bp": 4
     }
    ],
    "views": [
@@ -5874,7 +5902,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:28C0",
@@ -5893,15 +5922,15 @@
    "args": [
     {
      "name": "new_x",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "new_y",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "mode",
-     "bp": null
+     "bp": 10
     }
    ],
    "views": [
@@ -5912,7 +5941,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:2A22",
@@ -6004,11 +6034,11 @@
    "args": [
     {
      "name": "tile",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "inside",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -6016,7 +6046,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:2D1A",
@@ -6705,7 +6736,7 @@
    "args": [
     {
      "name": "ant_idx",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -6716,7 +6747,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:42DE",
@@ -7242,7 +7274,7 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -7260,7 +7292,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:5B2A",
@@ -7769,7 +7802,7 @@
    "args": [
     {
      "name": "ant_idx",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -7780,7 +7813,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:6790",
@@ -8106,7 +8140,7 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [
@@ -8124,7 +8158,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:8682",
@@ -8471,19 +8506,19 @@
     },
     {
      "name": "tgt_x",
-     "bp": 12
+     "bp": 8
     },
     {
      "name": "tgt_y",
-     "bp": 14
+     "bp": 10
     },
     {
      "name": "x",
-     "bp": null
+     "bp": 12
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 14
     }
    ],
    "views": [
@@ -8500,7 +8535,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:8ECA",
@@ -8758,15 +8794,15 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 4
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "delta",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [
@@ -8778,7 +8814,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:947E",
@@ -8797,15 +8834,15 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 4
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "value",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [
@@ -8817,7 +8854,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:94B6",
@@ -8836,15 +8874,15 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 4
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "value",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [
@@ -8856,7 +8894,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:94F6",
@@ -8875,15 +8914,15 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 4
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "value",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [
@@ -8895,7 +8934,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:9536",
@@ -8914,15 +8954,15 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 8
     },
     {
      "name": "value",
-     "bp": null
+     "bp": 10
     }
    ],
    "views": [
@@ -8934,7 +8974,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:9576",
@@ -8953,15 +8994,15 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 4
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "value",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [
@@ -8973,7 +9014,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+4], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "6:95B6",
@@ -10030,11 +10072,11 @@
    "args": [
     {
      "name": "x",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "y",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -10042,7 +10084,8 @@
    "calls": [],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "7:2096",
@@ -11428,7 +11471,7 @@
    "args": [
     {
      "name": "obj_handle",
-     "bp": null
+     "bp": 6
     }
    ],
    "views": [],
@@ -11441,7 +11484,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": "7:C2D2",
@@ -11461,11 +11505,11 @@
    "args": [
     {
      "name": "obj_handle",
-     "bp": null
+     "bp": 6
     },
     {
      "name": "inclusive_adjust",
-     "bp": null
+     "bp": 8
     }
    ],
    "views": [],
@@ -11477,7 +11521,8 @@
    ],
    "twins": [],
    "split_of": null,
-   "notes": ""
+   "notes": "",
+   "arg_map_evidence": "argmapgen: frame extent derived from the IR record's BP-relative operands (plain [bp+disp] set == the contiguous word frame the arity implies, no BP-indexed frame walk); cdecl declaration order ascending from [bp+6], proven per-call against the ASM by the generated-adapter A/B oracle"
   },
   {
    "key": null,

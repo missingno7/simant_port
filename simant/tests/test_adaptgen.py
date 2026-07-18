@@ -64,7 +64,7 @@ def classified(adaptgen):
 def test_routed_and_kept_partition_the_matched_corpus(classified):
     routed, kept = classified
     assert len(routed) + len(kept) == 309          # the inventory's matched set
-    assert len(routed) == 166                      # the M2b routed corpus
+    assert len(routed) == 201                      # the M2b routed corpus
     keys = [c["key"] for c in routed] + [k["key"] for k in kept]
     assert len(keys) == len(set(keys))             # one decision per entry
 
@@ -73,7 +73,7 @@ def test_every_routed_contract_is_complete(classified):
     routed, _ = classified
     for c in routed:
         assert c["ret"] in ("near", "far"), c
-        assert c["result"] in ("none", "ax", "dxax"), c
+        assert c["result"] in ("none", "ax", "dxax", "tuple_ax_dx"), c
         base = 4 if c["ret"] == "near" else 6
         bps = [bp for _n, bp in c["args"]]
         assert bps == list(range(base, base + 2 * len(bps), 2)), c
@@ -87,7 +87,8 @@ def test_every_routed_contract_is_complete(classified):
     ("5:617A", "views:view"),                  # _SetMap zaps the map redraw
     ("4:08D4", "callee-cleans"),               # __aFldiv (ret far 8, dwords)
     ("7:C2D2", "callback-injected"),           # _win_GetObjRect render tier
-    ("5:1122", "args-incomplete"),             # _GetDis island-only marshalling
+    ("5:9342", "args-incomplete"),             # _TileCanBeMovedOn: 8 named
+                                               # args, 7 stack slots
     ("7:65CE", "fact-excluded"),               # _PlaceBlackQueen live divergence
 ])
 def test_kept_literal_reasons(classified, key, reason_prefix):
@@ -205,9 +206,9 @@ def _assert_contract_equal(asm, adp, contract):
     assert (b.sp & 0xFFFF) == (a.sp & 0xFFFF)
     for reg in ("si", "di", "bp", "ds", "ss"):
         assert (getattr(b, reg) & 0xFFFF) == (getattr(a, reg) & 0xFFFF), reg
-    if contract["result"] in ("ax", "dxax"):
+    if contract["result"] in ("ax", "dxax", "tuple_ax_dx"):
         assert (b.ax & 0xFFFF) == (a.ax & 0xFFFF)
-    if contract["result"] == "dxax":
+    if contract["result"] in ("dxax", "tuple_ax_dx"):
         assert (b.dx & 0xFFFF) == (a.dx & 0xFFFF)
     for seg_i, hi in ((hooks.DG_SEG_INDEX, SIM_HI),
                       (hooks.SIMANT_DATA_GROUP_SEG_INDEX, DGROUP_SIZE),
@@ -260,3 +261,72 @@ def test_generated_near_adapters_match_asm(classified, adaptgen, tmp_path,
     adp = _run_adapter(adaptgen, c, args, near=True, seed_fn=seed,
                        tmp_path=tmp_path)
     _assert_contract_equal(asm, adp, c)
+
+
+# --- 4. cont.250 — the DERIVED arg maps, proven per-call against the ASM -------
+#
+# scripts/argmapgen.py closes the `args-incomplete` contracts mechanically (the
+# frame EXTENT falls out of the IR record's BP-relative operands).  What it can
+# NOT derive is the assignment of names to slots — that is the MSC cdecl order
+# the whole corpus runs on.  These tests are that assignment's proof: every
+# contract closed in cont.250 is run against the ORIGINAL ASM from an identical
+# pre-state over three arg vectors, one of them all-distinct, so a transposed
+# pair changes the result register or the data segments and the A/B diverges.
+
+#: the 35 contracts cont.250 closed (34 derived arg maps + _FlipLong's result
+#: convention).  Pinned by key so a regression names the entry it broke.
+CONT250_CLOSED = [
+    "4:7356", "4:7360", "5:10CC", "5:1122", "5:115C", "5:1182", "5:1B06",
+    "5:1D02", "5:26C4", "5:56BA", "5:56DA", "5:5720", "5:5EC8", "5:5EE4",
+    "5:5F32", "5:5F64", "5:8C70", "5:94C6", "5:9C02", "5:9C26", "6:0A1C",
+    "6:0A74", "6:1480", "6:28C0", "6:2CC0", "6:42B0", "6:6762", "6:8D3A",
+    "6:943C", "6:947E", "6:94B6", "6:94F6", "6:9536", "6:9576", "7:2072",
+]
+
+#: arg vectors every closed contract is A/B'd over.  The first is ALL-DISTINCT
+#: and ascending — the vector that discriminates arg ORDER.
+AB_ARG_VECTORS = ((3, 5, 7, 9, 11, 13, 15, 17),
+                  (1, 2, 3, 4, 5, 6, 7, 8),
+                  (0, 0, 0, 0, 0, 0, 0, 0))
+
+
+@pytest.mark.parametrize("key", CONT250_CLOSED)
+def test_cont250_closed_contract_matches_asm(classified, adaptgen, tmp_path, key):
+    c = _routed_contract(classified, key)
+    near = c["ret"] == "near"
+    for vec in AB_ARG_VECTORS:
+        args = vec[:len(c["args"])]
+        asm = _run_asm(key, args, near=near)
+        adp = _run_adapter(adaptgen, c, args, near=near, tmp_path=tmp_path)
+        _assert_contract_equal(asm, adp, c)
+
+
+def test_no_derivable_arg_map_is_left_unclosed():
+    """The committed facts are REPRODUCIBLE: re-deriving finds nothing new."""
+    import subprocess
+    import sys as _sys
+    proc = subprocess.run(
+        [_sys.executable, str(REPO_ROOT / "scripts" / "argmapgen.py"), "--check"],
+        capture_output=True, text=True)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+
+
+def test_argmapgen_refuses_an_unpinned_frame_extent():
+    """A body that does not read every named arg leaves the extent unpinned —
+    the map stays null rather than being guessed (5:9342 _TileCanBeMovedOn
+    names 8 args but touches only 7 stack slots)."""
+    import importlib.util as _ilu
+    spec = _ilu.spec_from_file_location("simant_argmapgen",
+                                        REPO_ROOT / "scripts" / "argmapgen.py")
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    ir_doc = json.loads((REPO_ROOT / "artifacts" / "recovery_ir.json")
+                        .read_text(encoding="utf-8"))
+    map_doc = json.loads(
+        (REPO_ROOT / "simant" / "facts" / "recovered_map.json")
+        .read_text(encoding="utf-8"))
+    _derived, refused = mod.plan(map_doc, ir_doc["functions"])
+    by_key = {k: why for k, _s, why in refused}
+    assert "frame extent mismatch" in by_key["5:9342"]
+    # and a standing evidence-backed refusal is honoured, never re-derived
+    assert "arg_map_refused" in by_key["5:5B2C"]
