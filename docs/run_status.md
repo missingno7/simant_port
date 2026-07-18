@@ -1,5 +1,83 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.254) — indirect FAR-call composition lands GUARDED, and finds a real silent-wrong-answer bug the byte-exact gate could not see; the capability realizes +2, not +85, because the binding constraint is EVIDENCE COVERAGE
+- **The capability.**  A composed `call far [mem]` is a **guarded fan-out over
+  static far calls**: the evidence supplies the arm set, and each arm composes
+  by *exactly the rule that governs a direct `call far` to that same target* —
+  a platform-boundary target reuses the identical `plat.farcall` sequence, a
+  recovered far-return body goes through the existing `_dyn` registry.  dos_re
+  never learns what a target IS, only how a static call to it would have
+  composed, so any future static far-call rule is inherited free.  All 103 sites
+  are memory-indirect (FF /3 mandates a memory operand — no 16-bit register
+  holds a 32-bit far pointer), so ONE mechanism covers the whole distribution.
+- **The guard is the point.**  Observed evidence is not proof, so an
+  unwitnessed pointer at runtime **raises** `UnknownFarDispatchTarget` naming
+  the site and the pointer.  No fallback arm, no nearest match, no default.
+  Compose-time refusals are equally precise (`far-dispatch-no-evidence`,
+  `-platform-contract-unknown`, `-target-unpromoted`, `-target-not-far-return`,
+  `-target-sp-escape`, `-nonuniform-stack`).
+- **THE NUMBER, honestly: realized fixpoint delta +2 (461 -> 463), not +85.**
+  The rung plan's `+85` is measured AFTER manual composition is applied.  The
+  binding constraint today is **evidence coverage, not the capability**: only
+  **22 of 85** FF /3 sites in the IR carry observed evidence, and of the 9
+  functions whose SOLE blocker is far-indirect, **7 have no evidence at their
+  site at all**.  This is the third time this session a dependency cone
+  over-predicted a realized unlock (634 -> +55, 483 -> +2, now the cone of 35 ->
+  +2).  The cone is an upper bound and nothing more.
+- **The evidence half (simant_port).**  `entry_probe` now captures FF /3 sites.
+  They were skipped for a REAL reason: such a call usually targets an import
+  THUNK, which is a Python hook and never reaches
+  `record_interpreted_instruction`, so "the next interpreted instruction is the
+  target" would have recorded the post-return continuation.  Fixed by closing a
+  pending binding in BOTH telemetry callbacks — a hook dispatch binds the thunk,
+  an interpreted instruction binds guest code.  That is exactly the split
+  `win16.farptr.FarPointerLog.describe` draws, so the halves agree by
+  construction.  Measured: dispatch sites that fired **20 -> 42**, 115 distinct
+  site->target edges; the 22 new sites sit INSIDE the functions the closure
+  reports blocked (`_snd_Install`, `_MciMessage`, `_MciOutWave`,
+  `_myBeginSound`) and **18 of their target edges land in THUNK_SEG 0060** —
+  import thunks `plat.farcall` already services.  Closure unchanged at 597/1904.
+- **A PRE-EXISTING silent wrong answer, found by the differential.**  `_fmask`
+  was only written at block end, so a flag written EARLIER in the same block was
+  missing from the mask when a mid-block site composed an outgoing FLAGS word —
+  the site handed the platform the caller's stale bit.  `or cx,cx ; push args ;
+  call far <API>` gave the API the ENTRY ZF instead of the computed one.
+  Verified on pristine main: **cpuless=0043 interp=0007**.  Fixed by flushing at
+  all 6 outgoing-flags-word sites.
+- **WHAT THAT SAYS ABOUT THE GATE — record this.**  That bug was live in shipped
+  generated code and **the byte-exact gate stayed GREEN through it**, before and
+  after.  Not a gate failure: the digest compares MEMORY, and the stale flag
+  never reached memory on this path.  But it means the gate is byte-exact
+  *memory*, not byte-exact *everything* — a register/flag divergence that does
+  not propagate is invisible to it.  The **per-function differential** (whole
+  register file + flags + stack + clock, against `CPU8086` over identical bytes)
+  is what caught it.  **Both fences are needed; neither subsumes the other.**
+- **win16_re: the producer half.**  `win16/farptr.py` — only TWO mint sites
+  exist, not three (`GetProcAddress` returns `mint_proc_thunk`'s value unchanged,
+  so the mint is the single funnel).  `describe()` needs NO instrumentation: it
+  resolves against `registry.slots`/`_proc_thunks`, which the registry already
+  maintains, so a thunk target resolves from a registry that was never armed.
+  Plus values forms for 3 of the 4 raw APIs (`wsprintf` cdecl-varargs,
+  `DOS3Call` + `InitTask` via a register DELTA).  `__fpMath` deliberately still
+  refuses — `win16/fpu.py` is unbuilt by design and the FP frontier measures 0
+  reachable — now pinned by a test so it stays a decision, not an oversight.
+  **`invoke_values` was NOT widened**: `regs` APIs got a separate primitive, so
+  every existing entry's `(ax, dx)` contract is byte-for-byte what it was.  The
+  agent also caught what the design sketch missed: **FLAGS belongs in the
+  register delta**, because INT 21h signals failure via carry — dropping it
+  would report a failed DOS call as successful on the CPU-free path.
+- **Gates.**  Re-run FOUR times across this slice (API-core refactor; capability
+  pre-rebase; capability post-rebase; final): all 39 checkpoints + final MATCH,
+  instr 199,619,366, mdigest `417cac5cd9aadb8c`.  Suites: dos_re **1266**,
+  win16_re **392**, simant_port **2325**.
+- **Pins.**  dos_re `8ccd3e1` -> win16_re `d407041` -> simant_port `6b8685d`.
+- **NEXT.**  Widening evidence coverage now dominates the capability (task #60):
+  63 of 85 FF /3 sites never fire in `cold_nohooks`.  A second, wider demo would
+  serve both this and task #49's second behavioral gate.  Beyond that: the
+  shared-tail/continuation model (task #58) — one correct model of "this address
+  is a continuation, not a function" plausibly retires the 143 case arms, the 11
+  epilogue fragments AND `mixed-return-kinds` together.
+
 ## 2026-07-18 (cont.253) — the Win16 far-entry prologue DISSOLVED: the whole MSC C-runtime bottom tier now lifts (skeleton 404 -> 461, gate unmoved), dos_re learned the mechanism WITHOUT learning Windows, and win16_re finally has a lifting FENCE of its own — plus the CPUless callback seam (host->guest with no interpreter)
 - **THE HEADLINE.**  The single idiom cont.252 identified is closed.  dos_re
   models **a frame pointer carried at a CONSTANT BIAS** — `bp = framebase + k`,
