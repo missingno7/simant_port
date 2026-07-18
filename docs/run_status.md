@@ -1,5 +1,103 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.246) — CPUless CONTROL-FLOW-SHAPE emitter tier (generic dos_re): far retf-N callee-cleanup + shared-epilogue tail dispatch + a composed-plat virtual-time fix — promoted 339→402 (+63), binary composable-today 780→868 (+88), byte-exact
+- **Two generic CPUless emitter capabilities + one virtual-time fix, landed on
+  dos_re branch `cpuless-control-flow-shape` off origin/main aea1813** (commits
+  `c72cb05`, `d2a7c0c`, `fd93960`, `4e15a9e`).  These are the control-flow-shape
+  rung the cont.244/245 ranking named next.
+- **(1) far retf-N callee-cleanup (`c72cb05`).**  The emitter already modelled
+  the NEAR `ret N` arg-pop (`ret_pop`; a caller pops `2+N`); the FAR `retf N`
+  (0xCA) variant — the pascal/stdcall convention a Win16/Borland callee uses to
+  clean the caller's stacked args — was refused `ret-n-stack-args (retf N needs
+  far variant)`.  A far frame is 4 bytes (CS:IP), so the ONLY difference is the
+  return-frame size (rides `ret_kind`); the arg pop N is modelled identically.
+  `_check_stack_depths` now records `ret N`/`retf N` uniformly, and a composing
+  caller pops `4+N` for a far/retf callee.  Differential regression
+  `test_cpuless_retf_n` (whole reg-file + stack memory + VIRTUAL-TIME cost, diffed
+  against the interpreter over a `push args; call far; retf 4` sequence; fails on
+  the old gate; negatives pin `mixed-ret-pop` + plain `retf`).  **Alone: 339→366
+  (+27).**
+- **(2) shared-epilogue tail dispatch at nonzero frame depth (`d2a7c0c`).**  A
+  compiler emits a switch as a jump-table tail dispatch (`jmp cs:[bx*2+table]`,
+  each arm ending `leave; ret(f)` — the arm shares the dispatching function's
+  frame, restores it, returns through the caller's frame).  The depth prover
+  composed the DEPTH-0 tail but refused `tail-dispatch-at-nonzero-depth` whenever
+  a frame was still standing at the jmp (the saved bp + enter/sub locals).  That
+  IS the framed-switch idiom: the arm's `leave` (mov sp,bp; pop bp) discards
+  everything above the frame base and restores sp to entry, so the exit is
+  balanced EXACTLY as a fused `leave; ret(f)` — allowed now when the function has
+  an ESTABLISHED FRAME POINTER (enter, or push bp; mov bp,sp).  Without a frame
+  it still refuses; an UNKNOWN depth still refuses.  Differential
+  `test_cpuless_tail_dispatch` (a framed jump-table container exec'd against a
+  faithful `_dyn` running the resolved arm through its `leave` but not its ret,
+  reg-file + stack diffed vs the interpreter; negatives pin frameless + depth-0).
+  **22 of 23 SimAnt tail-dispatch containers promote** (the 1 residual,
+  `_UpdateUserButtons` 0100:023A, is a REGISTER-SAVE `push di; push si` shared
+  epilogue with NO bp frame — the arm's exact pop is unknowable to a `leave`
+  unwind, so it stays refused; the honest frontier).
+- **(3) a composed needs-plat callee anchors its plat effects at entry+call
+  (`fd93960`) — the byte-exact-gate fix.**  Promoting (1)+(2) reached a caller
+  (SimAnt's `_mem_Size` API helper behind `430E:7860`) that INLINES an
+  API-calling helper.  A composed callee is handed its `_base` — the ABSOLUTE
+  instruction_count at ENTRY, from which it anchors each plat effect
+  (plat.farcall/intr/boundary).  The callee is entered AFTER the caller's `call`
+  executes, so `_base` must include it: `_base + _cost + count`.  The emitter
+  passed `count - 1`, anchoring the callee's plat effect ONE instruction early —
+  so the first API-aligned checkpoint inside a composed needs-plat callee drifted
+  **-1**.  The STANDALONE farcall path (which sets `_base = instruction_count` at
+  entry) never exercised a COMPOSED needs-plat callee, so it stayed latent until
+  frame/retf composition reached one.  Found by an instrumented literal-vs-cpuless
+  hook-entry differential (the drift originated at `_mem_Size`'s plat.farcall to
+  KERNEL.20, ~instr 3.35M).  Differential `test_cpuless_composed_plat_base` (the
+  ABSOLUTE virtual time the inner plat.farcall fires, composed vs interpreter;
+  fails on the old count-1).
+- **SimAnt promote (`scripts/cpuless_promote.py`): 339 → 402 (+63), byte-exact.**
+  retf-N+tail-dispatch alone reach 410, but promoting a framed tail-dispatch
+  container is UNSOUND when its switch arms are unpromoted `frame-restore-without-
+  establish` fragments NOT in the CPUless dispatch registry (a live `jmp` to one
+  raises `UnknownDispatchTarget`).  The SimAnt promoter never passed the
+  evidence-gate; it now does (`--dyn-evidence artifacts/indirect_sites.json`), so
+  `_gate_dyn_evidence` refuses a container whose OBSERVED tail target is not
+  dispatchable (`dyn-target-unpromoted`, 6 containers) — gating out exactly the
+  unsound promotions.  `lint_cpuless` PASS (405 modules; recovered corpus reaches
+  no CPU).
+- **Byte-exact gate: MATCH (mandatory `--check-field mdigest`).**  Fresh
+  interpreted oracle regenerated under pypy (`artifacts/oracle_fresh2.trace`, 40
+  cp) — the true baseline (339) matches it exactly, confirming it is a valid
+  oracle.  Candidate = boot-image + graph_cpuless (402 adapters) replay of
+  cold_nohooks: **all 39 checkpoints + final MATCH, instr 199,619,366, mdigest
+  417cac5cd9aadb8c** — the exact cont.238/240/242/244/245 pin.  (A first pass
+  DIVERGED by the -1 above; bisected to the count-1 base anchor and fixed — never
+  weakened the gate.)
+- **Binary-wide census (View B, `cpuless_binary_census.py`): composable TODAY 780
+  → 868 (+88).**  Buckets: auto-cpuless-composable 459→**547**,
+  fail-loud-unsupported-shape 449→**340**, blocked-indirect-dispatch 666→**687**.
+  composable IN PRINCIPLE stays 1130; max dispatch SCC 20.  The census classifier
+  now routes a body-clean `contains-call` residual whose `root_blocker` resolves
+  to an unbroken composition cycle (no hard own-body gap) to the dispatch-cluster
+  bucket — frame/retf composition widened those clusters, exposing 15 that would
+  otherwise land in `unclassified`; the 9-bucket partition is a clean 1904 again
+  (0 unclassified).
+- **Chain (NOT pushed — owner reviews + pushes dos_re→win16_re→simant_port):**
+  dos_re **4e15a9e** → win16_re **1ba7f0a** (Bump dos_re) → simant_port (this).
+  Suites green per repo: dos_re **701** (+9: 4 retf-N + 4 tail-dispatch + 1
+  composed-plat-base), win16_re **341**, simant_port **2265**.  Watch: stray
+  `pynuked_opl3/` untracked gitlink in dos_re — added files explicitly, never
+  `-A`.  `simant/recovered/`, v0.1.0 dist/+tag untouched; generated
+  `simant/native/cpuless/` + `graph_cpuless/` disposable/gitignored.
+- **Remaining highest-leverage frontier toward a fully-CPUless binary.**  (1)
+  **dispatch-cluster composition** — the framed-switch ARMS
+  (`frame-restore-without-establish` / `tail-dispatch-with-unbalanced-stack`
+  fragments) must be registered as CPUless dispatch targets (composed as
+  alt-entries of their container) so the 6 evidence-gated tail-dispatch
+  containers (+their register-save cousin `_UpdateUserButtons`) promote soundly;
+  this is the same atomic-SCC machinery `composable_closure` already has, now
+  needing the arm-as-alt-entry seam.  (2) **manual direct-compose** (+136
+  observed, reaches the ant sim).  (3) residual **frame variants**
+  (frame-pointer-pop-without-save 15, frame-pointer-clobbered 9).  (4)
+  **far-indirect / platform-far-indirect** (the 35 sound-driver `call far
+  [bp-N]` path) + x87 (0 reachable) — still last.
+
 ## 2026-07-18 (cont.245) — CPUless FRAME-SHAPE emitter (generic dos_re): a fused `leave` established by a hand-rolled `push bp; mov bp,sp` — promoted 234→339 (+105), binary composable-today 636→780 (+144), byte-exact
 - **The capability (generic dos_re), landed on branch `cpuless-frame-hand-rolled-leave`
   off origin/main 747a253, commit `90028a3`.** `leave` is the one-byte encoding of

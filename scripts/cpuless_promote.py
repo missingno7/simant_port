@@ -70,6 +70,7 @@ DEFAULT_BOUNDARY = REPO_ROOT / "artifacts" / "boundary_heads_para.txt"
 DEFAULT_CENSUS_OUT = REPO_ROOT / "artifacts" / "cpuless_promote_census.json"
 DEFAULT_MANIFEST = REPO_ROOT / "artifacts" / "vmless_boot" / "manifest.json"
 DEFAULT_PLAT_FARCALLS = REPO_ROOT / "artifacts" / "plat_farcalls.json"
+DEFAULT_DYN_EVIDENCE = REPO_ROOT / "artifacts" / "indirect_sites.json"
 IMPORT_BASE = "simant.native.cpuless"
 
 
@@ -248,6 +249,16 @@ def main(argv=None) -> int:
     ap.add_argument("--plat-farcalls-out", default=str(DEFAULT_PLAT_FARCALLS),
                     help="where the derived platform far-call contracts are "
                          "written (fed to the dos_re promoter)")
+    ap.add_argument("--dyn-evidence", default=str(DEFAULT_DYN_EVIDENCE),
+                    help="indirect_sites.json (per-site observed dynamic-target "
+                         "evidence from scripts/entry_probe.py): a function with "
+                         "a dynamic transfer promotes only when every OBSERVED "
+                         "target of its sites is dispatchable (a local jump-table "
+                         "landing, a promoted near-return callee, or an owned "
+                         "dispatch entry) -- so a framed switch whose arms are "
+                         "unpromoted fragments is gated out, never crashing live "
+                         "play with UnknownDispatchTarget.  Omit the file to "
+                         "promote every dispatch optimistically (unsound).")
     ap.add_argument("--no-plat-farcalls", action="store_true",
                     help="disable platform far-call composition (reproduce the "
                          "pre-plat.farcall calls-only slice)")
@@ -292,6 +303,13 @@ def main(argv=None) -> int:
         "--entries", ",".join(entries),
         "--census-out", args.census_out,
     ]
+    # Evidence-gated dynamic dispatch: a promoted function's OBSERVED tail/near
+    # dispatch targets must be dispatchable, or it is refused (never promoted to
+    # crash live play with UnknownDispatchTarget).  The switch-arm fragments a
+    # framed tail dispatch resolves to are unpromoted, so this gates those
+    # containers out until the dispatch-cluster composition lands.
+    if args.dyn_evidence and Path(args.dyn_evidence).is_file():
+        promote_argv += ["--dyn-evidence", str(args.dyn_evidence)]
     # PLATFORM far-call composition (plat.farcall): a `call far THUNK_SEG:slot`
     # into the win16 import-thunk table becomes a platform effect, not a refusal
     # -- the gateway to the calls-only sim tier (nearly every non-trivial sim

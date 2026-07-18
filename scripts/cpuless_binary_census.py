@@ -361,9 +361,17 @@ def main() -> int:
         elif rb:
             buckets["fail-loud-unsupported-shape"].append(k)
             reasons[k] = f"via-callee:{rb}"
-        elif has_dispatch:
-            # a dispatch-cluster member (jump-table arm) whose atomic promotion
-            # depends on the runtime dispatch-cluster capability, not a hard gap.
+        elif has_dispatch or not rb:
+            # A dispatch-cluster member: either this body dispatches (a jump-table
+            # arm), OR root_blocker resolved to NOTHING (rb == "") -- every callee
+            # is composable or lies on a mutual-recursion cycle back into this
+            # set, with no hard own-body gap anywhere.  Such a body is blocked
+            # ONLY by an unresolved composition SCC (the message-pump / ant-sim
+            # cluster), which the runtime dispatch-cluster capability promotes
+            # atomically -- not a shape/indirect gap.  Frame/retf composition
+            # widened these clusters (more callees compose, exposing the residual
+            # cycle), so attribute them to the dispatch-cluster, never leave the
+            # partition with a residual "unclassified" bucket.
             buckets["blocked-indirect-dispatch"].append(k)
             reasons[k] = "dispatch-cluster"
         else:
