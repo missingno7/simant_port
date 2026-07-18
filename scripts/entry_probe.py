@@ -21,8 +21,9 @@ Output:
     ``--dyn-out indirect_sites.json``  {"sites": [{"site": "CS:IP",
                                   "targets": {"CS:IP": count, ...}}, ...]}  --
                                   per-site observed dynamic-dispatch targets
-                                  (near call/jmp indirect + ISR-chain far jmp),
-                                  the evidence dos_re's dyn/ISR-chain gates and
+                                  (near call/jmp indirect, ISR-chain far jmp,
+                                  and FAR indirect call -- Win16 dynamic
+                                  linking), the evidence dos_re's dyn gates and
                                   the composability fixpoint consume.
 
     pypy scripts/entry_probe.py cold_nohooks --out artifacts/observed.json \
@@ -63,9 +64,19 @@ class EntryProbe:
     ISR-CHAIN far ``jmp [..]`` (reg 5) executes, the VERY NEXT interpreted
     instruction is its resolved target (the dispatch transfers control with no
     instruction in between), so we stash the site and bind it on the next call.
-    Far-indirect CALLs (reg 3, the API/platform thunks) are NOT captured: their
-    target is a Python hook, not an interpreted instruction, so "next
-    interpreted" would misattribute the post-return continuation."""
+
+    FAR-indirect CALLs (reg 3) are captured too, but they need the other half of
+    the telemetry.  Such a call is Win16 DYNAMIC LINKING: the pointer came from
+    ``MakeProcInstance``/``GetProcAddress``, so its target is EITHER an import
+    thunk -- which is a Python hook, and therefore never reaches
+    ``record_interpreted_instruction`` -- OR ordinary guest code, which does.
+    Binding only on the interpreted side would misattribute a thunk call's
+    post-return continuation as its target, which is why this used to be
+    skipped entirely.  So the pending site is resolved in BOTH callbacks: a hook
+    dispatch binds the thunk address, an interpreted instruction binds the guest
+    address, and whichever fires first wins.  That distinction is exactly the
+    one ``win16.farptr.FarPointerLog.describe`` draws (api-thunk / proc-thunk vs
+    guest), so the two halves agree by construction."""
 
     __slots__ = ("entries", "sites", "observed", "dyn", "pending")
 
@@ -78,24 +89,29 @@ class EntryProbe:
         self.dyn: dict[tuple[int, int], dict[tuple[int, int], int]] = {}
         self.pending: tuple[int, int] | None = None
 
+    def _bind(self, addr) -> None:
+        """Attribute the resolved target to the dispatch site waiting for it."""
+        tgts = self.dyn.get(self.pending)
+        if tgts is None:
+            self.dyn[self.pending] = {addr: 1}
+        else:
+            tgts[addr] = tgts.get(addr, 0) + 1
+        self.pending = None
+
     def record_interpreted_instruction(self, addr) -> None:
-        pend = self.pending
-        if pend is not None:
-            tgts = self.dyn.get(pend)
-            if tgts is None:
-                self.dyn[pend] = {addr: 1}
-            else:
-                tgts[addr] = tgts.get(addr, 0) + 1
-            self.pending = None
+        if self.pending is not None:
+            self._bind(addr)
         if addr in self.entries:
             self.observed.add(addr)
         if addr in self.sites:
             self.pending = addr
 
-    # the CPU also calls this on a replacement-hook dispatch; a no-op here (a
-    # cold_nohooks run installs only the platform API thunks, never IR funcs).
+    # A replacement-hook dispatch.  For a far-indirect CALL site this IS the
+    # resolved target (an import thunk is a Python hook and never shows up as an
+    # interpreted instruction), so it closes the pending binding.
     def record_hook_unverified(self, addr, name) -> None:  # noqa: D401
-        pass
+        if self.pending is not None:
+            self._bind(addr)
 
     # unused telemetry surface -- present so the CPU never AttributeErrors.
     def record_hook_verified(self, *a, **k) -> None:
@@ -126,10 +142,16 @@ def _modrm_reg(hexbytes: str) -> int | None:
 
 
 def _dispatch_sites(ir: dict) -> frozenset[tuple[int, int]]:
-    """The NEAR-indirect dispatch + ISR-chain sites whose runtime targets the
-    dos_re dyn/ISR-chain gates consume: ``call [..]`` /2, ``jmp [..]`` /4 (jump
-    tables / message-pump arms), ``jmp [..]`` /5 (far ISR-chain tail). Excludes
-    far-indirect CALLs (/3 -- API thunks, serviced by a hook)."""
+    """Every indirect transfer whose runtime targets the dos_re dyn gates
+    consume: ``call [..]`` /2 and ``jmp [..]`` /4 (near -- jump tables and
+    message-pump arms), ``jmp [..]`` /5 (far ISR-chain tail), and ``call [..]``
+    /3 (FAR -- Win16 dynamic linking, the pointer a ``MakeProcInstance`` or
+    ``GetProcAddress`` handed back).
+
+    The /3 sites are what the far-call composition rung needs.  They are only
+    capturable because :meth:`EntryProbe.record_hook_unverified` now closes a
+    pending binding: their target is usually an import thunk, which is a Python
+    hook rather than an interpreted instruction."""
     out: set[tuple[int, int]] = set()
     for key, fn in ir["functions"].items():
         cs = int(key.split(":")[0], 16)
@@ -139,7 +161,7 @@ def _dispatch_sites(ir: dict) -> frozenset[tuple[int, int]]:
                 if kind not in ("call_ind", "jmp_ind"):
                     continue
                 reg = _modrm_reg(i["bytes"])
-                if (kind == "call_ind" and reg == 2) or \
+                if (kind == "call_ind" and reg in (2, 3)) or \
                         (kind == "jmp_ind" and reg in (4, 5)):
                     out.add((cs, int(i["ip"], 16)))
     return frozenset(out)
