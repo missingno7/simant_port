@@ -65,6 +65,7 @@ BS_RADIOBUTTON, BS_GROUPBOX, BS_AUTORADIOBUTTON = 0x4, 0x7, 0x9
 SS_ICON = 0x3                                    # Static style low nibble
 # Notification codes packed into WM_COMMAND's HIWORD(lParam).
 BN_CLICKED, CBN_SELCHANGE = 0, 1
+LBN_SELCHANGE, LBN_DBLCLK = 1, 2
 
 # Win 3.1 dialog font "Helv" is the ancestor of MS Sans Serif — the closest
 # faithful substitute available on modern Windows.
@@ -785,6 +786,24 @@ class DialogView:
             cb.bind("<<ComboboxSelected>>", lambda _e, c=ctrl, w=cb: self._on_combo(c, w))
             self._place(cb, ctrl)
             self.widgets[id(ctrl)] = cb
+        elif cls == "ListBox":
+            # The file list in Open/SaveAs.  The game fills it with DlgDirList
+            # and reads it back with LB_GETCURSEL/LB_GETTEXT, so the only thing
+            # this owes the dialog is an honest `ctrl.sel` plus the two
+            # notifications: a click selects, a DOUBLE click is "open this one"
+            # (Win 3.1 file dialogs commit on LBN_DBLCLK).
+            box = tk.Listbox(self.frame, font=self.font, exportselection=False,
+                             activestyle="none")
+            for item in ctrl.items:
+                box.insert("end", item)
+            if 0 <= ctrl.sel < len(ctrl.items):
+                box.selection_set(ctrl.sel)
+            box.bind("<<ListboxSelect>>",
+                     lambda _e, c=ctrl, w=box: self._on_list(c, w, LBN_SELCHANGE))
+            box.bind("<Double-Button-1>",
+                     lambda _e, c=ctrl, w=box: self._on_list(c, w, LBN_DBLCLK))
+            self._place(box, ctrl)
+            self.widgets[id(ctrl)] = box
         else:                                         # unknown class: label it
             lbl = tk.Label(self.frame, text=f"[{cls}]", bg=DIALOG_BG)
             self._place(lbl, ctrl)
@@ -817,6 +836,13 @@ class DialogView:
         ctrl.sel = widget.current()
         self.dlg.events.put(("command", ctrl.ctrl_id, CBN_SELCHANGE))
 
+    def _on_list(self, ctrl, widget, note) -> None:
+        sel = widget.curselection()
+        if not sel:
+            return                                # a deselect is not a choice
+        ctrl.sel = sel[0]
+        self.dlg.events.put(("command", ctrl.ctrl_id, note))
+
     def sync(self) -> None:
         """Pull live control state (the game may have changed it) into widgets."""
         for ctrl in self.dlg.controls:
@@ -839,6 +865,20 @@ class DialogView:
                     widget.config(values=list(ctrl.items))
                 if 0 <= ctrl.sel < len(ctrl.items):
                     widget.current(ctrl.sel)
+            elif ctrl.cls == "ListBox":
+                # DlgDirList refills the box after the dialog is already up (and
+                # again when the user changes directory), so the contents are
+                # pulled, not pushed.  Only rewrite when they actually differ —
+                # a blind refill every tick would fight the user's selection.
+                if list(widget.get(0, "end")) != list(ctrl.items):
+                    widget.delete(0, "end")
+                    for item in ctrl.items:
+                        widget.insert("end", item)
+                cur = widget.curselection()
+                have = cur[0] if cur else -1
+                if 0 <= ctrl.sel < len(ctrl.items) and have != ctrl.sel:
+                    widget.selection_clear(0, "end")
+                    widget.selection_set(ctrl.sel)
 
     def destroy(self) -> None:
         try:
