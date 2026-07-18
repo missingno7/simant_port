@@ -74,6 +74,36 @@ DEFAULT_DYN_EVIDENCE = REPO_ROOT / "artifacts" / "indirect_sites.json"
 DEFAULT_OVERRIDES = REPO_ROOT / "artifacts" / "overrides.json"
 IMPORT_BASE = "simant.native.cpuless"
 
+#: THE SKIN CONFIGURATION (task #53, the owner's directive: "the lifted cpuless
+#: code works as a SKELETON and our manually lifted code is SKIN that will be
+#: added on that skeleton").  ONE override corpus, TWO graphs:
+#:
+#:   production  simant/native/cpuless      generated-only (+ time-exact
+#:               simant/lifted/graph_cpuless  overrides) -- the PINNED,
+#:                                            instruction-count-keyed
+#:                                            byte-exact gate runs on this and
+#:                                            it must never move.
+#:   skin        simant/native/cpuless_skin  EVERY routable hand-recovered body
+#:               simant/lifted/graph_cpuless_skin  composed as a DIRECT CPUless
+#:                                            override, island cost included --
+#:                                            what scripts/play_cpuless.py runs.
+#:
+#: They are separate DIRECTORIES because a generated body and its override share
+#: the ``func_<para>_<ip>`` module name: writing an island override into the
+#: production corpus would silently CLOBBER the instruction-exact twin the gate
+#: depends on (cont.248 found this while wiring).  Two dirs make the split
+#: structural instead of a flag people must remember.
+SKIN_REC_DIR = REPO_ROOT / "simant" / "native" / "cpuless_skin"
+SKIN_GRAPH_DIR = REPO_ROOT / "simant" / "lifted" / "graph_cpuless_skin"
+SKIN_CENSUS_OUT = REPO_ROOT / "artifacts" / "cpuless_promote_census_skin.json"
+
+
+def import_base_of(rec_dir: Path) -> str:
+    """The python import base for a recovered-corpus DIRECTORY (the emitted
+    bodies' package).  Derived, not hardcoded, so a second corpus flavour can
+    live beside the pinned one."""
+    return ".".join(rec_dir.resolve().relative_to(REPO_ROOT).parts)
+
 
 def para_of_seg(ir: dict) -> dict[int, str]:
     """NE segment -> its paragraph-base (the CS the IR keys that segment by)."""
@@ -215,7 +245,7 @@ def route_graph(from_dir: Path, graph_dir: Path, adapter_dir: Path,
     return routed, missing
 
 
-def run_lint(rec_dir: Path) -> int:
+def run_lint(rec_dir: Path, import_base: str = IMPORT_BASE) -> int:
     """CPUless recovered-purity wall: the promoted bodies (and the carrier-free
     override bodies) import nothing but sibling recovered modules and the
     authoritative recovered corpus (``simant.recovered`` / ``simant.bridge``,
@@ -240,7 +270,7 @@ def run_lint(rec_dir: Path) -> int:
         "--recovered-root", str(rec_dir.relative_to(REPO_ROOT).as_posix()),
         "--recovered-root", "simant/recovered",
         "--recovered-root", "simant/bridge",
-        "--recovered-prefix", IMPORT_BASE,
+        "--recovered-prefix", import_base,
         "--recovered-prefix", "simant.recovered",
         "--recovered-prefix", "simant.bridge",
         "--forbidden-module", "dos_re.cpu",
@@ -328,6 +358,19 @@ def main(argv=None) -> int:
                          "at cp0 accumulating to -2.2M by cp31.  NOT "
                          "gate-admissible; use only with a demo re-recorded "
                          "under this exact config.")
+    ap.add_argument("--skin", action="store_true",
+                    help="build the SKIN corpus (task #53): the manual corpus "
+                         "as CPUless skin on the generated skeleton.  Shorthand "
+                         "for --with-overrides --overrides-any-time plus the "
+                         "skin dirs (simant/native/cpuless_skin, "
+                         "simant/lifted/graph_cpuless_skin, a skin census), so "
+                         "EVERY routable hand-recovered body composes directly "
+                         "while the PINNED production corpus/graph -- the ones "
+                         "the instruction-count-keyed byte-exact gate runs on "
+                         "-- are not touched.  The skin graph is NOT "
+                         "gate-admissible (island costs); it is what "
+                         "scripts/play_cpuless.py executes, and that runner has "
+                         "no byte-exact oracle keyed on instruction counts.")
     ap.add_argument("--tiers", default="leaf,calls-only",
                     help="comma-separated census tiers to feed the promoter "
                          "(default: leaf,calls-only — the calls-only widening; "
@@ -337,6 +380,24 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true",
                     help="run the promotion census only; write no files")
     args = ap.parse_args(argv)
+
+    if args.skin:
+        # The skin preset only fills in defaults the caller did not override, so
+        # `--skin --graph-dir X` still works and nothing is silently redirected.
+        args.with_overrides = True
+        args.overrides_any_time = True
+        if args.recovered_dir == str(DEFAULT_REC_DIR):
+            args.recovered_dir = str(SKIN_REC_DIR)
+        if args.graph_dir == str(DEFAULT_GRAPH_DIR):
+            args.graph_dir = str(SKIN_GRAPH_DIR)
+        if args.census_out == str(DEFAULT_CENSUS_OUT):
+            args.census_out = str(SKIN_CENSUS_OUT)
+        if Path(args.recovered_dir).resolve() == DEFAULT_REC_DIR.resolve():
+            raise SystemExit(
+                "cpuless_promote --skin: refusing to write the island-cost skin "
+                "corpus into the PINNED production corpus "
+                f"({DEFAULT_REC_DIR}) -- an override body would clobber the "
+                "instruction-exact generated twin the byte-exact gate runs on.")
 
     ir = json.loads(Path(args.ir).read_text(encoding="utf-8"))
     census = json.loads(Path(args.census).read_text(encoding="utf-8"))
@@ -356,6 +417,7 @@ def main(argv=None) -> int:
           f"(⋃tiers ∩ ¬manual): {len(entries)}")
 
     rec_dir = Path(args.recovered_dir)
+    import_base = import_base_of(rec_dir)
     graph_dir = Path(args.graph_dir)
     adapter_dir = graph_dir / "_adapters"        # staging for lifted_* adapters
 
@@ -364,7 +426,7 @@ def main(argv=None) -> int:
         "--ir", args.ir,
         "--recovered-dir", str(rec_dir),
         "--adapter-dir", str(adapter_dir),
-        "--import-base", IMPORT_BASE,
+        "--import-base", import_base,
         "--exclude", f"@{args.boundary_heads}",
         "--entries", ",".join(entries),
         "--census-out", args.census_out,
@@ -487,7 +549,7 @@ def main(argv=None) -> int:
           f"stay literal lifts")
 
     print("\n=== CPUless recovered-purity wall (lint_cpuless) ===")
-    rc = run_lint(rec_dir)
+    rc = run_lint(rec_dir, import_base)
     if rc != 0:
         print("CPUless wall: FAIL")
         return rc

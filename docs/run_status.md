@@ -1,5 +1,169 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-18 (cont.252) — THE SKELETON'S LARGEST HOLE IS THE MANUAL CORPUS ITSELF (unlock 148, the top lever), and EVERY shape refusal the lifter has is ONE Windows-specific idiom: the Win16 far-entry prologue `inc bp; push bp; mov bp,sp` (0% promotion rate over 56 occurrences, all in the C runtime). Task #53's skin corpus SHIPPED; the pinned gate is unmoved.
+- **THE HEADLINE, and it inverts the framing.**  "Complete the skeleton before
+  the skin" is measurably backwards.  Ranking the 856 `contains-call` refusals
+  by **UNLOCK** rather than by count (the `dos_re tools/abi_blockers.py` method,
+  re-implemented over our `cpuless_promote_census.json` because that tool reads
+  the `abi_promote` cores manifest and a different refusal vocabulary):
+
+  ```
+  unlock 148   (direct blocker of 314)   MANUAL (no generated twin by policy)
+  unlock  52   (direct blocker of 116)   blocked:indirect-or-far-transfer
+  unlock  24   (direct blocker of  26)   frame-pointer-pop-without-save
+  unlock  16   (direct blocker of  12)   platform-farcall-contract-unknown
+  unlock  10   (direct blocker of  13)   frame-pointer-clobbered
+  unlock  10   (direct blocker of  48)   boundary-or-dispatch-address
+  unlock   5   (direct blocker of   4)   blocked:unanalyzed-opcode-D9 (x87)
+  unlock   0   sp-as-data / mixed-return-kinds / opcode-DD
+  unlock 436   ALL classes together
+  ```
+  The **manual corpus is the single biggest blocker of the generated
+  skeleton**, and by construction: `promote_entries` excludes every manual
+  entry ([[manual-recovery-is-authoritative]]), so the skeleton has a hole
+  wherever we hand-recovered something.  **All 309 manual entries sit in the
+  clean `leaf`/`calls-only` tiers — not one is `blocked`** (measured): the
+  lifter COULD emit a body for every one of them and is forbidden to.  The only
+  sanctioned way to fill those holes is the OVERRIDE seam.  The skeleton cannot
+  be completed without the skin.
+- **143 of the 1050 refusals are PHANTOM.**  Every one of the 143
+  `leave-without-enter` refusals is a `case_XXXX` switch-arm fragment, and
+  **not one of them is a static call target anywhere in the binary** (checked
+  over every `calls_near`/`calls_far` edge in the IR).  They are not functions;
+  they are alternate entries into their container's shared epilogue —
+  cont.249's dispatch-arm absorption, which already claimed 74 of them.  Their
+  unlock is **0**: they never appear as anyone's blocker.  The ledger's
+  second-largest line is a mis-count, not a work item.
+- **THE MAJOR FINDING: every "own-shape" refusal is the WINDOWS far-entry
+  convention, and it is 100%-correlated.**  Sampled the real bytes:
+  - `frame-pointer-pop-without-save` **15/15** begin `45 55 8b ec` =
+    **`inc bp; push bp; mov bp,sp`** — the Windows 3.x far-frame marker (bit 0
+    of the saved BP tells the kernel's stack crawler a FAR frame from a NEAR
+    one, so real-mode segments stay movable/discardable).  The epilogue is
+    `8b e5 5d 4d cb` = `mov sp,bp; pop bp; dec bp; retf`.  To a DOS-only frame
+    model, `inc bp` before `push bp` is BP written before it is saved — generic
+    frame corruption.  It is a Windows calling convention.
+    (`_malloc 275F:027C`, `_free 275F:0282`, `__fmalloc 275F:1480`,
+    `_getenv 275F:3E92`, `__openfile 275F:412A`, `__getstream 275F:4224`, …)
+  - `frame-pointer-clobbered` **9/9** are the **`__loadds` variant** of the
+    same prologue: `1e 58 90` (`push ds; pop ax; nop`, 5 of them) or
+    `8c d8 90` (`mov ax,ds; nop`, 4 of them) followed by
+    `45 55 8b ec 1e 8e d8` = `inc bp; push bp; mov bp,sp; push ds; mov ds,ax`.
+    The trailing `nop` is the classic Win16 prologue patch slot.  Epilogue:
+    `4d 4d` / `83 ed 02` (`dec bp; dec bp` = `sub bp,2`) compensating for the
+    extra saved DS, then `mov sp,bp; pop ds; pop bp; dec bp; retf`.
+    (`_read 275F:3D88`, `_close 275F:3B80`, `_lseek 275F:2492`,
+    `__NMSG_TEXT 275F:2398`, `___ExportedStub 275F:2432`,
+    `__forcdecpt 275F:168C`, `__cropzeros 275F:1706`, …)
+  - `frame-restore-without-establish` **8/8** are that same epilogue carved
+    WITHOUT its head — `__dosret0 275F:0DBC` / `__dosreturn 275F:0DC9` /
+    `__dosretax 275F:0DDB` are three alternate entries falling into ONE shared
+    tail (`83 ed 02; 8b e5; 1f; 5d; 4d; cb`).  Structurally identical to the
+    143 `case_` arms: an alternate entry, not a function.  Same root cause for
+    `mixed-return-kinds` x1 (`internal_25DB`: one body reached from both a near
+    and a far entry).
+  **Binary-wide prologue census (entry-thunk `jmp` followed): 37 functions
+  carry the Win16 far entry, 19 the `__loadds` variant — 56 total, of which
+  ZERO are promoted.**  A 0% promotion rate over every occurrence of one idiom
+  is as clean as this evidence gets.  (What is CERTAIN is the byte shape and
+  the correlation; that the `nop` slot is loader/`MakeProcInstance`-patched is
+  textbook Win16 and consistent with the two variants observed, but I did not
+  verify it against SIMANTW's NE relocation table — thin evidence, flagged.)
+- **AND THEY ARE ALL IN THE C RUNTIME.**  Segment distribution of the
+  own-shape refusals: `frame-pointer-pop-without-save` 15/15,
+  `frame-pointer-clobbered` 9/9, `frame-restore-without-establish` 8/8,
+  `sp-as-data` 3/3, `mixed-return-kinds` 1/1 — **all in NE segment 4 (`275F`),
+  the Microsoft C runtime library**.  Not one is in the game's own compiled
+  code (segs 1,2,3,5,6,7), which uses the plain `push bp; mov bp,sp` frame and
+  lifts fine (345 such functions binary-wide, 152 promoted).  The lifter is not
+  weak at SimAnt; it is weak at *the Win16 build of the MSC runtime*.
+- **x87: a C-runtime fact, not a game fact.**  31 blocked binary-wide, **30 of
+  them in segment 4** (float formatting, `__aF*` helpers) and **0 reachable in
+  the observed closure**.  The "native inline x87" framing overstates it for
+  the game's own code.
+- **The indirect blocker is WIN16 DYNAMIC LINKING, not computed goto.**  35
+  functions blocked `indirect-or-far-transfer`; the offending instructions are
+  `ff 5e fc` = **`call far [bp-4]`** (22 sites — a far function pointer in a
+  LOCAL), `26 ff 1e` = `call far es:[disp16]` (18), `ff 1e 48` =
+  `call far [DGROUP:0048]` (5).  15 of the 35 are segment 2's sound tier
+  (`_snd_Install`, `_myBeginSound`, `_myBeginSong`, `_MciMessage`,
+  `_SoundBlasterMessage`, `_MciOutWave`, …).  This is `GetProcAddress` /
+  `MakeProcInstance` / a driver entry-point table: a far pointer resolved at
+  runtime and called indirectly — whose target, very often, is an import THUNK,
+  i.e. the same platform effect `plat.farcall` already services statically.
+- **`boundary-or-dispatch-address` x6 is the Win16 scheduler seam**, not a
+  shape gap: `_StopSimulation`, `_myDelay`, `_ms_Delay`, `_WaitHundredths`,
+  `_win_FlushEvents`, `_win_Open` — a Win16 app's "wait" is a PeekMessage/Yield
+  loop, deliberately excluded via `artifacts/boundary_heads_para.txt`.
+- **`platform-farcall-contract-unknown` x8 is a win16_re API-surface gap**: the
+  callee API is raw (-register) or unimplemented, so no `argbytes` is
+  derivable.  7 of 8 are the C runtime reaching KERNEL's local heap
+  (`__nexpand`, `__memavl`, `__freect`, `__nrealloc`); the rest are DDE/NetBIOS
+  (`GTCLIENTWNDPROC`, `_GtInitiateDDE`, `_NetBios`).
+- **`emitter-unsupported-op-F5` x1** is `CMC` (complement carry) in
+  `_SetMenuOptionState 0E99:4C6C` — a one-line generic dos_re opcode gap,
+  unlock 0.
+- **WHERE EACH CAPABILITY BELONGS** (the owner's explicit question):
+
+  | capability | home | unlock |
+  |---|---|---|
+  | manual-override composition (the SKIN) | simant_port (shipped, below) | **148** |
+  | indirect far call via a runtime-resolved pointer; a target in THUNK_SEG is a `plat.farcall` | mechanism **dos_re**; the `GetProcAddress`/`MakeProcInstance` semantics + THUNK_SEG fact **win16_re** | **52** |
+  | **Win16 far-entry prologue/epilogue** (`inc bp`/`dec bp`, `__loadds` `push ds;pop ax;nop` / `mov ax,ds;nop`, the `sub bp,2` DS compensation) | the frame MODEL is **dos_re** (a frame-shape emitter parameterised by an idiom table); the IDIOM TABLE is **win16_re** — a DOS lifter has no reason to model it | **34** |
+  | alternate-entry-into-shared-tail, generalised beyond jump-table arms (`__dosret*`, `mixed-return-kinds`) | **dos_re** (widen cont.249's absorption) | 0 direct, retires **151** phantom refusals |
+  | args-in/result-out forms for raw/unimplemented APIs (KERNEL local heap, DDE, NetBIOS) | **win16_re** | **16** |
+  | PeekMessage/Yield scheduler boundary | **win16_re** | **10** |
+  | `CMC` | **dos_re** | 0 |
+  | x87 | **dos_re** | 5 (0 reachable) |
+
+- **TASK #53 (the skin), completed before the pivot and NOT reverted.**
+  `scripts/cpuless_promote.py --skin` builds a SECOND corpus,
+  `simant/native/cpuless_skin/` (+ `simant/lifted/graph_cpuless_skin/`,
+  `artifacts/cpuless_promote_census_skin.json`), in which **all 201 routable
+  hand-recovered bodies compose as direct carrier-free CPUless overrides** —
+  **612 bodies = 411 generated skeleton + 201 manual skin**, vs 404 in the
+  pinned production corpus.  `lint_cpuless` **PASS (627 modules + a 25-module
+  runner closure)**.  `scripts/play_cpuless.py` gained `--corpus` and PREFERS
+  the skin, printing the skeleton/skin split in its banner.  Two DIRECTORIES,
+  not a flag: a generated body and its override share the `func_<para>_<ip>`
+  module name, so writing an island override into the production corpus would
+  clobber the instruction-exact twin the gate depends on; `--skin` refuses to
+  target it.
+- **THE VIRTUAL-TIME QUESTION, answered honestly (the task premise was half
+  right).**  The claim "the CPUless runner has no CPU counting instructions, so
+  island-cost overrides are admissible there" is **true for `--entry` and
+  `--sweep`, FALSE for `--demo`.**  Measured in the code:
+  `Win16CpulessPlatform.call` accumulates `compat["cost"]` into `self.clock`
+  and `_apply` publishes it as `carrier.instruction_count`; `win16.demo`'s
+  `DemoDriver._instr` reads exactly `machine.cpu.instruction_count`.  So a demo
+  replayed on the CPUless runner IS instruction-count-keyed and an island-cost
+  graph WOULD desync it.  The constraint is not absent — it is DEFERRED until a
+  demo drives the runner, and per [[demos-recreatable]] a demo re-recorded
+  under the skin config retires it.  Two graphs, one override corpus, and the
+  split is real.
+- **The routed-vs-all gap, diagnosed exactly.**  Of the 597-function observed
+  closure, **132 are manual; 77 have a routed override, 55 do not** — and those
+  55 are precisely the `+manual direct-compose (routed) +39` vs `(all) +129`
+  gap.  Their reasons: `args-incomplete` 29, `presentation-effects` 21,
+  `result-convention` 20, `sig-mismatch` 9, `callback-injected` 8,
+  `fact-excluded` 6, `proven-gated` 6, `callee-cleans` 2, `views` 2.
+- **GATE: GREEN and UNMOVED.**  `checkpoints.py --api-aligned --mask-poison
+  artifacts/vmless_boot --boot-image artifacts/vmless_boot cold_nohooks
+  --lift-dir simant/lifted/graph_cpuless --check artifacts/oracle_fresh2.trace
+  --check-field mdigest` -> **all 39 checkpoints + final MATCH, instr
+  199,619,366, mdigest 417cac5cd9aadb8c** — the cont.238…251 pin, re-verified
+  AFTER the skin work (the skin writes to entirely different directories).
+- **Chain: NOT pushed, NOT committed.**  simant_port only; `win16_re/` and
+  `dos_re/` untouched (other agents own the frame-shape emitter and the
+  callback seam).  `simant/recovered/` untouched.  Generated corpora and graphs
+  remain disposable/gitignored (`simant/native/cpuless_skin/` added).
+- **Reproduce.**  `python scripts/cpuless_promote.py --skin` ->
+  `python scripts/play_cpuless.py --sweep` (the skin corpus as roots) ->
+  `python scripts/cpuless_wall_gap.py` (the rung plan) -> the `checkpoints.py
+  --check-field mdigest` gate above.  The blocker ranking is reproduced by the
+  unlock-fixpoint described at the top of this entry over
+  `artifacts/cpuless_promote_census.json` + `artifacts/recovery_ir.json`.
+
 ## 2026-07-18 (cont.251) — play_cpuless: the CPUless RUNNER exists and RUNS — SimAnt executes with no CPU anywhere and Windows answers it: 376 of 404 promoted bodies run to completion and 259 Win16 API calls are serviced through a new CPU-FREE API path (win16_re); the program entry is the first witness, and the frontier is now MEASURED instead of modelled
 - **THE HEADLINE.**  `scripts/play_cpuless.py` boots SimAnt EXE-free **and
   CPU-free** — the memory image is the data-only boot image, the code is the
