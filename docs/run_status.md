@@ -1,5 +1,186 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-19 (cont.257) — the callback step cap was a length limit wearing a hang-detector's name: cold2 (the owner's 31766-record wide session) now replays CLEAN to its end, and the widened evidence takes production far-call coverage 42/115 -> 47/150
+- **The bug, found by the owner's `cold2` recording.**  Headless replay failed
+  with `CallbackOverrun: callback 0100:2930 (MAINWNDPROC) did not return within
+  20000000 steps`, at instr 92,489,660 -- **11 instructions** before the demo's
+  next recorded input arrival.  A PC histogram over the window (self-armed
+  inside the telemetry, since the whole spin is one `call_far`) put the time in
+  `_AboutDialog -> _DialogAbortOrCont -> _WaitedEnough -> _TickCount ->
+  __aFuldiv`, with `_win_Events`/`_DoBitmap`/`_DrawChar` active throughout: the
+  callback was pumping input and repainting the About dialog the entire time,
+  not hung.  This is RESIDENCE -- a callback the game legitimately lives inside
+  for unbounded wall time -- tripping a per-invocation step budget that
+  accumulates across the whole residence.  Two theories were tested and killed
+  first: no MCI call appears anywhere in the spin window, and **no `b903`
+  (MM_MCINOTIFY) immediate exists anywhere in the whole IR** except as an
+  unrelated near-call displacement -- the MCI-completion-poll hypothesis for
+  this specific hang is dead (the MUSIC symptom itself is a SEPARATE,
+  still-open item -- see below).
+- **The fix, in win16_re (game-agnostic).**  `call_far`'s step cap is now a
+  NO-PROGRESS detector, not a length limit: `yield_check` may report progress
+  by returning truthy, which RESETS the budget; what stays capped is a callback
+  that burns the whole budget with genuinely NO external progress.  A host
+  whose `yield_check` reports nothing keeps the exact old fixed-budget
+  behaviour.  `DemoDriver`'s yield now reports whether the recorded timeline
+  advanced -- a recording is proof the callback returned eventually, and
+  consuming input on schedule IS progress by definition.  **The cap was NOT
+  raised** -- `cold2`'s largest inter-arrival gap (17.7M) stays inside the
+  unchanged 20M budget, so the detector stays tight.  Verified: reverting only
+  the two changed files fails all 3 new tests with the exact prior behaviour.
+- **Measured: `cold2` replays clean.**  `entry_probe cold2`: was
+  `CallbackOverrun` at instr 92,489,660 / 496 functions; now **demo ended at
+  instr 489,923,305 / 658 functions executed**, all 31766 records consumed.
+  This is the project's first wide-coverage session to replay end to end and
+  unblocks task #49 (second behavioral gate) and task #60 (far-call evidence).
+- **Widened production evidence, measured on the real binary.**  Unioned
+  `cold_nohooks` (42 sites / 115 edges) with `cold2` (46 / 132) ->
+  **47 sites / 150 edges**.  Regenerated the full pipeline: `promotable` held
+  at 463 (unchanged), but **`absorbed_arms` 74 -> 102** and `contains-call`
+  819 -> 791 -- the widened evidence composed 28 more far-indirect sites as
+  dispatch ARMS of an already-promoted container rather than as new standalone
+  functions.  A real gain, a different shape than the earlier slice's.
+- **Gate: GREEN, unmoved, checked twice** (once before the evidence widening,
+  once after regenerating with it): all 39 checkpoints + final MATCH, instr
+  199,619,366, mdigest `417cac5cd9aadb8c`.  Suites: win16_re **409**,
+  simant_port **2325**.
+- **Owner feedback, closed out.**  `[ListBox]` placeholder: FIXED (cont.255,
+  088f2b5) -- was NOT a Win16 API gap (the `LB_*` message surface is fully
+  implemented), it was the host tkinter dialog renderer in `scripts/play.py`
+  never having a `ListBox` widget.  Quick-Game ghosting: FIXED (cont.256) --
+  every drawing primitive published its surface-version bump BEFORE writing
+  pixels, defeating play.py's own torn-frame fence; moved to AFTER in all six
+  primitives.  Music not always switching: **still open** -- `_myBeginSong`
+  sends MCI_STATUS (0x0814) flags 0x340 and `win16/api/mmsystem.py` returns a
+  benign 0 for every item but MODE; the cold2 MCI log shows tracks going
+  open->play->close back to back, matching "starts then immediately switches".
+  Next step is to decode the real `dwItem` from `services["mci_log"]` and
+  implement the observed contract -- not guessed here.
+- **Handover written**: `docs/handover.md`, a point-in-time snapshot for a
+  fresh agent (pins, the architecture decision rule, hard-won lessons, what was
+  in flight, next work in priority order). Superseded in detail by this entry
+  and cont.253-256 but the structure stays useful.
+
+## 2026-07-19 (cont.256) — the Quick Game "ghosting" ROOT CAUSE found and fixed generically: every drawing primitive published its version-bump BEFORE writing its pixels, defeating play.py's own torn-frame fence (win16_re)
+- **Owner report: "later in game I saw some ghosting on that SimAnt - Quick
+  Game window" — stale pixels left behind.**  Triaged lifter-first: the
+  headless probe (scratchpad `ghostprobe.py`) emulated play.py's per-tick
+  version-gated sync over `cold`, `cold_nohooks` (full 199,619,366 instrs) and
+  `cold2` (to the CallbackOverrun the other agent is fixing) and found **0
+  version/image desyncs at chunk boundaries** — as expected, since a
+  single-threaded headless replay never samples MID-primitive.  So NOT a lifter
+  bug and NOT a headless-visible defect; it lives purely in play.py's THREADED
+  present, exactly the class cont.29 diagnosed ("a blit IN FLIGHT -> a
+  torn/ghosted frame") but left unfixed.
+- **ROOT CAUSE (generic, win16, found by inspection + a deterministic model).**
+  `Surface.version` is the ONE signal a host uses to decide a surface has new
+  pixels (play.py `WindowView.sync`: redraw only when `version != last`).  Its
+  correctness is an ORDERING contract: `touch()` PUBLISHES a frame, so it must
+  fire only once the pixels are final.  But **six drawing primitives bumped
+  FIRST**: `blit` (BitBlt, incl. the self-overlapping map scroll), `_fill_rect`,
+  `_fill_polygon` (TrapFill), `TextOut`, `StretchBlt` all called `dst.touch()`
+  *before* their row loop.  A GUI-thread composite that interleaves the worker's
+  write then latches a half-drawn buffer UNDER the final version, sees the
+  version unchanged around its copy (the worker won't bump again this frame),
+  and — this is the persistent part — every later idle tick sees the same
+  version and SKIPS the redraw.  The correct pixels never reach the screen until
+  an unrelated draw bumps again.  play.py already had a 2-iteration version
+  fence built for exactly this, but a bump-first primitive defeats it.
+- **THE FIX: move `touch()` to AFTER the pixel write in all six** (win16_re
+  `gdi.py` _fill_rect/_fill_polygon/TextOut/StretchBlt, `objects.py` blit).  A
+  Windows rule, not a SimAnt one — nothing game-specific.  With bump-last the
+  version only reaches its final value once content is final, so the fence
+  (and even the plain per-tick gate) always converges on the coherent frame.
+- **EVIDENCE.**  (1) `win16_re/tests/test_surface_version_order.py` — a probe
+  that snapshots pixels at every `touch()` and asserts the published bytes equal
+  the final bytes, over all six primitives + the self-overlapping scroll; **8
+  FAIL on the old code, 2 controls (InvertRect, Surface.fill — already
+  correct) PASS**, all 10 green after.  (2) `scratchpad/fence_model.py` models
+  play.py's per-tick gate against a straddling worker write: bump-first the host
+  settles on a TORN frame (persistent), bump-last it settles on the FINAL frame.
+- **This is NOT task #33 in disguise.**  #33 is the borderless-popup promotion
+  z-order closure (a window-STACKING defect — wrong window in front).  Ghosting
+  is stale PIXELS within a correctly-stacked window; the probe confirmed no
+  z-order/image desync.  Different bug, left open.
+- **Gates.**  Pinned wall: `checkpoints.py --api-aligned --mask-poison ...
+  --check-field mdigest` — **all 39 MATCH, instr 199,619,366, mdigest
+  417cac5cd9aadb8c**, UNMOVED (the fix reorders a version counter that no
+  recorded/masked digest path observes; the demo present is single-threaded).
+  Suites: win16_re **409** (was 396 + new file), simant_port **2325**, both
+  green.  Not committed (per task).
+
+## 2026-07-19 (cont.255) — cold2 replays END TO END: the per-callback step cap was a LENGTH limit pretending to be a hang detector, and a modal dialog residence is not a hang.  The music symptom is a SEPARATE bug — the shared-cause hypothesis is DISPROVEN, with evidence
+- **The symptom.**  `entry_probe cold2` died with `CallbackOverrun: callback
+  0100:2930 (MAINWNDPROC) did not return within 20000000 steps (at
+  0E99:18B6)`, instr 92,489,660.  `0E99:18B6` is inside `_TickCount`, so the
+  working hypothesis was a busy-wait on a music/MCI state change that never
+  occurs headless.
+- **WRONG, and the histogram says so.**  A PC histogram over the last 20M
+  interpreted instructions (self-armed inside the telemetry — an outer
+  `cpu.run` loop can never arm it, because the whole spin happens INSIDE one
+  `call_far`) puts the time in `_AboutDialog` -> `_DialogAbortOrCont` ->
+  `_WaitedEnough` -> `_TickCount` -> `__aFuldiv`.  `_TickCount` is
+  `GetTickCount() / 55` (push 0, push 0x37, USER.13, `__aFuldiv`) — the
+  BIOS-tick granularity helper, nothing to do with audio.  Not one MCI call
+  in the window.
+- **THE ACTUAL CAUSE, to 11 instructions.**  The overrun fired at instr
+  92,489,660.  The next recorded input arrival in cold2 is at instr
+  **92,489,671**.  The replay was tracking the recording to within ELEVEN
+  instructions and got shot for it.  The callback was not hung at all: it had
+  been resident in the About dialog since ~72.5M, consuming recorded mouse
+  input the whole way (`_win_Events`, `_DoBitmap`, `_DrawChar`, `_Unpack`,
+  `_GPutPacked` all in the profile — it was pumping AND repainting).  This is
+  exactly the RESIDENCE class `waitscan.py`'s own docstring warns about: a
+  loop the game lives inside for unbounded wall time, tripping a
+  per-INVOCATION budget that accumulates across the whole residence.
+- **THE FIX (win16_re, game-agnostic): the cap becomes a NO-PROGRESS detector
+  instead of a length limit.**  `win16/callback.py`'s `yield_check` may now
+  return a truthy value meaning "external progress happened", and the step
+  budget is REARMED when it does.  `win16/demo.py`'s `DemoDriver._on_yield`
+  returns True exactly when the recorded timeline advanced (an arrival was
+  injected).  What stays capped is the case actually worth catching:
+  `max_steps` with no external progress at all — and the message now says
+  "made no progress for N steps".  A host whose yield_check returns nothing
+  keeps the old fixed-budget behaviour byte for byte.  **The cap was NOT
+  raised** — cold2's largest inter-arrival gap is 17.7M, comfortably inside a
+  20M no-progress budget, so the detector is still tight.
+- **Why this is the right shape, not a loophole.**  A recording is PROOF the
+  callback returned eventually; a callback consuming recorded input on the
+  recorded schedule is making the recorded progress by definition.  A fixed
+  per-callback budget can only ever be a guess at how long a player sat in a
+  dialog.  (The interactive driver already passes `max_steps=None` for the
+  same reason — this gives replay the same freedom without giving up the
+  runaway detector.)
+- **THE RESULT.**  `pypy scripts/entry_probe.py cold2` -> **"demo ended";
+  instr=489,923,305; functions executed 658 / 1904** (was 496 before the
+  fix; `cold_nohooks` reaches 597).  Dispatch evidence **46 of 144 sites
+  fired, 132 distinct site->target edges** (cold_nohooks: 27 / 73).  That is
+  task #60's evidence widening and task #49's second behavioral gate, both
+  unblocked by the same three-line mechanism.
+- **THE MUSIC SYMPTOM IS A DIFFERENT BUG — do not chase it through the
+  callback cap.**  Owner reported "music is not always switching when it
+  should".  Established: (a) the hang is not audio, per the histogram above;
+  (b) `_snd_IsSongDone` / `_mySongIsDone` answer purely from DGROUP flags at
+  `[8D06..8D1C]` and issue NO MCI call, and `_myServiceSong` only pumps
+  `PeekMessage` — so "song done" is delivered as a WINDOW MESSAGE, not a
+  status poll; (c) **nothing in the binary compares against MM_MCINOTIFY
+  (0x03B9)** — the only `b903` immediate in the whole IR is a near-call
+  displacement — so the MCI-completion-notification theory is dead too.
+  What IS live: `_myBeginSong` at `0E99:88DD` sends **MCI_STATUS (0x0814)**
+  with dwFlags 0x340 through the GetProcAddress'd `mciSendCommand`, and
+  `win16/api/mmsystem.py` answers a benign **0** for every item that is not
+  `MCI_STATUS_MODE`.  And the full cold2 replay's MCI log shows tracks going
+  `open -> play -> close` back to back with no gap (sad4, defeat), which is
+  the audible "starts then immediately switches" signature.  NEXT: decode the
+  dwItem written at `[bp-0x3e]+8` before that call (empirically, from
+  `services["mci_log"]`) and implement the observed contract.  Not guessed
+  here — the honest frontier.
+- **Gates.**  Pinned checkpoint gate re-run: all 39 checkpoints MATCH, instr
+  199,619,366, mdigest `417cac5cd9aadb8c` — UNMOVED.  Suites: win16_re
+  **399** (396 + 3 new in `tests/test_callback.py`), simant_port **2325**.
+  The 3 new tests are non-vacuous: reverting only `win16/callback.py` +
+  `win16/demo.py` fails all 3.
+
 ## 2026-07-18 (cont.254) — indirect FAR-call composition lands GUARDED, and finds a real silent-wrong-answer bug the byte-exact gate could not see; the capability realizes +2, not +85, because the binding constraint is EVIDENCE COVERAGE
 - **The capability.**  A composed `call far [mem]` is a **guarded fan-out over
   static far calls**: the evidence supplies the arm set, and each arm composes
