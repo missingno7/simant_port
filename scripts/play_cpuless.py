@@ -8,11 +8,12 @@ pure ``func_<cs>_<ip>(mem, plat, *, <regs>)`` modules under
 ``simant/native/cpuless/`` — over a memory image and a platform seam:
 
 * **the CPUless import wall**, ARMED before anything else is imported
-  (``dos_re.lift.standalone.install_import_guard``): any import of the
-  interpreter, the CPU carrier, the VMless graph installer, the EXE/VM runtime
-  builder, **or SimAnt's own CPU-ABI adapter packages** (``simant.lifted.*`` —
-  verification shims, never runtime source) raises.  Relative imports are
-  resolved first, so the framework's own intra-package edges cannot slip past.
+  (``dos_re.detachment_guard.install_import_guard``): any import of the
+  interpreter, the CPU carrier, the generated-graph activator, the EXE/VM
+  runtime builder, **or SimAnt's own CPU-ABI adapter packages**
+  (``simant.lifted.*`` — verification shims, never runtime source) raises
+  ``DetachedDependencyError``.  Relative imports are resolved first, so the
+  framework's own intra-package edges cannot slip past.
 * **the EXE-independence wall**, inherited from cont.226: the memory image is
   the generated data-only boot image (``artifacts/vmless_boot/``), loaded
   through the loader-FREE path (``win16.cpuless.load_cpuless_image`` — the NE
@@ -27,9 +28,10 @@ pure ``func_<cs>_<ip>(mem, plat, *, <regs>)`` modules under
 
 A PARTIAL run is the expected, informative outcome: the 597-function
 runtime-reachable closure is composable *in the wall model*, but not all of it
-is materialised, so the run stops at the first ``CpuStandaloneWitness`` — an
-unpromoted function on the frontier, or a platform effect this host does not
-own.  That stop is the empirical frontier the model has only predicted.  There
+is materialised, so the run stops at the first frontier witness —
+``RuntimeExecutionFrontier`` (an unpromoted function on the frontier) or
+``UnsupportedPlatformEffect`` (a platform effect this host does not own).
+That stop is the empirical frontier the model has only predicted.  There
 is deliberately NO interpreter fallback and NO stubbed platform effect: a
 silent wrong answer would be worse than a loud stop.
 
@@ -52,9 +54,9 @@ sys.path.insert(0, str(REPO_ROOT))
 import simant._env  # noqa: E402,F401  (puts win16_re on sys.path)
 import win16        # noqa: E402,F401  (puts dos_re on sys.path; CPU-free)
 
-from dos_re.lift.standalone import (  # noqa: E402
-    CpuStandaloneWitness, install_import_guard, load_recovered, run_deep,
-)
+from dos_re.detachment_guard import install_import_guard  # noqa: E402
+from dos_re.lift.platform import UnsupportedPlatformEffect  # noqa: E402
+from dos_re.runtime_miss import RuntimeExecutionFrontier  # noqa: E402
 
 #: The CPU-ABI adapters and the lifted graphs are VERIFICATION artifacts: they
 #: exist to prove a recovered body byte-exact against the original inside the
@@ -67,7 +69,7 @@ EXTRA_FORBIDDEN = (
     "simant.hooks",         # the lifted islands: they take a live cpu
     "simant.runtime",       # the EXE loader / VM machine builder
     "win16.loader",         # the NE loader — imports dos_re.cpu
-    "win16.bootimage",      # the VM boot path (install_vmless_graph)
+    "win16.bootimage",      # the VM boot path (activate_generated_graph)
 )
 
 install_import_guard(extra_forbidden=EXTRA_FORBIDDEN)   # <-- THE WALL, armed
@@ -75,9 +77,15 @@ install_import_guard(extra_forbidden=EXTRA_FORBIDDEN)   # <-- THE WALL, armed
 from win16.console import make_console_safe          # noqa: E402
 from win16.cpuless import (                          # noqa: E402
     CpuFreeExecutionAttempt, Win16CpulessPlatform, load_cpuless_image,
+    load_recovered, run_deep,
 )
 
 make_console_safe()
+
+#: The dos_re 3.0 frontier witnesses a CPUless run can stop on: a reached
+#: target with no promoted body (``load_recovered`` / the corpus dispatch),
+#: or a platform effect this CPU-free host does not own.
+FRONTIER_WITNESSES = (RuntimeExecutionFrontier, UnsupportedPlatformEffect)
 
 #: THE SKELETON + SKIN CORPORA (task #53).  ``simant.native.cpuless`` is the
 #: generated SKELETON — one instruction-exact body per promoted function, and
@@ -249,7 +257,7 @@ def sweep(boot_dir: Path, game_root: str, corpus: str) -> int:
             cls = "ran to completion"
         except CpuFreeExecutionAttempt:
             cls = "CPU-free host boundary (a Win16 callback into guest code)"
-        except CpuStandaloneWitness as exc:
+        except FRONTIER_WITNESSES as exc:
             cls = "CPUless frontier witness"
             witnesses.setdefault(key, str(exc)[:120])
         except RecursionError:
@@ -343,7 +351,7 @@ def main(argv=None) -> int:
 
         try:
             return run(key, machine, plat, args.budget, corpus)
-        except CpuStandaloneWitness as exc:
+        except FRONTIER_WITNESSES as exc:
             print("=" * 72, file=sys.stderr)
             print("[play_cpuless] CPUless WITNESS — the run stopped at the "
                   "frontier (this is the informative outcome, not a bug):",

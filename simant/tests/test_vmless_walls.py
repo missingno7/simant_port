@@ -149,7 +149,7 @@ def test_dispatch_facts_match_fresh_derivation():
 @pytest.mark.skipif(not (_have_image and IR_PATH.exists()),
                     reason="boot image / IR not built")
 def test_exe_access_guard_refuses_the_binary_by_name_and_hash(tmp_path):
-    from dos_re.independence import (VMlessViolation,
+    from dos_re.independence import (GeneratedGraphBootstrapError,
                                      exe_access_guard_from_manifest)
     from win16.bootimage import load_boot_manifest
     manifest = load_boot_manifest(BOOT_DIR)
@@ -159,9 +159,9 @@ def test_exe_access_guard_refuses_the_binary_by_name_and_hash(tmp_path):
     renamed = tmp_path / "innocent.dat"
     shutil.copy(exe, renamed)
     with exe_access_guard_from_manifest(manifest):
-        with pytest.raises(VMlessViolation):
+        with pytest.raises(GeneratedGraphBootstrapError):
             open(exe, "rb")                          # by name
-        with pytest.raises(VMlessViolation):
+        with pytest.raises(GeneratedGraphBootstrapError):
             open(renamed, "rb")                      # by content hash
         (tmp_path / "ok.txt").write_text("data")     # data stays readable
         assert open(tmp_path / "ok.txt").read() == "data"

@@ -24,7 +24,7 @@ Notes
   `--from-snapshot DIR` resumes a snapshot-anchored demo.
 * `--vmless-graph DIR` installs the FULL VMless lifted graph (scripts/
   liftemit.py + scripts/liftlink.py output) via dos_re's
-  `install_vmless_graph` — the DOS_RE 2.0 oracle-guided-convergence
+  `activate_generated_graph` — the oracle-guided-convergence
   candidate.  The graph is emitted `count_instructions=True`, so its
   instruction-count timeline is the oracle's; combined with `--api-aligned`
   this makes an interpreted baseline directly comparable to a graph run.
@@ -93,8 +93,8 @@ def _machine(args):
     if args.hooks:
         install_hooks(m)
     if args.vmless_graph:
-        from dos_re.lift.install import install_vmless_graph
-        installed = install_vmless_graph(m.cpu, args.vmless_graph)
+        from dos_re.lift.install import activate_generated_graph
+        installed = activate_generated_graph(m.cpu, args.vmless_graph)
         # A lifted call chain mirrors the guest stack on the Python stack
         # (lifted fn -> emulate_call -> step -> hook -> ...): recursive game
         # code (worldgen flood fills) legitimately nests thousands of frames.
@@ -204,7 +204,7 @@ def main(argv=None) -> int:
     ap.add_argument("--hooks", action="store_true", help="install the SimAnt islands")
     ap.add_argument("--vmless-graph", metavar="DIR", default=None,
                     help="install the full VMless lifted graph from DIR "
-                         "(dos_re install_vmless_graph; the 2.0 candidate)")
+                         "(dos_re activate_generated_graph)")
     ap.add_argument("--boot-image", metavar="DIR", default=None,
                     help="run the STRICT machine: EXE-free load from this "
                          "data-only boot image, graph installed, interpreter "

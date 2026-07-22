@@ -1,5 +1,86 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.258) — the dos_re 3.0 migration begins: seam ported and gate-verified, tick demos retired, the gate demo lives byte-identically as a ReplayArtifact, and SIMANTW projects into an Execution Atlas with ZERO new code
+- **The owner's directive: migrate `win16_re` + `simant_port` to the dos_re 3.0
+  paradigm** — not a dependency bump; the full concept transfer (evidence
+  model, Execution Atlas, deterministic replay, one implementation catalog +
+  execution plan, categorized overrides, one player, stale-path removal).
+  dos_re bumped 8ccd3e1 -> **a6ae58c** (81 commits; 3.0 fully merged into
+  main; its own suite 1274 green here).  Migration branches: `win16-re-3.0`
+  (win16_re), `simant-3.0` (this repo).  The Win16 concept mapping — the
+  design contract for the whole migration — is
+  `win16_re/docs/dos_re_3_0.md`; read it first.
+- **What 3.0 is, compressed:** stable identities (`dos_re.identity`, address
+  space is a free string — ours is `win16-para`, paragraph CS:IP); THE replay
+  format `dos_re.replay.ReplayArtifact` (v1, deliberately no legacy reader;
+  snapshots become profile-local cached continuations inside it); the
+  Execution Atlas (a query projection over IR + replay evidence + manual
+  facts — it never executes or selects); `ImplementationCatalog` where
+  interpreted/generated/authored are ORIGINS with recovery-level properties
+  (VMless/CPUless are per-implementation, never whole-game modes);
+  `plan_execution` -> immutable `ExecutionPlan` binding exactly one owner per
+  reachable identity + `DetachmentReport`; authored overrides REQUIRE a
+  category (faithful/enhancement/behavioral/instrumentation — enforced in
+  code); ONE player, profile-selected composition (dos_re's architecture
+  contract literally bans the tokens `play_vmless`/`play_cpuless`/
+  `tick_demo`/`--record-demo` from active source).
+- **Phase 0, landed + verified — the seam.**  Renames: `VMlessViolation` ->
+  `GeneratedGraphBootstrapError`; `install_vmless_graph` ->
+  `activate_generated_graph`; import wall -> `dos_re.detachment_guard`
+  (violations raise `DetachedDependencyError`); `CpuStandaloneWitness` is
+  gone — the 3.0 witnesses are `RuntimeExecutionFrontier` (reached target,
+  no implementation), `UnsupportedPlatformEffect` (unmodelled effect), plus
+  win16's own `CpuFreeExecutionAttempt`; irgen `keep_interpreted` ->
+  `environment_wait_entries` (kwarg AND `facts_applied` key — the on-disk
+  `recovery_ir.json` still carries the old key and must be REGENERATED
+  before the next liftlink run; no dual-key compat by design).
+  `load_recovered`/`run_deep` live on as a MARKED bridge in `win16.cpuless`
+  until Phase 3 materializes callables from the catalog.  **Tick demos are
+  retired** (win16/tick_demo.py + taps + tests + scripts/tickdemo.py
+  deleted), mirroring upstream.  Verified: win16_re 412 passed, simant
+  2325 passed, and the pinned byte-exact gate **MATCH — 39/39 checkpoints,
+  final instr 199,619,366, mdigest 417cac5cd9aadb8c** (unchanged from
+  cont.256).
+- **Phase 1, the decisive proof: the v4 gate demo converted to a
+  ReplayArtifact replays BYTE-IDENTICALLY.**  New `win16/replay.py` (Win16
+  channels `win16.input/clock/dialog/messagebox/quit`; coordinate schema
+  `win16-re:guest-instruction-count:v1`; recorder with the v4 tap surface so
+  the interactive taps don't change; input driver with the proven v4
+  injection mechanics) + `win16/continuation.py` (ContinuationState codec
+  `win16-re-continuation-v1` over vmsnap mechanics).  Then
+  `scripts/demo2replay.py cold_nohooks ... --role oracle` +
+  `scripts/replay_artifact.py`: **199,619,366 instructions and digest
+  bcfaad65...b359f on BOTH the v4 and the artifact replay** — the old format
+  is now provably convertible, and dies in Phase 5.  (Anchored demos convert
+  with `--from-snapshot`; the converter refuses a wrong base loudly.
+  Capture-profile role is an OPERATOR CLAIM: `--role oracle` only for
+  `--no-hooks` recordings; cold2 is a CANDIDATE capture that earns trust
+  through oracle validation later.)
+- **Phase 2, probed successfully: dos_re's Atlas ingests our IR unchanged.**
+  `dos_re/tools/atlas.py create/ingest-ir` over `artifacts/recovery_ir.json`
+  (win16 IR is dos_re-IR-shaped by construction): **2469 nodes (1904
+  functions labelled from SIMANTW.SYM, 197 api: boundaries, 366 execution
+  points), 9734 edges**, root `__astart` (275f:0061), and
+  `coverage development` answers from it.  `artifacts/atlas/` is disposable
+  and regenerable.  NOTE: identity keys percent-escape the address colon
+  (`275f%3A0061`) — resolve by LABEL from the CLI, or escape the query.
+- **Operational cautions, hard-won today:** (1) PowerShell 5.1
+  `Set-Content -Encoding utf8` writes a BOM — CPython imports tolerate it but
+  `ast.parse(read_text("utf-8"))` (the independence lints!) fails with
+  U+FEFF; strip BOMs after any PowerShell regex edit, or edit with the file
+  tools.  (2) The agent-verification rule held again: reviewed both
+  subagents' diffs and re-ran every suite + the gate myself before
+  committing.
+- **Next (the phase plan, tracked in tasks #65-#70):** Phase 2 completion
+  (replay-evidence ingest: function visits + observed transfers from a
+  replay run into the Atlas), Phase 3 (ImplementationCatalog +
+  ExecutionConfiguration + ONE `play.py` with `--profile`, retiring
+  `play_vmless.py`/`play_cpuless.py`), Phase 4 (verify_interval/
+  verify_checkpointed over Win16 ReplayDrivers), Phase 5 (delete v4 +
+  stale paths, docs rewrite, win16 architecture-contract test), Phase 6
+  (workflow validation + the owner's 15-point report).  Task #17 (tick-demo
+  adapter) is RETIRED by 3.0.  Task #45 (memoryless) remains DO-NOT-START.
+
 ## 2026-07-19 (cont.257) — the callback step cap was a length limit wearing a hang-detector's name: cold2 (the owner's 31766-record wide session) now replays CLEAN to its end, and the widened evidence takes production far-call coverage 42/115 -> 47/150
 - **The bug, found by the owner's `cold2` recording.**  Headless replay failed
   with `CallbackOverrun: callback 0100:2930 (MAINWNDPROC) did not return within

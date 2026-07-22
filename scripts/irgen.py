@@ -8,8 +8,8 @@ front-end over a loaded machine, and writes the deterministic, regeneratable
 committed; delete it and this script reproduces it byte-identically).
 
 Game facts live in simant/facts/ as committed text (NE_SEG:HEX_OFFSET per
-line + comments): keep_interpreted.txt is the census scan frontier (x87 +
-_DoInt3), tagged env_wait in the IR.  Symbol identity is first-class: every
+line + comments): keep_interpreted.txt lists the environment-wait facts (the
+x87 + _DoInt3 census scan frontier), tagged env_wait in the IR.  Symbol identity is first-class: every
 record carries symbol/module/ne_seg from the .SYM (and alias names where two
 symbols share an address) alongside its canonical paragraph-base CS:IP key,
 and the .SYM sha1 lands in provenance next to the EXE's.
@@ -216,7 +216,7 @@ def main(argv=None) -> int:
     heads = [p for f in ("boundary_heads.txt", "boundary_heads_derived.txt")
              for p in read_fact_pairs(FACTS_DIR / f) if p[0] in segs]
     sym_kw = dict(
-        keep_interpreted=keep,
+        environment_wait_entries=keep,
         boundary_heads=heads,
         snapshot=snapshot_desc,
         symbols=f"{_SYM_PATH.name} sha1="

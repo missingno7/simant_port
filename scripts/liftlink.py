@@ -14,9 +14,10 @@ fine-grained capability class — the discovery deliverable
                                 hooked step; NEVER a link candidate)
     int:<tag>                   raw software interrupt (INT 21h DOS file I/O
                                 in the MSC CRT; serviced in Python)
-    keep-interpreted-fact:*     callee pinned interpreted by simant/facts/
-                                keep_interpreted.txt (the x87/_DoInt3
-                                census frontier), subclassed by refusal
+    keep-interpreted-fact:*     callee pinned by the environment-wait facts
+                                (simant/facts/keep_interpreted.txt — the
+                                x87/_DoInt3 census frontier), subclassed
+                                by refusal
     exit-shape:near|far         callee mixes exits (tail exit / retf+ret) —
                                 stays emulate_call through the hook dispatch
     not-a-census-entry          static call target that is no .SYM entry
@@ -119,7 +120,7 @@ def classify_unresolved(doc: dict, link_report: dict,
     """Every unresolved/unlinked edge, in a specific class — never one
     generic bucket.  Returns the ``unresolved`` section of the report."""
     functions = doc["functions"]
-    keep = set(doc["facts_applied"].get("keep_interpreted", ()))
+    keep = set(doc["facts_applied"].get("environment_wait_entries", ()))
 
     api_calls: dict[str, list[str]] = defaultdict(list)
     int_calls: dict[str, list[str]] = defaultdict(list)

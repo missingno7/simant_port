@@ -6,8 +6,8 @@ downstream (liftemit/liftlink/install, the adapter-matching stage) relies on:
 paragraph-base CS:IP record keys, the first-class .SYM identity
 (symbol/module/ne_seg/aliases) in records AND in the unsupported ledger, the
 api:* platform-effect tag on a known API-calling routine, a far-call record
-between game segments, and the env_wait keep-interpreted fact from
-simant/facts/.  The full-document determinism gate is the runner's job
+between game segments, and the env_wait environment-wait fact from
+simant/facts/keep_interpreted.txt.  The full-document determinism gate is the runner's job
 (two byte-identical runs — see docs/run_status.md cont.220); here we pin the
 document's shape without a 13-second sweep per test run.
 """
@@ -40,7 +40,7 @@ def doc():
     USER cursor API and far-calls into seg 4), the aliased x87 CRT entry
     __aFftol/__ftol (seg 4 — natively liftable since dos_re's x87 ESC
     capability), and the dead debug stub _DoInt3 (seg 7 — the one remaining
-    keep-interpreted fact)."""
+    environment-wait fact)."""
     irgen = _load_script()
     from simant.runtime import create_machine
     from win16.irgen import build_ir
@@ -52,7 +52,7 @@ def doc():
     keep = irgen.read_fact_pairs(irgen.FACTS_DIR / "keep_interpreted.txt")
     return build_ir(machine, sample, machine_factory=None,
                     names={k: names[k] for k in sample},
-                    keep_interpreted=[p for p in keep if p in sample],
+                    environment_wait_entries=[p for p in keep if p in sample],
                     symbols="SIMANTW.SYM sha1=test")
 
 
@@ -101,17 +101,17 @@ def test_x87_crt_entry_lifts_natively_with_alias_identity(doc):
     assert rec["aliases"] == ["__ftol"]          # two .SYM names, one address
     assert rec["module"] == "_TEXT"
     assert rec["liftable"] and not rec["refusals"]
-    assert "platform_effect" not in rec          # no keep-interpreted fact
+    assert "platform_effect" not in rec          # no environment-wait fact
     insts = [i for b in rec["blocks"] for i in b["instructions"]]
     assert sum(i["mnemonic"] == "x87" for i in insts) == 4  # the fistp/fld body
 
 
-def test_keep_interpreted_fact_tags_env_wait_and_ledger_names_symbols(doc):
+def test_environment_wait_fact_tags_env_wait_and_ledger_names_symbols(doc):
     rec = doc["functions"]["430E:F85B"]
     assert rec["ne_seg"] == 7
     assert rec["symbol"] == "_DoInt3"
     assert rec["module"] == "SIMTWO_MODULE"
-    assert rec["platform_effect"] == "env_wait"  # the keep-interpreted fact
+    assert rec["platform_effect"] == "env_wait"  # the environment-wait fact
     assert not rec["liftable"]
     # Fail-loud ledger, with first-class symbol identity (refusals name the
     # symbol, not just the address).

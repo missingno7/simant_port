@@ -8,7 +8,7 @@ Two tiers:
   and identifier hygiene on hostile names ($-prefixed CRT symbols, keywords);
 * a MINIATURE of the emit half runs on real code (a two-entry IR): symbolic
   modules + ``graph_manifest.json`` land in the emit dir, dos_re's
-  ``install_vmless_graph`` resolves the manifest and registers the hooks
+  ``activate_generated_graph`` resolves the manifest and registers the hooks
   under their symbolic names, and the miniature corpus holds the VMless wall
   (no ``interp_one`` call site).
 
@@ -113,16 +113,16 @@ def test_miniature_graph_emits_symbolically_and_installs(tmp_path):
     assert (tmp_path / "simone_srand1.py").is_file()
     assert (tmp_path / "graph_manifest.json").is_file()
     # The miniature corpus holds the VMless wall.
-    assert dosre_liftemit.vmless_wall_report(tmp_path) == {}
+    assert dosre_liftemit.interpreter_fallback_report(tmp_path) == {}
 
     class FakeCPU:
         def __init__(self):
             self.replacement_hooks = {}
             self.hook_names = {}
 
-    from dos_re.lift.install import install_vmless_graph
+    from dos_re.lift.install import activate_generated_graph
     cpu = FakeCPU()
-    installed = install_vmless_graph(cpu, tmp_path)
+    installed = activate_generated_graph(cpu, tmp_path)
     assert installed[(0x2F99, 0x158A)] == "simone_srand1.py"
     assert cpu.hook_names[(0x2F99, 0x158A)] == "simone_srand1"
     # Provenance stays inside the module: the paragraph-base ENTRY constant.

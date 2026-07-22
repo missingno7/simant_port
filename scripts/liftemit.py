@@ -244,7 +244,7 @@ def main(argv=None) -> int:
         for entry, symbol, status, detail in skipped:
             print(f"  {entry} {symbol}: {status} ({detail})")
 
-    offenders = liftemit.vmless_wall_report(emit_dir)
+    offenders = liftemit.interpreter_fallback_report(emit_dir)
     if offenders:
         total = sum(offenders.values())
         print(f"VMless wall: {total} interp_one fallback call site(s) in "

@@ -171,7 +171,7 @@ def _run_asm(entry_key, args, *, near, seed_fn=None):
 
 def _run_adapter(adaptgen, contract, args, *, near, seed_fn=None, tmp_path):
     """Emit the adapter, install it as the replacement hook, dispatch ONE step
-    (the exact runtime path install_vmless_graph uses); returns the machine."""
+    (the exact runtime path activate_generated_graph uses); returns the machine."""
     src = adaptgen.emit_adapter(contract, "gen_adapter_under_test")
     path = tmp_path / "gen_adapter_under_test.py"
     path.write_text(src, encoding="utf-8")

@@ -54,15 +54,15 @@ def test_the_armed_wall_rejects_the_adapter_packages():
 
     import simant._env  # noqa: F401
     import win16  # noqa: F401
-    from dos_re.lift.standalone import (CpuStandaloneWitness,
-                                        install_import_guard, resolve_import)
+    from dos_re.detachment_guard import (DetachedDependencyError,
+                                         install_import_guard, resolve_import)
 
     real_import = builtins.__import__
     try:
         install_import_guard(extra_forbidden=("simant.lifted",))
-        with pytest.raises(CpuStandaloneWitness, match="simant.lifted"):
+        with pytest.raises(DetachedDependencyError, match="simant.lifted"):
             __import__("simant.lifted.graph_cpuless")
-        with pytest.raises(CpuStandaloneWitness, match="dos_re.cpu"):
+        with pytest.raises(DetachedDependencyError, match="dos_re.cpu"):
             __import__("dos_re.cpu")
     finally:
         builtins.__import__ = real_import
@@ -124,9 +124,9 @@ def test_a_promoted_body_reaches_windows_with_no_cpu():
 
     import simant._env  # noqa: F401
     import win16  # noqa: F401
-    from dos_re.lift.standalone import load_recovered
     from win16.api.surface import WINFLAGS_NO_FPU, build_registry
-    from win16.cpuless import Win16CpulessPlatform, load_cpuless_image
+    from win16.cpuless import (Win16CpulessPlatform, load_cpuless_image,
+                               load_recovered)
 
     machine, _ = load_cpuless_image(
         BOOT_DIR, lambda: build_registry(winflags=WINFLAGS_NO_FPU),

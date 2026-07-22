@@ -77,7 +77,7 @@ DENY = (
     "simant.hooks",                                 # interpreter-era islands (hooks=False here)
     "simant.probes", "simant.tests", "simant.bridge", "simant.native",
     "simant.recovered",
-    "win16.irgen", "win16.callgraph", "win16.apicoverage", "win16.tick_demo",
+    "win16.irgen", "win16.callgraph", "win16.apicoverage",
     "dos_re.lift.analyze", "dos_re.lift.emit", "dos_re.lift.emit32",
     "dos_re.lift.ir", "dos_re.lift.irgen_core", "dos_re.lift.manifest",
     "dos_re.verification", "dos_re.frame_verify", "dos_re.checkpoints",
