@@ -31,6 +31,7 @@ import sys
 import threading
 import time
 import traceback
+import zlib
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -109,6 +110,7 @@ class WindowView:
         self._photo = None
         self._img_item = None
         self._last_version = -1
+        self._last_content = None                # crc of the last PRESENTED frame
         self._menu_entries: list[tuple] = []
         #        (menu widget, entry index, item id, initial flags, check-var|None)
         self._menu_applied: dict[tuple[str, int], tuple] = {}
@@ -612,7 +614,18 @@ class WindowView:
         version = compositor.tree_version(self.app.sys, win)
         if version != self._last_version:
             self._last_version = version
-            self._redraw(self._composited())
+            # surface.version bumps on EVERY drawing primitive (touch()), but
+            # SimAnt repaints its views every frame — often producing pixels
+            # identical to the last (the black nest view redraws its unchanged
+            # tiles).  A version bump alone would then re-run the expensive
+            # PIL->PhotoImage present every tick and make tkinter flicker.  Gate
+            # the actual present on the frame's CONTENT (a cheap crc): skip it
+            # when the pixels are unchanged — no wasted convert, no blink.
+            surf = self._composited()
+            content = zlib.crc32(surf.pixels)
+            if content != self._last_content:
+                self._last_content = content
+                self._redraw(surf)
         want_title = win.title or win.wndclass.name
         if self.app.crashed:
             # A dead CPU worker must be unmissable: every surviving game
@@ -631,7 +644,9 @@ class WindowView:
         before a modal box/dialog blocks further ticks."""
         from win16 import compositor
         self._last_version = compositor.tree_version(self.app.sys, self.win)
-        self._redraw(self._composited())
+        surf = self._composited()
+        self._last_content = zlib.crc32(surf.pixels)
+        self._redraw(surf)
 
     def _redraw(self, surf) -> None:
         w, h = self.win.client_size
