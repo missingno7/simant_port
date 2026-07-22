@@ -343,6 +343,99 @@ def xfer_life_tile_color(read_src: Callable[[int], int],
         src = (src + row_bytes) & M
 
 
+def copy_mask_bitmap2(read_src: Callable[[int], int],
+                      read_dst: Callable[[int], int],
+                      write_dst: Callable[[int, int], None],
+                      clip_bottom: int, clip_right: int,
+                      tile_h: int, tile_w: int, dst_x: int, dst_y: int) -> None:
+    """Blit a 4bpp source bitmap into a DIB with per-pixel transparency AND
+    clipping to a ``clip_right`` x ``clip_bottom`` destination.
+
+    The clipping sibling of :func:`xfer_life_tile_color`: same 4bpp DIB
+    geometry (scanlines padded to a 32-bit boundary) and the same transparency
+    encoding — the whole-byte sentinel 0xDD leaves the destination byte, a
+    pixel whose 4bpp index is 0xD shows the destination through — but the
+    source may be placed at an arbitrary (signed) ``(dst_x, dst_y)`` and is
+    clipped against the destination's right/bottom edges (a negative origin
+    clips the top/left by skipping into the source).
+
+    When ``dst_x`` is odd the source nibbles straddle two destination bytes:
+    each source byte is rotated so its two pixels land in the low nibble of one
+    destination byte and the high nibble of the next, and adjacent columns
+    compose through the transparent-nibble keep-mask.
+
+    ``read_src(off)`` reads a source byte, ``read_dst(off)``/``write_dst(off,
+    b)`` read/blend the destination.  Callers resolve ``off`` through the huge
+    pointer (Win16 __AHINCR: +8 selector per 64K) on each plane.
+
+    Recovered from `_CopyMaskBitmap2` (SIMANTW.SYM seg7:B110, SIMTWO).
+    """
+    M = 0xFFFF
+
+    def _neg(v):                                   # 16-bit two's-complement negate
+        return (-v) & M
+
+    # -- X clip: source byte-skip + visible width (in pixels) ----------------
+    if dst_x & 0x8000:                             # dst_x < 0 (signed): clip left
+        src_x_skip, vis_w = _neg(dst_x), tile_w
+    else:
+        if dst_x >= clip_right:                    # entirely off the right edge
+            return
+        src_x_skip = 0
+        vis_w = clip_right - dst_x if dst_x + tile_w > clip_right else tile_w
+
+    # -- Y clip: source row-skip + visible height ----------------------------
+    if dst_y & 0x8000:                             # dst_y < 0 (signed): clip top
+        src_y_skip, vis_h = _neg(dst_y), tile_h
+    else:
+        if dst_y >= clip_bottom:                   # entirely off the bottom edge
+            return
+        src_y_skip = 0
+        vis_h = clip_bottom - dst_y if dst_y + tile_h > clip_bottom else tile_h
+
+    src_x_byte = src_x_skip >> 1                   # 4bpp: 2 pixels / byte
+    last_col = vis_w >> 1                          # inner loop runs [src_x_byte, last_col)
+    dst_stride = ((((clip_right << 2) & M) + 0x1F) & M) >> 5 << 2
+    src_stride = ((((tile_w << 2) & M) + 0x1F) & M) >> 5 << 2
+
+    # Running byte offsets from each plane's base pointer.  They are NOT masked
+    # to 16 bits: both planes are >64K huge pointers, and the caller's
+    # read/write callbacks resolve the selector (Win16 __AHINCR: +8 per 64K)
+    # from the full offset — exactly as the ASM normalises es per row.
+    src = src_y_skip * src_stride                  # skip src_y_skip source rows
+    # max(dst_y, 0) rows down: dst_y<0 makes (dst_y + src_y_skip) wrap to 0.
+    dst_col = 0 if dst_x & 0x8000 else dst_x >> 1
+    dst = (((dst_y + src_y_skip) & M) * dst_stride) + dst_col
+    odd = dst_x & 1
+
+    def _merge(dst_off, byte):
+        """dst[off] = (dst[off] & keep) | draw, keeping transparent nibbles."""
+        if byte == 0xDD:                           # both pixels transparent
+            return
+        keep, draw = 0x00, byte
+        if byte & 0x0F == 0x0D:                    # low pixel transparent
+            keep, draw = 0x0F, byte & 0xF0
+        elif byte & 0xF0 == 0xD0:                  # high pixel transparent
+            keep, draw = 0xF0, byte & 0x0F
+        write_dst(dst_off, (read_dst(dst_off) & keep) | draw)
+
+    for _row in range(src_y_skip, vis_h):          # count = vis_h - src_y_skip
+        d = dst
+        for bx in range(src_x_byte, last_col):
+            sb = read_src(src + bx)
+            if odd:
+                # ax = 0xDD:src ror 4 -> high byte to dst[d], low byte to dst[d+1]
+                word = ((sb << 8) | 0xDD) & M
+                word = ((word >> 4) | (word << 12)) & M
+                _merge(d, word >> 8)
+                _merge(d + 1, word & 0xFF)
+            else:
+                _merge(d, sb)                      # al=0xDD half always skips
+            d += 1
+        dst += dst_stride
+        src += src_stride
+
+
 def windows_make_table_4x4(tiles, table):
     """Expand a row of terrain tiles into a 4-scanline pixel band.
 

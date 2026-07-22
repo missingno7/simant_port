@@ -2711,3 +2711,69 @@ def test_gennestmap_island_matches_asm(mode):
     assert isl[0] == asm[0], f"mode={mode}: nest map bytes differ"
     assert isl[1] == asm[1], f"mode={mode}: scratch globals differ {isl[1]} != {asm[1]}"
     assert isl[2] == asm[2], f"mode={mode}: exit state differs {isl[2]} != {asm[2]}"
+
+
+# ---- _CopyMaskBitmap2 (seg7:B110) — recovered/render.py ---------------------
+# A clipped, masked 4bpp bitmap blit (balloons/spider/animation compositing).
+# We lay out a deterministic 4bpp source (mixing opaque / low-transparent 0x?D /
+# high-transparent 0xD? / whole-byte 0xDD pixels) and a filled destination in
+# two scratch segments, place the source at various signed (dst_x, dst_y)
+# including odd columns and every clip edge, and A/B the full destination bytes
+# + register preservation against the ASM.
+_CMB2_DST_SEG, _CMB2_SRC_SEG = 0x2000, 0x3000
+_CMB2_SRC_PAT = [0x12, 0x3D, 0xD4, 0xDD, 0xAB, 0x0D, 0xD0, 0x77, 0x5D, 0xD9]
+
+
+def _run_copymask(with_island, args):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    for i in range(0x2000):
+        m.mem.wb(_CMB2_SRC_SEG, i, _CMB2_SRC_PAT[i % len(_CMB2_SRC_PAT)])
+        m.mem.wb(_CMB2_DST_SEG, i, 0x88)
+    s.cs = m.seg_bases[hooks.COPYMASKBITMAP2_SEG_INDEX]
+    s.ip = hooks.COPYMASKBITMAP2_OFF
+    s.bx, s.cx, s.dx = 0x1111, 0x5555, 0x6666
+    s.si, s.di, s.bp = 0x2222, 0x3333, 0x4444
+    sp = s.sp
+    words = [args["dst_y"], args["dst_x"], args["tile_w"], args["tile_h"],
+             args["clip_right"], args["clip_bottom"], _CMB2_SRC_SEG, 0,
+             _CMB2_DST_SEG, 0, SENT_CS, SENT_IP]
+    for v in words:                                   # pushed high-address-first
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(2_000_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError("ASM _CopyMaskBitmap2 did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    dst = bytes(m.mem.rb(_CMB2_DST_SEG, i) for i in range(0x2000))
+    regs = dict(bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di, bp=s.bp,
+                sp=s.sp, cs=s.cs & 0xFFFF, ip=s.ip & 0xFFFF)
+    return dst, regs
+
+
+@pytest.mark.parametrize("args", [
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=4, dst_y=4),
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=5, dst_y=4),   # ODD dst_x
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=0, dst_y=0),
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=56, dst_y=60), # clip right+bottom
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=-6, dst_y=-3), # clip left+top
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=-5, dst_y=2),  # neg ODD dst_x
+    dict(clip_bottom=40, clip_right=48, tile_h=12, tile_w=24, dst_x=44, dst_y=36),
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=100, dst_y=4), # off right
+    dict(clip_bottom=64, clip_right=64, tile_h=8, tile_w=16, dst_x=4, dst_y=100), # off bottom
+])
+def test_copymaskbitmap2_island_matches_asm(args):
+    asm_dst, asm_regs = _run_copymask(False, args)
+    isl_dst, isl_regs = _run_copymask(True, args)
+    assert isl_regs == asm_regs, f"{args}: exit regs differ {isl_regs} != {asm_regs}"
+    assert isl_dst == asm_dst, f"{args}: destination bytes differ"

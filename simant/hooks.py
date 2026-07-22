@@ -2407,6 +2407,67 @@ DOCALCTILE_SIG = bytes.fromhex(                  # prologue + xor bx,bx + the tw
     "558bec601e0633db881e96ce891e7ace")
 
 
+# -- _CopyMaskBitmap2 (seg7:B110, SIMTWO) -------------------------------------
+#
+# A clipped, masked 4bpp bitmap blit (balloons/spider/animation compositing —
+# 4.3% of interpreted instructions in the nest-view repaint).  Recovered logic
+# in recovered/render.py: the clipping sibling of _XferLifeTileColor — same
+# 0xDD whole-byte / 0xD-nibble transparency and 32-bit-padded DIB geometry, but
+# the source is placed at an arbitrary signed (dst_x, dst_y) and clipped to a
+# clip_right x clip_bottom destination; an odd dst_x straddles each source byte
+# across two destination bytes.  BOTH planes are >64K huge pointers (the island
+# resolves the +8-selector-per-64K rule on each).  A pusha/popa + push/pop
+# ds/es frame restores every register, so the only observable state is the
+# destination bytes.  ABI (far, caller cleans the 20 arg bytes):
+#   entry SP -> [ret_ip][ret_cs] then, as words:
+#     +4 dst.off  +6 dst.seg  +8 src.off  +0xA src.seg  +0xC clip_bottom
+#     +0xE clip_right  +0x10 tile_h  +0x12 tile_w  +0x14 dst_x  +0x16 dst_y
+COPYMASKBITMAP2_SEG_INDEX = 7
+COPYMASKBITMAP2_OFF = 0xB110
+COPYMASKBITMAP2_HUGE_INCR = 8                     # selector delta per 64K (Win16 __AHINCR)
+COPYMASKBITMAP2_SIG = bytes.fromhex(              # prologue + the dst_x sign test
+    "558bec601e06f746160080")
+
+
+def _make_copymaskbitmap2_island(machine):
+    from .recovered.render import copy_mask_bitmap2
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        dst_off, dst_seg = arg(4), arg(6)
+        src_off, src_seg = arg(8), arg(0x0A)
+        clip_bottom, clip_right = arg(0x0C), arg(0x0E)
+        tile_h, tile_w = arg(0x10), arg(0x12)
+        dst_x, dst_y = arg(0x14), arg(0x16)
+
+        def _addr(base_seg, base_off, off):
+            full = base_off + off
+            return (base_seg + COPYMASKBITMAP2_HUGE_INCR * (full >> 16)) & 0xFFFF, full & 0xFFFF
+
+        def read_src(off):
+            return m.rb(*_addr(src_seg, src_off, off))
+
+        def read_dst(off):
+            return m.rb(*_addr(dst_seg, dst_off, off))
+
+        def write_dst(off, byte):
+            seg, o = _addr(dst_seg, dst_off, off)
+            m.wb(seg, o, byte)
+
+        copy_mask_bitmap2(read_src, read_dst, write_dst, clip_bottom,
+                          clip_right, tile_h, tile_w, dst_x, dst_y)
+
+        # pusha/popa + push/pop ds/es restore every register — touch none.
+        s.sp = (sp + 4) & 0xFFFF          # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
 def _make_docalctile_island(machine):
     from .recovered.render import do_calc_tile
     dg = machine.seg_bases[DG_SEG_INDEX]
@@ -2454,6 +2515,9 @@ _ISLANDS = [
      lambda machine, off: _make_drawchar_island(machine), "_DrawChar"),
     (GENDOCALCTILE_SEG_INDEX, DOCALCTILE_OFF, DOCALCTILE_SIG,
      lambda machine, off: _make_docalctile_island(machine), "_DoCalcTile"),
+    (COPYMASKBITMAP2_SEG_INDEX, COPYMASKBITMAP2_OFF, COPYMASKBITMAP2_SIG,
+     lambda machine, off: _make_copymaskbitmap2_island(machine),
+     "_CopyMaskBitmap2"),
     (ISWINOPEN_SEG_INDEX, ISWINOPEN_OFF, ISWINOPEN_SIG,
      lambda machine, off: _make_iswinopen_island(machine), "_win_IsWinOpen"),
     (GETOBJRECT_SEG_INDEX, GETOBJRECT_OFF, GETOBJRECT_SIG,
@@ -2594,7 +2658,7 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 68
+EXPECTED_ISLAND_COUNT = 69
 
 
 def island_addresses(seg_bases) -> dict[tuple[int, int], str]:

@@ -3,7 +3,7 @@
 Pins that the hand-recovered code is a plan-selected authored-faithful
 implementation in every composition where it is authoritative:
 
-* development: the 68 islands bind over the interpreted baseline;
+* development: the 69 islands bind over the interpreted baseline;
 * CPUless: the hand-recovered CPU-free corpus (cpuless-skin) wins OVER the
   generated skeleton at the addresses it rewrites.
 
@@ -36,7 +36,7 @@ def _bindings(plan):
 def test_development_plan_binds_the_hand_islands():
     m = create_machine()
     by = _bindings(sx.development_plan(m))
-    assert by.get("islands") == 68          # every hand island, plan-selected
+    assert by.get("islands") == 69          # every hand island, plan-selected
     assert "interpreted-baseline" in by
 
 
