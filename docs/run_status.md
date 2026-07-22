@@ -1,5 +1,42 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.261) — play.py is plan-driven, the detached DetachmentReport replaces the wall-gap analysis, and dos_re fix #3 (observed-only boundary endpoints typed as program code)
+- **play.py binds through the plan.**  The direct `hooks.install` call is
+  gone; `simant.execution.development_plan(machine)` resolves against the
+  new `conservative_coverage` — COMMITTED sources only (all island entries +
+  the corpus + the NE entry), because the interactive player's hook set must
+  be deterministic from the checkout alone, never dependent on the
+  disposable `artifacts/atlas` (recordings are hook-config-specific).
+  Verified: development_plan binds EXACTLY the legacy 68 island hooks,
+  names identical.  The Atlas-refined narrower plan stays the ANALYSIS path
+  (`scripts/plan.py`).  Correction to cont.259: `best_replay` DOES
+  label-resolve (via replay_coverage) — the KeyError was honest no-coverage;
+  no upstream quirk.
+- **Detached planning is real.**  Catalog grew `vmless-graph` (generated,
+  generated-vmless, adapter = activate_generated_graph with a
+  planned-targets completeness check) conditional on
+  `simant/lifted/graph_cpuless`; `bootstrap_provider(profile)` picks the
+  NE EXE for development/verification and the EXE-free
+  BuildImageBootstrapProvider for detached/release (an ExeBootstrapProvider
+  carries the original-exe capability those profiles FORBID).
+  `plan.py --profile detached --prefer vmless-graph --prefer cpuless-corpus`
+  now fails BEFORE any runtime with the honest frontier: **613 functions +
+  143 points unresolved** over the 1007-reachable Atlas closure — the
+  cpuless_wall_gap analysis, reborn as the planner's DetachmentReport.
+- **dos_re fix #3, upstreamed (13b1ceb, failing-on-old-code test):** the
+  Atlas synthesized EVERY observed-only transfer endpoint as an
+  execution-point — a runtime-minted thunk boundary (`proc:MMSYSTEM.*`)
+  then passed the coverage traversal filter and leaked into `reachable` as
+  program code demanding an implementation.  Node kind now derives from the
+  identity grammar's structural marker.  After the fix: 0 boundaries in the
+  detached frontier (was 10).
+- Suites: dos_re 1277, win16_re 418, simant 2325 — green.
+- **Next:** fold play_vmless/play_cpuless into `--profile` runs of the one
+  player (runtime construction from `plan.configuration.bootstrap_provider`
+  + carrier from the plan), Phase 4 verification drivers, Phase 5 removals
+  (v4 reader, superseded scripts) + docs + the win16 architecture-contract
+  test.
+
 ## 2026-07-22 (cont.260) — Phase 3 opens: the catalog + planner run for real, the hand-recovered islands hook THROUGH THE PLAN, two dos_re coverage fixes upstreamed, and the plan model caught a real hooks.py bug on day one
 - **Owner directives this session:** artifacts/replays/snapshots are
   disposable (re-recordable) — migrate CLEAN; hand-recovered logic must be

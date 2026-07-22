@@ -1000,11 +1000,21 @@ class PlayApp:
             from win16.app import create_machine
             self.machine = create_machine(exe_path, winflags=winflags)
         if hooks:
-            from simant.hooks import install as install_simant_hooks
-            n = install_simant_hooks(self.machine)
-            if n:
-                print(f"[play] {n} game hook(s) installed "
-                      f"(--no-hooks to disable)", flush=True)
+            # dos_re 3.0: the hand-recovered islands are authored FAITHFUL
+            # implementations selected by an ExecutionPlan and installed by
+            # its carrier adapter — never by import-time side effect.  The
+            # plan resolves against the deterministic conservative coverage
+            # (committed sources only), so the installed hook set never
+            # depends on a disposable analysis artifact.
+            from dos_re.execution import bind_plan_implementations
+            from simant.execution import INTERPRETED_CARRIER, development_plan
+            plan = development_plan(self.machine)
+            bind_plan_implementations(self.machine, plan,
+                                      carrier_id=INTERPRETED_CARRIER)
+            n = sum(1 for b in plan.bindings
+                    if b.implementation_id == "islands")
+            print(f"[play] plan {plan.plan_digest[:12]}: {n} island hook(s) "
+                  f"bound (--no-hooks for the pure oracle)", flush=True)
         self.sys: Win16System = self.machine.api.services["system"]
         self.driver = InteractiveDriver(self.sys, speed=speed)
         # Fact-declared wall-clock wait loops in the lifted graph (dos_re

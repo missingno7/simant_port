@@ -52,6 +52,8 @@ CPULESS_CARRIER = "win16-cpuless"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CPULESS_CORPUS_DIR = REPO_ROOT / "simant" / "native" / "cpuless"
+VMLESS_GRAPH_DIR = REPO_ROOT / "simant" / "lifted" / "graph_cpuless"
+BOOT_IMAGE_DIR = REPO_ROOT / "artifacts" / "vmless_boot"
 
 
 def program() -> ProgramIdentity:
@@ -161,6 +163,42 @@ def build_catalog(seg_bases, reachable: frozenset[str]) -> ImplementationCatalog
 
     entries = [baseline, islands]
 
+    if VMLESS_GRAPH_DIR.is_dir():
+        graph_targets = _corpus_targets(VMLESS_GRAPH_DIR) & reachable
+        if graph_targets:
+            graph_digest = _dir_digest(VMLESS_GRAPH_DIR)
+
+            def _activate_graph(machine, targets) -> None:
+                from dos_re.lift.install import activate_generated_graph
+                installed = activate_generated_graph(machine.cpu,
+                                                     VMLESS_GRAPH_DIR)
+                missing = {t for t in targets
+                           if address_of(t) not in installed} \
+                    if isinstance(installed, dict) else set()
+                if missing:
+                    raise AssertionError(
+                        f"vmless graph missing {len(missing)} planned "
+                        f"targets, e.g. {sorted(missing)[:3]}")
+
+            entries.append(ImplementationEntry(
+                ImplementationDescriptor(
+                    implementation_id="vmless-graph",
+                    targets=graph_targets,
+                    origin=ImplementationOrigin.GENERATED,
+                    recovery_level=RecoveryLevel.GENERATED_VMLESS,
+                    properties=frozenset({"vmless", "instruction-exact"}),
+                    required_capabilities=frozenset({"cpu-model"}),
+                    implementation_digest=graph_digest,
+                ),
+                implementation=None,
+                adapters=(BackendAdapter(
+                    adapter_id="vmless-graph/interpreted-cpu",
+                    carrier_id=INTERPRETED_CARRIER,
+                    activate=_activate_graph,
+                    adapter_digest=graph_digest,
+                ),),
+            ))
+
     if CPULESS_CORPUS_DIR.is_dir():
         corpus_targets = _corpus_targets(CPULESS_CORPUS_DIR) & reachable
         if corpus_targets:
@@ -194,7 +232,18 @@ def build_catalog(seg_bases, reachable: frozenset[str]) -> ImplementationCatalog
     return ImplementationCatalog(tuple(entries))
 
 
-def bootstrap_provider() -> ExeBootstrapProvider:
+def bootstrap_provider(profile: str = "development"):
+    """The initial-state source per profile: the original NE EXE for
+    development/verification, the EXE-free data-only boot image for detached
+    and release compositions (an ExeBootstrapProvider carries the
+    original-exe capability those profiles FORBID)."""
+    if profile in ("detached", "release"):
+        from dos_re.execution import BuildImageBootstrapProvider
+        return BuildImageBootstrapProvider(
+            provider_id="simantw-boot-image",
+            state_outputs=("win16-machine",),
+            provider_digest="simantw-boot-image-v1",
+        )
     return ExeBootstrapProvider(
         provider_id="simantw-ne-exe",
         state_outputs=("win16-machine",),
@@ -210,7 +259,7 @@ def configuration(profile: str, *, selected_overrides=(),
         product_profile="development",
         provider_preference=provider_preference,
         selected_overrides=selected_overrides,
-        bootstrap_provider=bootstrap_provider(),
+        bootstrap_provider=bootstrap_provider(profile),
     )
 
 
@@ -222,3 +271,44 @@ def plan(profile: str, coverage_source, seg_bases, *,
         configuration(profile, selected_overrides=selected_overrides,
                       provider_preference=provider_preference),
         coverage_source, catalog)
+
+
+def conservative_coverage(machine) -> "ProgramCoverage":
+    """Planner coverage from COMMITTED sources only — no Atlas.
+
+    The interactive player's composition must be deterministic from the
+    checkout alone: a recording is hook-config-specific, so the installed
+    hook set must never depend on a disposable analysis artifact
+    (``artifacts/atlas``).  Reachable = everything the catalog can claim
+    (all island entries + the generated corpus + the NE entry); the
+    Atlas-refined, narrower coverage is the ANALYSIS path (scripts/plan.py).
+    """
+    from dos_re.execution import ProgramCoverage
+
+    from . import hooks
+
+    header = machine.exe.header
+    entry = function_id(machine.seg_bases[header.entry_seg - 1],
+                        header.entry_ip)
+    reachable = {entry}
+    reachable.update(function_id(cs, ip)
+                     for (cs, ip) in hooks.island_addresses(machine.seg_bases))
+    if CPULESS_CORPUS_DIR.is_dir():
+        reachable.update(_corpus_targets(CPULESS_CORPUS_DIR))
+    return ProgramCoverage(
+        roots=(entry,),
+        reachable=frozenset(reachable),
+        evidence_identity="simant-conservative-catalog-targets-v1",
+    )
+
+
+def development_plan(machine, *, selected_overrides=("islands",)):
+    """The interactive player's plan: development profile over the
+    deterministic conservative coverage.  With ``islands`` selected this
+    binds every hand-recovered island — the historic hooks-on composition,
+    now selected and installed through the plan."""
+    coverage = conservative_coverage(machine)
+    catalog = build_catalog(machine.seg_bases, coverage.reachable)
+    return plan_execution(configuration("development",
+                                        selected_overrides=selected_overrides),
+                          coverage, catalog)
