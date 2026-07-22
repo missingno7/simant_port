@@ -60,8 +60,22 @@ def program() -> ProgramIdentity:
     return ProgramIdentity(PROGRAM_KEY)
 
 
+_IMAGE_OVERRIDE: ImageIdentity | None = None
+
+
+def use_image(name: str, sha256: str) -> None:
+    """Pin the image identity from provenance (the boot manifest's
+    source_exe record) instead of hashing the EXE file — the EXE-free
+    compositions must plan with the executable physically absent."""
+    global _IMAGE_OVERRIDE
+    _IMAGE_OVERRIDE = ImageIdentity(program(), name, "sha256", sha256)
+    image_identity.cache_clear()
+
+
 @lru_cache(maxsize=1)
 def image_identity() -> ImageIdentity:
+    if _IMAGE_OVERRIDE is not None:
+        return _IMAGE_OVERRIDE
     sha = hashlib.sha256(EXE_PATH.read_bytes()).hexdigest()
     return ImageIdentity(program(), EXE_PATH.name, "sha256", sha)
 
@@ -143,7 +157,8 @@ def _with_points(targets: frozenset[str], contained) -> frozenset[str]:
 
 
 def build_catalog(seg_bases, reachable: frozenset[str],
-                  contained=None) -> ImplementationCatalog:
+                  contained=None, *,
+                  graph_dir: Path = VMLESS_GRAPH_DIR) -> ImplementationCatalog:
     """The one implementation inventory, scoped to ``reachable`` coverage.
 
     ``seg_bases`` — the deterministic segment layout (a live machine's, or the
@@ -197,16 +212,15 @@ def build_catalog(seg_bases, reachable: frozenset[str],
 
     entries = [baseline, islands]
 
-    if VMLESS_GRAPH_DIR.is_dir():
+    if graph_dir.is_dir():
         graph_targets = _with_points(
-            _graph_targets(VMLESS_GRAPH_DIR) & reachable, contained)
+            _graph_targets(graph_dir) & reachable, contained)
         if graph_targets:
-            graph_digest = _dir_digest(VMLESS_GRAPH_DIR, "*.py")
+            graph_digest = _dir_digest(graph_dir, "*.py")
 
             def _activate_graph(machine, targets) -> None:
                 from dos_re.lift.install import activate_generated_graph
-                installed = activate_generated_graph(machine.cpu,
-                                                     VMLESS_GRAPH_DIR)
+                installed = activate_generated_graph(machine.cpu, graph_dir)
                 missing = {t for t in targets
                            if address_of(t) not in installed} \
                     if isinstance(installed, dict) else set()
@@ -358,3 +372,38 @@ def development_plan(machine, *, selected_overrides=("islands",)):
     return plan_execution(configuration("development",
                                         selected_overrides=selected_overrides),
                           coverage, catalog)
+
+
+def detached_plan(machine, *, graph_dir: Path = VMLESS_GRAPH_DIR,
+                  source_exe: tuple[str, str] | None = None):
+    """The detached player's plan, deterministic from the generated
+    artifacts' own claims (no Atlas): reachable = the lifted graph's declared
+    targets + the CPUless corpus + the entry.  The detached profile forbids
+    original-exe/original-code/interpreter, so the interpreted baseline is
+    policy-rejected and every binding is generated; ``FallbackPolicy
+    .FORBIDDEN`` makes ``bind_plan_implementations`` arm the interpreter
+    wall — what ``boot_vmless_machine`` armed by hand."""
+    from dos_re.execution import ProgramCoverage
+
+    if source_exe is not None:
+        # Identity from provenance (the boot manifest), never the EXE file:
+        # detached planning must work with the executable physically absent.
+        use_image(*source_exe)
+    # The boot image is captured at instruction zero, so the restored CPU
+    # state IS the entry (the stripped program identity's header segment
+    # numbering is not authoritative for the flat layout).
+    entry = function_id(machine.cpu.s.cs, machine.cpu.s.ip)
+    reachable = {entry} | _graph_targets(graph_dir)
+    if CPULESS_CORPUS_DIR.is_dir():
+        reachable |= _corpus_targets(CPULESS_CORPUS_DIR)
+    coverage = ProgramCoverage(
+        roots=(entry,),
+        reachable=frozenset(reachable),
+        evidence_identity="simant-detached-artifact-claims-v1",
+    )
+    catalog = build_catalog(machine.seg_bases, coverage.reachable,
+                            graph_dir=graph_dir)
+    return plan_execution(
+        configuration("detached",
+                      provider_preference=("vmless-graph", "cpuless-corpus")),
+        coverage, catalog)

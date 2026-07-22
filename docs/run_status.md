@@ -1,5 +1,42 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.262) — ONE player: play.py --profile detached replays the gate BYTE-IDENTICALLY to play_vmless's hand-wired walls, and the detached plan resolves 1007/1007
+- **The detached plan RESOLVES** (after cont.261's frontier work):
+  `atlas_build.py` attributes replay-observed dispatch targets that are not
+  IR entries (jump-table arms — 275f:00a2 is a computed-jump arm inside
+  `__astart`) to their containing IR function by EXACT instruction hit,
+  as a cited manual-facts source.  Result: 1007/1007 bindings (743
+  vmless-graph + 264 cpuless-corpus), `is_detached_from(original-exe)` and
+  `(interpreter)` both True.
+- **play.py --profile detached** = state-only boot-image load (under the
+  EXE-access guard) + `detached_plan` + `bind_plan_implementations` — the
+  wall is armed by FallbackPolicy.FORBIDDEN, the graph installed by the
+  plan's adapter, NOT by hand.  `detached_plan` is deterministic from the
+  generated artifacts' own claims (graph docstring targets + corpus + the
+  boot CPU entry state; no Atlas), and takes its image identity from the
+  boot manifest's source_exe record so planning works with the EXE
+  physically absent.
+- **PROOF, the differential that matters:** the plan-bound detached machine
+  replays cold_nohooks to **instr 199,619,366, digest 417cac5cd9aadb8c —
+  byte-identical to the legacy boot_strict run AND equal to the pinned
+  gate's mdigest**.  The plan-driven composition IS play_vmless, minus the
+  hand-wiring.
+- **Debug lessons:** (1) the halt-at-6512 differential was
+  `game_root` — boot_strict passes DATA_ROOT; a boot without it makes the
+  game EXIT (missing data ⇒ DOS exit sets halted, observed later inside a
+  pending emulated far call — the traceback shows the OBSERVER, not the
+  setter).  (2) The stripped program header's entry_seg is NOT
+  authoritative for the flat layout — the boot image is captured at
+  instruction zero, so the restored CPU state IS the entry.  (3) OPEN
+  upstream question: an EXE read via pathlib appeared to pass inside
+  `exe_access_guard` — test whether the guard intercepts pathlib opens
+  (win16_re/dos_re follow-up; the manifest-identity fix removed our only
+  such read).
+- Suites: simant 2325 green.  **Next:** point scripts/replay.py at
+  --profile too, then retire play_vmless.py (its headless role) once its
+  consumers (deploy smoke, lint) migrate; Phase 4 verification drivers;
+  Phase 5 removals + docs + the win16 architecture contract test.
+
 ## 2026-07-22 (cont.261) — play.py is plan-driven, the detached DetachmentReport replaces the wall-gap analysis, and dos_re fix #3 (observed-only boundary endpoints typed as program code)
 - **play.py binds through the plan.**  The direct `hooks.install` call is
   gone; `simant.execution.development_plan(machine)` resolves against the
