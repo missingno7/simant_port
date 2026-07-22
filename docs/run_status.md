@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.272) — the slow LOGO DRAWING fixed: the _Unpack island now decodes stream RESUMES natively instead of punting to the interpreter
+- **Owner recorded the slow logo (`session_221404`) — it replayed cleanly
+  (the cont.270 recorder fix works: 69 islands, faithful).** Profiled it:
+  `_Unpack` (the LZSS decompressor) was **53.3%** of interpreted instructions.
+- **Root cause:** the `_Unpack` island handled only a FRESH decode (resume
+  code 0); every streaming CONTINUATION (the decoder stops at its output
+  budget / input end and is re-called) PUNTED to the interpreter (hooks.py
+  emulated `push bp` + ran A669 interpreted).  The logo is a large
+  budget-chunked decode that stops mid-match (CODE_MATCH_COPY) on almost every
+  call, so it ran the whole LZSS inner loop interpreted.  Controlled A/B on
+  session_221404: **68 of 132 `_Unpack` calls resumed; 93,667 interpreted
+  decoder-body instructions**.
+- **Fix (simant 1bfcd08):** `recovered/lzss.py decode_chunk` gains
+  `resume`/`match_rem` params + a faithful phase machine re-entering at the
+  ASM's exact [B7D4] resume-dispatch points (430E:A692) — CODE_FLAG/LITERAL/
+  MATCH_LO/MATCH_HI (lo saved in cx) / MATCH_COPY (decrement-first, mirroring
+  A758).  The island drops the punt and passes resume+match_rem in.  Fresh
+  path byte-identical (existing tests green); also fixed a latent
+  CODE_MATCH_HI exit-cx bug (now = lo, as `mov cl,[si]` leaves).
+- **Result:** `_Unpack` body interpreted 93,667 → **132**; **byte-exact** —
+  the A/B oracle over 130 real calls (output + exit state, CODE_MATCH_COPY
+  exercised) matches the ASM call-for-call, plus a pure-function
+  whole-vs-chunked resume test.  The logo decode is now native.
+- **Measurement note (important, [[demos-are-hook-config-specific]]):** the
+  replay's fixed instruction-count-keyed input timeline PADS the freed decode
+  time with wait-loop spin, so total instr looks flat and the digest shifts
+  (benign desync, NOT a decode bug — proven by the 130/130 byte-exact A/B).
+  Replay wall −5% even so; the real interactive win is the logo no longer
+  decoding in the interpreter.
+- Suites: island A/B 694, lzss 6 (+resume), native green.
+
+
 ## 2026-07-22 (cont.271) — perf slice 1 LANDED: _CopyMaskBitmap2 islanded (verified byte-exact, 5.5x/call) + measurement methodology
 - **First render-perf island shipped (simant 5b7d0e4):** `_CopyMaskBitmap2`
   (430E:B110) — a self-contained clipped masked 4bpp blit (balloons/spider/
