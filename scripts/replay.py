@@ -35,8 +35,14 @@ def main() -> None:
     ap.add_argument("--from-snapshot", metavar="DIR", default=None,
                     help="resume this snapshot before replaying (required when "
                          "the demo was recorded from one; the header names it)")
+    ap.add_argument("--profile", default="development",
+                    choices=("development", "detached"),
+                    help="execution composition (dos_re 3.0): development = "
+                         "the EXE under the interpreter (pure oracle); "
+                         "detached = the EXE-free boot image with the "
+                         "generated graph, wall armed by the plan")
     args = ap.parse_args()
-    if not assets_present():
+    if args.profile == "development" and not assets_present():
         raise SystemExit("assets/ANTWIN/SIMANTW.EXE not found")
 
     driver = DemoDriver(resolve_demo(args.demo))
@@ -49,7 +55,21 @@ def main() -> None:
             f"this demo was recorded from snapshot {driver.snapshot!r} — "
             f"pass --from-snapshot <dir> pointing at it "
             f"(e.g. artifacts/snapshots/{driver.snapshot})")
-    if args.from_snapshot:
+    if args.profile == "detached":
+        if args.from_snapshot:
+            raise SystemExit("--profile detached boots only from the boot "
+                             "image (no --from-snapshot)")
+        import simant.vmless_boot as vb
+        from dos_re.independence import exe_access_guard_from_manifest
+        from simant.execution import boot_detached
+        from win16.bootimage import load_boot_manifest
+        manifest = load_boot_manifest(vb.BOOT_DIR)
+        _guard = exe_access_guard_from_manifest(manifest)
+        _guard.__enter__()                     # held for the whole session
+        machine, manifest, plan = boot_detached(vb.BOOT_DIR)
+        print(f"[replay] DETACHED plan {plan.plan_digest[:12]}: "
+              f"EXE-free boot, interpreter wall armed")
+    elif args.from_snapshot:
         from win16.vmsnap import load_snapshot
         machine = load_snapshot(args.from_snapshot, create_machine)
         got = machine.cpu.instruction_count

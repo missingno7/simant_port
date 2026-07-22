@@ -407,3 +407,30 @@ def detached_plan(machine, *, graph_dir: Path = VMLESS_GRAPH_DIR,
         configuration("detached",
                       provider_preference=("vmless-graph", "cpuless-corpus")),
         coverage, catalog)
+
+
+def boot_detached(boot_dir=None, *, graph_dir=None, game_root=None):
+    """The detached composition, constructed the one canonical way: state-only
+    boot-image load (inside the caller's EXE-access guard), the deterministic
+    detached plan, and ``bind_plan_implementations`` (which arms the
+    interpreter wall and installs the graph via the plan adapter).  Returns
+    ``(machine, manifest, plan)``.  Shared by the player and the headless
+    replay runner so the composition can never drift between them."""
+    import sys as _sys
+
+    from dos_re.execution import bind_plan_implementations
+    from win16.bootimage import load_boot_image
+
+    from . import vmless_boot as vb
+
+    boot = Path(boot_dir) if boot_dir else vb.BOOT_DIR
+    machine, manifest = load_boot_image(
+        boot, vb.registry_factory, game_root=game_root or vb.DATA_ROOT)
+    _sys.setrecursionlimit(200_000)  # lifted chains mirror the guest stack
+    src = manifest["source_exe"]
+    plan = detached_plan(machine,
+                         graph_dir=Path(graph_dir) if graph_dir
+                         else Path(vb.LIFT_DIR),
+                         source_exe=(src["name"], src["sha256"]))
+    bind_plan_implementations(machine, plan, carrier_id=INTERPRETED_CARRIER)
+    return machine, manifest, plan

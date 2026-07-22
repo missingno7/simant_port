@@ -1,5 +1,41 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.263) — Phase 4: verify_interval proves the interpreted ORACLE ≡ the detached CANDIDATE over the whole gate replay (equivalent=True, one CanonicalState digest)
+- **The decisive 3.0 verification result.**  `scripts/verify_replay.py
+  artifacts/replays/cold_nohooks` runs `dos_re.replay.verify_interval` over
+  the full timeline with two Win16 execution profiles driving the SAME
+  ReplayArtifact: the interpreted oracle (EXE boot) and the plan-bound
+  detached candidate (EXE-free boot image + generated graph, wall armed).
+  Both project to the **identical CanonicalState `5fcf69c838409af5`
+  (equivalent=True)**; the scoped ReplayValidation is persisted on the
+  artifact.  This is the migration's core claim demonstrated end to end:
+  original vs replaced, same replay, compared at the semantic-state seam.
+- **`win16/replay_driver.py` (win16_re 348c75b):** the ReplayDriver protocol
+  for a Win16 machine.  Projection schema `win16-re-observable-v1` = the
+  game-observable state (CPU regs, the VIRTUAL instruction count as a
+  comparison field, clock, timers, window list + surface hashes; memory
+  region with the recovered-code ranges masked — the EXE-independence
+  comparison seam, `mask_ranges_from_manifest`).  `scripts/verify_replay.py`
+  registers the candidate's own boot-image base (the event timeline is
+  portable across compositions; continuation state is profile-local).
+- **`replay.py`/`play.py` `--profile {development,detached}`:** both scripts
+  select composition through the shared `simant.execution.boot_detached`
+  (the ONE canonical detached construction — load boot image under the guard,
+  detached_plan, bind_plan_implementations).  `replay.py --profile detached`
+  reproduces the pinned gate exactly (instr 199,619,366, mdigest
+  417cac5cd9aadb8c).
+- **Two win16_re driver bugs fixed while wiring verify:** (1) the input
+  driver's `install()` chains `yield_check` into `_on_yield`; positioning
+  then replaying (verify_interval's two-phase restore) called install twice
+  and `_prev_yield` captured our own hook → infinite recursion.  Guard:
+  install once per restored machine.  (2) added `seek()` so a restored
+  continuation (machine state) can set the input-stream cursor to match.
+- Suites: win16_re 422, simant 2325.  **Next:** verify_checkpointed over a
+  handful of semantic points (catches divergence-then-reconvergence an
+  endpoint compare misses); Phase 5 removals — the v4 demo reader, then
+  play_vmless.py/play_cpuless.py once their consumers migrate — docs, and
+  the win16 architecture-contract test.
+
 ## 2026-07-22 (cont.262) — ONE player: play.py --profile detached replays the gate BYTE-IDENTICALLY to play_vmless's hand-wired walls, and the detached plan resolves 1007/1007
 - **The detached plan RESOLVES** (after cont.261's frontier work):
   `atlas_build.py` attributes replay-observed dispatch targets that are not

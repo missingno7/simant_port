@@ -1449,24 +1449,16 @@ def main() -> None:
                              "image (no --resume) and has no islands to "
                              "disable (--no-hooks is a development flag)")
         import simant.vmless_boot as vb
-        from dos_re.execution import bind_plan_implementations
         from dos_re.independence import exe_access_guard_from_manifest
-        from simant.execution import INTERPRETED_CARRIER, detached_plan
-        from win16.bootimage import load_boot_image, load_boot_manifest
+        from simant.execution import boot_detached
+        from win16.bootimage import load_boot_manifest
         boot_dir = vb.BOOT_DIR
         if not (boot_dir / "manifest.json").exists():
             raise SystemExit(f"{boot_dir} has no boot image — build it: "
                              f"python scripts/build_vmless_boot_image.py")
         manifest = load_boot_manifest(boot_dir)
         with exe_access_guard_from_manifest(manifest):
-            machine, manifest = load_boot_image(boot_dir, vb.registry_factory,
-                                                game_root=vb.DATA_ROOT)
-            sys.setrecursionlimit(200_000)   # lifted chains mirror the guest stack
-            src = manifest["source_exe"]
-            plan = detached_plan(machine, graph_dir=Path(vb.LIFT_DIR),
-                                 source_exe=(src["name"], src["sha256"]))
-            bind_plan_implementations(machine, plan,
-                                      carrier_id=INTERPRETED_CARRIER)
+            machine, manifest, plan = boot_detached(boot_dir)
             n = sum(1 for b in plan.bindings
                     if b.implementation_id == "vmless-graph")
             print(f"[play] DETACHED plan {plan.plan_digest[:12]}: "
