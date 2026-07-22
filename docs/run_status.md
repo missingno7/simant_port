@@ -1,5 +1,57 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.260) — Phase 3 opens: the catalog + planner run for real, the hand-recovered islands hook THROUGH THE PLAN, two dos_re coverage fixes upstreamed, and the plan model caught a real hooks.py bug on day one
+- **Owner directives this session:** artifacts/replays/snapshots are
+  disposable (re-recordable) — migrate CLEAN; hand-recovered logic must be
+  CORRECTLY HOOKED; this is the first Win16 3.0 consumer, so dos_re bugs get
+  fixed upstream.
+- **`simant/execution.py` + `scripts/plan.py` + `scripts/atlas_build.py`:**
+  the declarative composition layer.  Catalog: `interpreted-baseline`
+  (owns ALL reachable identities incl. execution points; requires
+  original-code/interpreter/cpu-model so detached profiles reject it),
+  `islands` (authored FAITHFUL, evidence REPLAY_CORPUS, adapter installs
+  the PLAN-SELECTED subset via `hooks.install(machine, only=...)` with the
+  prologue checks and an exact-set assertion), `cpuless-corpus` (generated,
+  generated-cpuless).  `atlas_build.py` = one-command Atlas rebuild with
+  roots = `__astart` + observed CALLBACK entries.
+- **Callback evidence (win16_re e173bdd..8b8bbe2):** `call_far` gained an
+  observer seam (`cpu.win16_callback_observer`) — WndProc/dialog/timer
+  dispatch targets resolve only at runtime; the probe records them as
+  `callback`-kind transfers + coverage ROOTS.  SimAnt: 2 callback entries
+  (the main WndProc funnel + timer proc).
+- **Two dos_re fixes, upstreamed to main (d0f0506, both with
+  failing-on-old-code tests):** (1) Atlas coverage traversal now includes
+  containment→execution-point edges, so OBSERVED dispatch transfers out of
+  interior sites extend conservative coverage (was: post-hoc union, the
+  edges could never fire).  (2) `plan_execution` allows an authored
+  inventory to EXCEED one profile's coverage when ≥1 target attaches (the
+  surplus goes unbound); attaching to nothing stays an error.  Development
+  coverage: 567 → 796 (callback roots) → **1017 reachable**.
+- **Hand-recovered logic verified correctly hooked:** `plan development
+  --override islands` → 1017/1017 bound (971 baseline + 46 islands, one
+  owner each, 464 active boundaries, 2634 collapsed edges);
+  `bind_plan_implementations` on a real machine installs EXACTLY the 46
+  in-coverage island hooks — a strict subset of the legacy install, names
+  identical, prologue checks intact.  22 islands stay outside conservative
+  coverage (routines the cold session never exercised) — they await wider
+  trusted evidence (a fresh owner recording ingested as oracle) or
+  reviewed manual facts; the planner refusing to bind them is the model
+  working, not a defect.
+- **The plan model caught a real bug immediately:** `_GenNestMap` was
+  listed TWICE in `_ISLANDS` at the same address — the legacy install
+  reported "69 installed" while only 68 distinct hooks ever existed
+  (second row silently overwrote the first).  Deduped;
+  `EXPECTED_ISLAND_COUNT = 68`.
+- **Process slip, corrected:** one win16_re commit (e173bdd) went in with a
+  red assertion-typo test; fixed in the two follow-ups, suite 418 green.
+  Lesson re-pinned: read the pytest tail BEFORE the commit command runs,
+  never in the same pipeline.
+- **Next:** wire `bind_plan_implementations` into play.py (replacing the
+  direct `hooks.install` call), fold play_vmless/play_cpuless into
+  `--profile` compositions, Phase 4 verification drivers, Phase 5 stale-path
+  deletion (v4 demo reader, old scripts) + docs + the win16 architecture
+  contract test.
+
 ## 2026-07-22 (cont.259) — Phase 2 substantively done: the Atlas carries REPLAY evidence — 597 visited functions + 115 observed dispatch edges from the oracle artifact, joined to the static graph by identity construction
 - **Regenerated `recovery_ir.json`** under the 3.0 facts key
   (`environment_wait_entries`): same 1904 functions, same single honest

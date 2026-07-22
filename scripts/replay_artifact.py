@@ -95,6 +95,7 @@ def main() -> None:
             entry_set(ir), frozenset(site_kinds),
             lambda: driver.current_ordinal)
         machine.cpu.coverage_telemetry = probe
+        machine.cpu.win16_callback_observer = probe.record_callback
         print(f"[replay] evidence probe armed: {len(probe.entries)} entries, "
               f"{len(site_kinds)} dispatch sites (IR sha256 {ir_sha[:16]})")
 
@@ -138,18 +139,19 @@ def main() -> None:
         exe_sha = hashlib.sha256(EXE_PATH.read_bytes()).hexdigest()
         image = ImageIdentity(ProgramIdentity(PROGRAM_KEY), EXE_PATH.name,
                               "sha256", exe_sha)
-        evidence, visits = finish_evidence(
+        evidence, visits, callback_entries = finish_evidence(
             probe, image=image, address_space=ADDRESS_SPACE,
             timeline_id=artifact.timeline_id, profile=capture,
             site_kinds=site_kinds,
-            provenance={"observer": "win16-evidence-probe/v1",
+            provenance={"observer": "win16-evidence-probe/v2",
                         "recovery_ir_sha256": ir_sha,
                         "runner": "scripts/replay_artifact.py"})
         changed = artifact.set_execution_evidence(capture, evidence,
                                                   visits=visits)
         fired = len(evidence.transfers)
         print(f"[replay] evidence: {len(visits.records())} visited functions, "
-              f"{fired} observed transfer edges "
+              f"{fired} observed transfer edges, "
+              f"{len(callback_entries)} callback entry roots "
               f"({'persisted' if changed else 'identical to stored'})")
 
 

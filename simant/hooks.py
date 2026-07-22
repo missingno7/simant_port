@@ -2554,8 +2554,9 @@ _ISLANDS = [
      lambda machine, off: _make_copyname_island(machine), "_CopyName"),
     (GENOVERMAP_SEG_INDEX, GENOVERMAP_OFF, GENOVERMAP_SIG,
      lambda machine, off: _make_genovermap_island(machine), "_GenOverMap"),
-    (GENNESTMAP_SEG_INDEX, GENNESTMAP_OFF, GENNESTMAP_SIG,
-     lambda machine, off: _make_gennestmap_island(machine), "_GenNestMap"),
+    # (_GenNestMap appeared here a second time until cont.260 — same address,
+    #  same body, silently overwriting its first row; the 3.0 plan binding's
+    #  exact-count check caught it.)
     (UNPACK_SEG_INDEX, UNPACK_OFF, UNPACK_SIG,
      lambda machine, off: _make_unpack_island(machine), "_Unpack"),
     (BYTECOPY_SEG_INDEX, BYTECOPY_OFF, BYTECOPY_SIG,
@@ -2593,18 +2594,37 @@ for _off, _name in SRAND_MASK_OFFS:
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 69
+EXPECTED_ISLAND_COUNT = 68
 
 
-def install(machine) -> int:
-    """Install every SimAnt island whose entry bytes still match its recorded
+def island_addresses(seg_bases) -> dict[tuple[int, int], str]:
+    """Every island's paragraph (cs, ip) entry -> island name, for the given
+    segment layout.  The implementation-catalog target inventory: which
+    original identities the hand-recovered corpus claims (dos_re 3.0
+    ``ImplementationDescriptor.targets``)."""
+    return {(seg_bases[seg_index], off): name
+            for seg_index, off, _sig, _factory, name in _ISLANDS}
+
+
+def install(machine, only=None) -> int:
+    """Install SimAnt islands whose entry bytes still match their recorded
     prologue.  Returns the number installed.  Refuses (AssertionError) if a
     routine's signature does not match — an island on the wrong code corrupts
-    silently."""
+    silently.
+
+    ``only`` — an optional set of paragraph ``(cs, ip)`` entries: install
+    exactly those islands (the dos_re 3.0 plan-selected subset).  ``None``
+    installs all (the historical whole-corpus behaviour).  Asking for an
+    address no island claims raises: a plan that selects a target this corpus
+    cannot provide is a configuration error, never a silent skip."""
     cpu = machine.cpu
     count = 0
+    claimed = set()
     for seg_index, off, sig, factory, name in _ISLANDS:
         cs = machine.seg_bases[seg_index]
+        if only is not None and (cs, off) not in only:
+            continue
+        claimed.add((cs, off))
         actual = machine.mem.block(cs, off, len(sig))
         if actual != sig:
             raise AssertionError(
@@ -2613,4 +2633,9 @@ def install(machine) -> int:
         cpu.replacement_hooks[(cs, off)] = factory(machine, off)
         cpu.hook_names[(cs, off)] = f"{name}@{seg_index}:{off:04X}"
         count += 1
+    if only is not None and set(only) - claimed:
+        missing = ", ".join(f"{cs:04X}:{ip:04X}"
+                            for cs, ip in sorted(set(only) - claimed))
+        raise AssertionError(
+            f"islands selected for addresses no island claims: {missing}")
     return count
