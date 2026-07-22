@@ -18,6 +18,19 @@ byte-exact by an A/B oracle.
 
 Boot it with `python scripts/boot.py` to find the next `win16_re` gap.
 
+**As of 2026-07, this project is migrating to the dos_re 3.0 paradigm** (evidence
+authorities → Execution Atlas → one ImplementationCatalog + ExecutionPlan → one
+player selected by `--profile`). What used to be separate stage runners is now
+`scripts/play.py`/`scripts/replay.py --profile {development,detached}`; the
+hand-recovered islands are authored-*faithful* catalog entries the plan
+installs. Read [`docs/migration_report.md`](docs/migration_report.md) for the
+full state and [`win16_re/docs/dos_re_3_0.md`](win16_re/docs/dos_re_3_0.md) for
+the concept mapping. The migration is not finished — some 2.0 byte-exact tools
+(`checkpoints.py`, `liftverify.py`, `verifyislands.py`, the v4 demo reader,
+`play_vmless.py`/`play_cpuless.py`) still exist pending per-consumer migration;
+see the report's §13–15. The byte-exact gate still holds (mdigest
+`417cac5cd9aadb8c`).
+
 **win16_re is a git submodule** of this repo, pinned at `win16_re/`
 (https://github.com/missingno7/win16_re.git), which itself vendors `dos_re` as its own
 nested submodule — `git clone --recurse-submodules` (or
