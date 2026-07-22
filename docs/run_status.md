@@ -1,5 +1,49 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.266) — step 1 DONE: the dos_re CPUless emitter now routes internal calls through the plan override registry (upstreamed, regression-tested); the 273-module duplication is now fixable
+- **The fix, in dos_re (main 9d30fac; win16_re d6aeae9):**
+  `emit_cpuless.py` bound internal callees by direct import from ONE corpus
+  package, so `impl = overrides.get(addr, generated[addr])` never composed
+  into the generated call graph (measured: 83 generated modules bypassed
+  overrides, forcing the 273-duplicate dual corpus).  Now every module-level
+  callee binding AND the dynamic-dispatch path resolve through
+  `_dyncall.CALLEE_OVERRIDES`, which the plan's bind step populates with the
+  selected authored overrides BEFORE any corpus module imports (binding
+  precedes execution).  Empty registry = the generated corpus byte-for-byte;
+  the static generated import stays as the default so the release closure
+  stays static (no dynamic loading added); `_dyncall` absent (a standalone
+  body) falls back to the generated body.  Regression
+  (`tests/test_cpuless_callee_override.py`): a real on-disk two-function
+  corpus proves the override wins at an internal call site AND on the
+  dispatch path — both FAIL on the old emitter.  Suites: dos_re 1280,
+  win16_re 429.
+- **What this unlocks:** `cpuless-skin` can become an OVERRIDE-ONLY catalog
+  entry (the 396 hand bodies registered into `CALLEE_OVERRIDES`), and the 273
+  byte-identical duplicated generated modules in `cpuless_skin/` can be
+  deleted — the "abstraction that didn't fit" the stress-test surfaced.
+- **Corpus REGENERATED under the new emitter + verified.**
+  `scripts/cpuless_promote.py` rebuilt `simant/native/cpuless` (463 leaves,
+  independence wall holds): **152 modules now route internal callees through
+  `resolve_callee` + the `_dyncall.CALLEE_OVERRIDES` registry, 0 use the old
+  direct import** (was 83 bypassing).  Empty registry = generated behaviour:
+  `play_cpuless --entry 0100:010A` runs clean (exit 0).  The corpus is
+  disposable/gitignored (regenerate to reproduce).
+- **Separate bug caught + fixed while running the CPUless entry (win16_re
+  4addc55):** the 3.0 seam bridge (cont.258) shipped `run_deep` with a 512 MB
+  default stack; `threading.stack_size` rejects 256 MB+ on Windows, so
+  `play_cpuless --entry` crashed on thread setup before any body ran.
+  Restored the dos_re defaults (64 MB / 300k) + graceful fallback on an
+  invalid size; regression test added.  (A stress-test catch: a regression I
+  introduced in the migration, invisible until the plan-driven CPUless entry
+  exercised it.)
+- **Follow-on (project side):** rebuild the skin as an OVERRIDE-ONLY layer
+  (the 396 hand bodies registered into `CALLEE_OVERRIDES`, deleting the 273
+  duplicated generated modules) and wire the CPUless runner to populate the
+  registry from the plan.  A full replay verify of the CPUless-skin
+  composition stays blocked by the incomplete CPUless closure (open frontier,
+  tasks #55/#60); the per-call oracles remain the byte-exact proof.
+- Suites: dos_re 1280, win16_re 430, simant 2329.
+
 ## 2026-07-22 (cont.265) — stress-test finding: the hand-recovered code was ABSENT from the plan; root cause is a dos_re CPUless-emitter limitation (internal calls bypass the plan). Step 2 of "2 then 1": cpuless-skin now wins in the plan; step 1 (emitter fix) is next
 - **Owner directive (standing):** this project also VALIDATES dos_re 3.0 —
   treat framework friction as feedback, fix at the correct layer, prefer
