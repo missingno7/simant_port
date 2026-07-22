@@ -1,5 +1,46 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.270) — perf directive: recorder-resumability bug fixed (owner's slow-draw recording); the repaint bottleneck precisely diagnosed (interpreted draw code, NOT host pixels)
+- **Owner recorded the slow black-nest-view drawing (`session_181452`) — and
+  it exposed a recorder bug.** The base continuation was captured mid-paint
+  (parked inside `UpdateWindow`'s WM_PAINT callback via a call_far chunk
+  boundary), so it restored fine then died 2.69M instructions into replay
+  with `OrphanReturnError` (UpdateWindow has Python-side post-work, not
+  orphan-resumable).  **Stress-test lens → framework fix (win16_re e471440):**
+  `pause_at_boundary(ready=…)` gates the park on a predicate;
+  `callback_stack_resumable(cpu)` + `refuse_unresumable_capture` make the
+  recorder wait for a top-level/resumable boundary AND refuse a bad base
+  loud AT CAPTURE (not deep in replay).  play.py's F11 passes the gate.
+  The owner's `session_181452` base is unrecoverable (already captured
+  wrong) — the equivalent replayable workload is `session_170643` (same
+  nest-view repaint chain, 256 UpdateWindow @ 104ms).
+- **The repaint bottleneck, measured precisely (corrects my earlier
+  "104ms host repaint" framing):** cProfile of the 170643 hooks-on replay =
+  69.7s / 33.2M instr; **~85% is the dos_re INTERPRETER**, host pixel
+  handlers are CHEAP (SetDIBitsToDevice 0.42s/1663, FillRect 0.39s/9524 —
+  <2s total).  UpdateWindow's 26.7s cumtime is almost entirely the
+  interpreter running guest WM_PAINT draw code.  So the fix is to run FEWER
+  interpreted draw instructions, not to speed up host raster.
+- **Sharpened hot set (IR-exact attribution; the .SYM nearest-symbol
+  attribution lied — e.g. charged unnamed `internal_6250` to
+  `_ResetEditScrollRange`):** the tile LEAVES `_XferTileColor`/`_DoCalcTile`
+  are ALREADY islanded (never hit the interpreter); the hot INTERPRETED
+  functions are their callers + setup-heavy primitives —
+  `internal_6250` 8.5% (per-tile-row loop, 18C0), `_GBoxFill` 5.7%,
+  `_DoBitmap`+`_DoMonoBitmap` 8.2%, `_CopyMaskBitmap2` 4.3% (430E, pure
+  guest pixel copy — no API), `_StillDown` 4.6% (mouse poll),
+  `_font_MakeImage` 3.4%.  `_GBoxFill`/`_DoBitmap` delegate pixels to
+  FillRect/SetDIBitsToDevice (host) — their interpreted cost is per-call
+  SETUP × call-count.  This is exactly the owner's "slow outer loop calls
+  islanded leaves through the interpreter per tile" case.
+- **The first island (in progress, task #76):** the tile-render subtree
+  `internal_16D4 → internal_6250 → internal_63FE` as ONE island reusing the
+  existing leaf islands, so all tiles render in Python with no per-tile
+  interpreter crossing.  Byte-exact via the hooks.py A/B oracle; re-measured
+  E2E on the same replay.  `_CopyMaskBitmap2` (pure guest pixel copy) is a
+  clean NumPy-blit candidate too.
+
+
 ## 2026-07-22 (cont.269) — the window-object system FULLY MAPPED (winmap.py): draw hooks, event chain, lifecycle — typed facts in the Atlas; the presentation-island boundary identified
 - **A correction first (my cont.268 claim was wrong):** there is no
   "seg-0060 gateway" — 0060 is the API import-thunk segment
