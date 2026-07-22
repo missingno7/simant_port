@@ -97,6 +97,27 @@ def _corpus_targets(directory: Path) -> frozenset[str]:
     return frozenset(out)
 
 
+_GRAPH_HEADER = None
+
+
+def _graph_targets(directory: Path) -> frozenset[str]:
+    """Targets of a symbol-named lifted graph (liftlink names modules by
+    SYM symbol, e.g. ``antedit_antmenu.py``): every module's docstring
+    declares its address as ``Function CS:IP`` — the emitter's contract."""
+    import re
+    global _GRAPH_HEADER
+    if _GRAPH_HEADER is None:
+        _GRAPH_HEADER = re.compile(
+            r"^Function ([0-9A-Fa-f]{4}):([0-9A-Fa-f]{4})\b", re.MULTILINE)
+    out = set()
+    for path in directory.glob("*.py"):
+        m = _GRAPH_HEADER.search(path.read_text(encoding="utf-8",
+                                                errors="replace")[:400])
+        if m is not None:
+            out.add(function_id(int(m.group(1), 16), int(m.group(2), 16)))
+    return frozenset(out)
+
+
 # --- adapters (installation mechanics; run at bind time only) ---------------
 
 def _install_islands(machine, targets) -> None:
@@ -109,7 +130,20 @@ def _install_islands(machine, targets) -> None:
             f"island adapter installed {installed} of {len(only)} selected")
 
 
-def build_catalog(seg_bases, reachable: frozenset[str]) -> ImplementationCatalog:
+def _with_points(targets: frozenset[str], contained) -> frozenset[str]:
+    """An implementation that owns a function owns its interior execution
+    points (the dispatch sites inside it) — the containment attribution the
+    Atlas records."""
+    if not contained:
+        return targets
+    out = set(targets)
+    for func in targets:
+        out.update(contained.get(func, ()))
+    return frozenset(out)
+
+
+def build_catalog(seg_bases, reachable: frozenset[str],
+                  contained=None) -> ImplementationCatalog:
     """The one implementation inventory, scoped to ``reachable`` coverage.
 
     ``seg_bases`` — the deterministic segment layout (a live machine's, or the
@@ -164,9 +198,10 @@ def build_catalog(seg_bases, reachable: frozenset[str]) -> ImplementationCatalog
     entries = [baseline, islands]
 
     if VMLESS_GRAPH_DIR.is_dir():
-        graph_targets = _corpus_targets(VMLESS_GRAPH_DIR) & reachable
+        graph_targets = _with_points(
+            _graph_targets(VMLESS_GRAPH_DIR) & reachable, contained)
         if graph_targets:
-            graph_digest = _dir_digest(VMLESS_GRAPH_DIR)
+            graph_digest = _dir_digest(VMLESS_GRAPH_DIR, "*.py")
 
             def _activate_graph(machine, targets) -> None:
                 from dos_re.lift.install import activate_generated_graph
@@ -200,7 +235,8 @@ def build_catalog(seg_bases, reachable: frozenset[str]) -> ImplementationCatalog
             ))
 
     if CPULESS_CORPUS_DIR.is_dir():
-        corpus_targets = _corpus_targets(CPULESS_CORPUS_DIR) & reachable
+        corpus_targets = _with_points(
+            _corpus_targets(CPULESS_CORPUS_DIR) & reachable, contained)
         if corpus_targets:
             corpus_digest = _dir_digest(CPULESS_CORPUS_DIR)
 
@@ -266,7 +302,17 @@ def configuration(profile: str, *, selected_overrides=(),
 def plan(profile: str, coverage_source, seg_bases, *,
          selected_overrides=(), provider_preference=("interpreted-baseline",)):
     coverage = coverage_source.coverage_for("development")
-    catalog = build_catalog(seg_bases, coverage.reachable)
+    contained = None
+    if hasattr(coverage_source, "edges"):
+        # Atlas-backed planning: attribute reachable interior points to
+        # their containing functions so a function's owner owns its points.
+        contained = {}
+        for edge in coverage_source.edges():
+            if (edge.status == "containment"
+                    and edge.target in coverage.reachable
+                    and ":point:" in edge.target):
+                contained.setdefault(edge.source, set()).add(edge.target)
+    catalog = build_catalog(seg_bases, coverage.reachable, contained)
     return plan_execution(
         configuration(profile, selected_overrides=selected_overrides,
                       provider_preference=provider_preference),
