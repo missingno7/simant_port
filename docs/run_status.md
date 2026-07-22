@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.275) — the nest-view BLINK diagnosed + fixed (host over-present); in-game perf profiled to the render cluster
+- **Owner: in-game still slow; nest view constantly refreshes + slightly
+  blinks even when nothing changes; consider SDL vs tkinter.**  Recorded
+  session_233225 (moving windows / forcing redraws).
+- **BLINK ROOT CAUSE + FIX (simant 8ab90f4):** `objects.Surface.touch()`
+  bumps `version` on EVERY drawing primitive, and SimAnt repaints its views
+  every frame — the black nest view redraws its UNCHANGED tiles, producing
+  pixels identical to the last frame.  The host's version gate then re-ran the
+  expensive PIL->PhotoImage present every tick -> tkinter flicker + wasted
+  host CPU.  Fix: gate the present on a crc32 of the composited frame (skip
+  when pixels unchanged).  Measured: **486 version-bump presents -> 130 real
+  content presents, 73% eliminated** (near 100% while idle).  So the constant
+  guest repaint is INTENDED (the game's animation loop), but the visible blink
+  was OUR host needlessly re-presenting identical frames — now gone.
+- **IN-GAME PERF (session_233225, IR-exact):** the guest CPU is the nest-view
+  RENDER CLUSTER: **internal_6250 35.8% + _EditScrollRightColor 14.6% +
+  _EditScrollDownColor 11.6% + internal_16D4 4.5% = ~66%** — all un-islanded
+  tile render/scroll.  This is the guest-side bottleneck; islanding
+  internal_6250 (task #3, in progress) + the scroll pair is the fix.  The
+  content-gate fixes the HOST side; the islands fix the GUEST side.
+- **SDL/pygame assessment:** per-present cost ~6-16ms (PIL frombytes+resize
+  ~0.5-1.2ms + the dominant ImageTk.PhotoImage tk-conversion).  The content-
+  gate already cut present FREQUENCY 73%, so host present load is much lower
+  now.  SDL would cut per-present COST (GPU blit ~1-2ms) for the remaining
+  presents, but a full SDL port is a LARGE change (SimAnt's multi-window +
+  native menus/dialogs/scrollbars are tkinter-managed).  Recommendation:
+  content-gate = the big immediate host win (done); a cheaper middle ground
+  (faster surface->display: tk PPM loader or persistent PhotoImage.put) would
+  capture most of the rest without the rewrite; the guest render islands are
+  the larger, separate perf lever.
+
+
 ## 2026-07-22 (cont.273) — AUDIT: silently-interpreted-despite-native + the 3.0 hooking coverage of the hand-recovered corpus
 - **Owner asked: any other cases like the _Unpack punt (native exists but
   interpreted runs), and is the hand recovery correctly hooked after 3.0?**
