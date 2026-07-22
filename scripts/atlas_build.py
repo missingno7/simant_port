@@ -38,6 +38,12 @@ def main() -> int:
     ap.add_argument("--replay", action="append", default=[],
                     help="replay artifact dir(s) with oracle evidence "
                          "(default: artifacts/replays/cold_nohooks if present)")
+    ap.add_argument("--render-evidence", action="append", default=[],
+                    metavar="FILE",
+                    help="observed-evidence JSON from a CANDIDATE session "
+                         "(replay_artifact.py --evidence-out): its observed "
+                         "transfers are ingested as cited manual facts "
+                         "(not oracle-trusted, but real evidence)")
     args = ap.parse_args()
     if not assets_present():
         raise SystemExit("assets/ANTWIN/SIMANTW.EXE not found")
@@ -64,6 +70,30 @@ def main() -> int:
               f"{value['visited_function_count']} visited, "
               f"{value['observed_edge_count']} observed edges "
               f"(+{len(report.new_node_ids)} nodes)")
+
+    # Candidate-session observed evidence as CITED manual facts (a candidate
+    # capture is not oracle-trusted, so it cannot go through ingest_replay,
+    # but its observed transfers ARE real evidence — the resolved indirect
+    # object-window draw dispatches + the confirmed callback entries).
+    for ev_path in args.render_evidence:
+        ev = json.loads(Path(ev_path).read_text(encoding="utf-8"))
+        edges = [{"source": t["source_id"], "target": t["target_id"],
+                  "kind": t["kind"], "status": "observed",
+                  "observation_count": int(t.get("count", 1))}
+                 for t in ev.get("transfers", ())]
+        if edges:
+            atlas.add_manual_facts(
+                f"render-observed-{ev['session']}",
+                provenance={"source": "replay_artifact.py --evidence-out "
+                                      "(candidate composition, cited)",
+                            "session": ev["session"],
+                            "capture_role": ev.get("capture_role", "candidate"),
+                            "recovery_ir_sha256": ev.get("recovery_ir_sha256")},
+                edges=tuple(edges))
+        print(f"[atlas] render evidence {Path(ev_path).name}: "
+              f"{len(ev.get('visited_functions', ()))} visited, "
+              f"{len(edges)} observed edges, "
+              f"{len(ev.get('callback_entries', ()))} callback entries")
 
     # Containment for observed-only execution points: a replay-observed
     # dispatch TARGET that is not an IR function entry (a jump-table arm

@@ -61,21 +61,35 @@ _win_DrawObjectI`; `_win_Open → _win_Recalc`, `_win_LockWinHigh`,
 `_win_UnlockWin`; `_DrawMap → _DrawMapData`; `_Draw_SimYard → _DrawMower`,
 `_DrawSimKid`, `_DrawSwarm`; `_PaintStuff → _GSetBigFont`.
 
-## 4. The object-window draw dispatch is INDIRECT — the key map gap
+## 4. What actually draws each window (resolved) vs the event frontier
 
-`_win_DrawMapWindow`, `_ScrollEditWindow`, `_DrawMap` show few/no static
-callees because the object-window layer dispatches drawing through a **per-
-window draw function pointer**, not a static call.  This matches the recovered
-state layout: `SimAntState.window_records` is `FarPtr[256]` @ `0xCE9A` — each
-window object carries its own draw/event routine.  `_win_DrawWindow` calls it
-indirectly (`call far [obj->draw]`).
+The DRAW path resolves statically through `call-far` edges — query it with
+`render_map.py --tree <function>`.  The map window's drawing tree:
 
-Consequence: **the map→drawer edges are indirect and only resolve from runtime
-evidence** (the Atlas's `call_ind` sites are `unresolved` until a replay
-observes the target).  This is the single most important reason the rendering
-map is only as complete as the replay coverage, and why §6 (wider recording)
-is the next step — it is also a concrete instance of far-call evidence
-widening (task #60) applied to the presentation layer.
+```
+_win_DrawMapWindow (18C0:CE46)
+    _DoFastBitmap        (0E99:39B2)   colour sprite/tile blit
+    _DoFastMonoBitmap    (0E99:3B48)   1-bpp mask blit
+    _GBoxFill            (0E99:19E6)   solid fill
+    _GRectInvOutline     (0E99:0E0A) -> _GInvBox   selection outline
+    _win_IsWinOpen       (430E:C256)
+```
+
+So the map is drawn by the **fast bitmap blitters** (`_DoFastBitmap` /
+`_DoFastMonoBitmap`) plus box-fill and invert-outline — the hot path and the
+natural seam for hi-res / smooth presentation.  Similarly
+`_win_DrawWindow → _win_DrawObjectI → _GRectInv/_GSetAttrib`,
+`_win_DrawEditWindow → _DrawEditGraphs`, and `_UpdateEdit → _ScrollEditArrays,
+_DrawEditGraphs` (the last two resolved by the menu session, §6).
+
+What is NOT yet resolved is the object-window **event/scroll dispatch**, not
+the draw dispatch: `_win_GetEvent` and `_ScrollEditWindow` tail through an
+indirect jump (`jmp_ind` at e.g. `430E:B7B6`) into a per-window event routine
+(`window_records` is `FarPtr[256]` @ `0xCE9A` — each object carries its
+draw/event routine).  **240 indirect dispatch edges remain unresolved**
+across the binary; resolving the presentation ones is the far-call-evidence
+widening (task #60) applied here, needing sessions that drive each window
+type's event path.  The DRAW side, though, is already legible.
 
 ## 5. The drawing categories (static-reachable / observed)
 
@@ -97,23 +111,33 @@ widening (task #60) applied to the presentation layer.
 big gaps are `gdi-object` (31 unobserved) and `invalidation`/`window-geom`
 (paths that only run once child windows/maps are opened and repainted).
 
-## 6. Evidence gap + next steps
+## 6. Evidence base + next steps
 
-1. **Record a rendering session** (owner) that opens the map/nest/lab views,
-   scrolls, zooms the mini-map, and forces repaints; convert to a
-   ReplayArtifact; run `replay_artifact.py --evidence`; rebuild the Atlas
-   (`atlas_build.py`).  This resolves the indirect object-window draw
-   dispatches (§4) and fills the `gdi-object`/`invalidation`/`window-geom`
-   gaps (§5).
-2. **Re-run `render_map.py --observed`** — the observed set converges on the
-   full rendering closure; the callback-entry list confirms whether any
-   guest procedure beyond `MAINWNDPROC`/`MYTIMERFUNC` exists.
-3. **Then hook at the stable boundaries the map identifies** — the graphics
-   primitives (`_DoBitmap`/`_GPutStr`/`_TrapFill`) and the object-window draw
-   dispatch (`_win_DrawWindow`) are the meaningful seams for a native
-   renderer; the scroll path (`_ScrollEditWindow`) is the seam for smooth
-   scrolling.  Each hook is a plan-selected authored implementation verified
-   against the oracle (per the 3.0 catalog), never an isolated one-off.
+Two independent sessions are ingested: `cold_nohooks` (oracle, quick-play,
+199M instr, 597 fns) and `session_165418` (a candidate menu session recorded
+with hooks on — the owner interacting with windows, 91M instr, 472 fns, ingested
+as CITED manual facts via `replay_artifact.py --hooks --evidence-out` +
+`atlas_build.py --render-evidence`, because a candidate capture is not
+oracle-trusted but its observed transfers are real evidence).  Together:
+development coverage 1036 reachable; the menu session added the edit-window
+draw edges and CONFIRMED — across two independent sessions — that only two
+guest procedures are ever dispatched (`MAINWNDPROC`, `MYTIMERFUNC`): SimAnt's
+single-WndProc architecture is now evidence-backed, not assumed.
+
+Next:
+
+1. **Resolve the event/scroll dispatch (§4)**: record sessions that drive each
+   window type's event path (scroll the edit/map view, open the nest/lab
+   views, use the caste/mode windows) so the `jmp_ind` object-window event
+   routines resolve — the presentation slice of task #60.
+2. **Hook at the stable DRAW boundaries the map already identifies** — the
+   fast bitmap blitters (`_DoFastBitmap`/`_DoFastMonoBitmap`) are the map's
+   hot path and the seam for hi-res/smooth presentation; `_GBoxFill`/
+   `_GPutStr`/`_TrapFill` are the primitive seam; the scroll path
+   (`_ScrollEditWindow`/`_DoEditScroll`) is the smooth-scroll seam.  Each hook
+   is a plan-selected authored implementation verified against the oracle (the
+   3.0 catalog), never an isolated one-off.
+3. **Query any window's draw tree** with `render_map.py --tree <function>`.
 
 ## 7. Enhancement seams this map exposes
 

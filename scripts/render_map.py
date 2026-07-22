@@ -74,11 +74,66 @@ def _addr(identity: str) -> str:
     return unquote(identity.rsplit(":", 1)[-1]).upper()
 
 
+#: edge kinds that are a real control transfer to a callee (a drawing call
+#: tree follows these; NOT containment / has-variant).
+_CALL_KINDS = ("call", "call-far", "call_ind", "tail-transfer", "callback")
+
+
+def _draw_tree(graph, label, kind, root_name: str) -> int:
+    byname = {v: k for k, v in label.items() if v}
+    root = byname.get(root_name)
+    if root is None:
+        # accept a bare CS:IP too
+        cand = [i for i, l in label.items()
+                if _addr(i).lower() == root_name.lower().lstrip("0")]
+        root = cand[0] if cand else None
+    if root is None:
+        print(f"no function labelled {root_name!r} in the Atlas")
+        return 2
+    callees: dict[str, list[tuple[str, str, str]]] = {}
+    for e in graph["edges"]:
+        if e["status"] in ("resolved", "observed") \
+                and e["kind"] in _CALL_KINDS:
+            callees.setdefault(e["source"], []).append(
+                (e["target"], e["kind"], e["status"]))
+
+    print(f"=== drawing call tree from {root_name} "
+          f"(resolved/observed transfers) ===")
+    seen: set[str] = set()
+
+    def walk(fid: str, depth: int) -> None:
+        name = label.get(fid) or _addr(fid)
+        api = _api_name(name)
+        mark = ""
+        if api and api in _API_CATEGORY:
+            mark = f"   [GDI/USER: {_API_CATEGORY[api]}]"
+        print("  " * depth + f"{_addr(fid) if not api else ''} {name}{mark}")
+        if fid in seen or api:
+            return
+        seen.add(fid)
+        for tgt, k, st in sorted(set(callees.get(fid, ())),
+                                 key=lambda x: label.get(x[0]) or x[0]):
+            # only descend into rendering-relevant callees to keep it legible
+            tl = label.get(tgt) or ""
+            if _api_name(tl) in _API_CATEGORY or tl.startswith(
+                    ("_Draw", "_G", "_Do", "_win_", "_MS", "_Scroll",
+                     "_Update", "_hanim", "_Paint", "_Trap")) \
+                    or "Bitmap" in tl:
+                walk(tgt, depth + 1)
+
+    walk(root, 0)
+    return 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--atlas", default=str(REPO_ROOT / "artifacts" / "atlas"))
     ap.add_argument("--observed", action="store_true",
                     help="restrict to replay-executed functions")
+    ap.add_argument("--tree", metavar="NAME", default=None,
+                    help="print the resolved DRAWING call tree from a "
+                         "function (e.g. _win_DrawMapWindow) down to the "
+                         "graphics primitives + Windows API boundaries")
     ap.add_argument("--json", action="store_true")
     args = ap.parse_args()
 
@@ -86,6 +141,9 @@ def main() -> int:
         (Path(args.atlas) / "indexes" / "graph.json").read_text("utf-8"))
     label = {n["id"]: n.get("label") for n in graph["nodes"]}
     kind = {n["id"]: n["kind"] for n in graph["nodes"]}
+
+    if args.tree:
+        return _draw_tree(graph, label, kind, args.tree)
 
     observed_fns: set[str] = set()
     if args.observed:
