@@ -52,6 +52,16 @@ CPULESS_CARRIER = "win16-cpuless"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CPULESS_CORPUS_DIR = REPO_ROOT / "simant" / "native" / "cpuless"
+#: The hand-recovered CPU-free corpus: the authoritative source for the native
+#: target.  A FULL self-consistent copy of the generated skeleton with the hand
+#: bodies substituted in (the "skin on skeleton").  It is a full copy, not an
+#: override-only layer, ONLY because the current dos_re CPUless emitter binds
+#: internal callees by direct Python import (emit_cpuless.py) — so a per-target
+#: override cannot compose into the generated call graph, forcing a whole-corpus
+#: regeneration with the overrides baked in.  Fixing that emitter (routing
+#: internal calls through the plan) makes this an override-only entry and lets
+#: the 273 duplicated generated bodies here be deleted.
+CPULESS_SKIN_DIR = REPO_ROOT / "simant" / "native" / "cpuless_skin"
 VMLESS_GRAPH_DIR = REPO_ROOT / "simant" / "lifted" / "graph_cpuless"
 BOOT_IMAGE_DIR = REPO_ROOT / "artifacts" / "vmless_boot"
 
@@ -108,6 +118,22 @@ def _corpus_targets(directory: Path) -> frozenset[str]:
     for path in directory.glob("func_*.py"):
         _, cs, ip = path.stem.split("_")
         out.add(function_id(int(cs, 16), int(ip, 16)))
+    return frozenset(out)
+
+
+def _skin_override_targets() -> frozenset[str]:
+    """The addresses the hand-recovered CPU-free corpus actually OVERRIDES:
+    a skin module that has no generated twin, or one whose bytes differ from
+    the generated body (a hand rewrite).  Byte-identical duplicates are the
+    emitter-limitation waste, not overrides — excluded."""
+    if not (CPULESS_SKIN_DIR.is_dir() and CPULESS_CORPUS_DIR.is_dir()):
+        return frozenset()
+    out = set()
+    for path in CPULESS_SKIN_DIR.glob("func_*.py"):
+        gen = CPULESS_CORPUS_DIR / path.name
+        if not gen.exists() or gen.read_bytes() != path.read_bytes():
+            _, cs, ip = path.stem.split("_")
+            out.add(function_id(int(cs, 16), int(ip, 16)))
     return frozenset(out)
 
 
@@ -278,6 +304,47 @@ def build_catalog(seg_bases, reachable: frozenset[str],
                     adapter_digest=corpus_digest,
                 ),),
             ))
+
+    # The AUTHORITATIVE hand-recovered CPU-free code (the native target).  An
+    # authored-faithful override at the addresses the skin actually rewrites;
+    # the planner binds it OVER cpuless-corpus at those targets when selected.
+    skin_targets = _skin_override_targets() & reachable
+    if skin_targets:
+        skin_digest = _dir_digest(CPULESS_SKIN_DIR)
+
+        def _activate_skin(machine, targets) -> None:
+            # Which corpus package the CPU-free carrier imports roots from is
+            # selection: recording the skin package here is what routes the
+            # runner to the hand bodies.  (A per-target override cannot compose
+            # into the generated call graph today — the emitter binds internal
+            # callees by direct import — so running the skin means importing
+            # from the full self-consistent skin package.  The dos_re emitter
+            # fix removes that whole-corpus requirement.)
+            setattr(machine, "cpuless_import_base", "simant.native.cpuless_skin")
+
+        entries.append(ImplementationEntry(
+            ImplementationDescriptor(
+                implementation_id="cpuless-skin",
+                targets=skin_targets,
+                origin=ImplementationOrigin.AUTHORED,
+                category=OverrideCategory.FAITHFUL,
+                recovery_level=RecoveryLevel.AUTHORED_NATIVE,
+                properties=frozenset({"hand-recovered", "cpuless",
+                                      "skin-on-skeleton"}),
+                evidence_grade=EvidenceGrade.REPLAY_CORPUS,
+                verification_evidence=frozenset(
+                    {"simant/tests/test_hooks.py A/B oracles",
+                     "scripts/verifyislands.py per-call differential"}),
+                implementation_digest=skin_digest,
+            ),
+            implementation=None,
+            adapters=(BackendAdapter(
+                adapter_id="cpuless-skin/cpuless",
+                carrier_id=CPULESS_CARRIER,
+                activate=_activate_skin,
+                adapter_digest=skin_digest,
+            ),),
+        ))
 
     return ImplementationCatalog(tuple(entries))
 

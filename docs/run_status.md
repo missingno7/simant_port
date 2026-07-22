@@ -1,5 +1,46 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.265) — stress-test finding: the hand-recovered code was ABSENT from the plan; root cause is a dos_re CPUless-emitter limitation (internal calls bypass the plan). Step 2 of "2 then 1": cpuless-skin now wins in the plan; step 1 (emitter fix) is next
+- **Owner directive (standing):** this project also VALIDATES dos_re 3.0 —
+  treat framework friction as feedback, fix at the correct layer, prefer
+  upstream over local workarounds ([[stress-test-dosre-3]]).
+- **Finding (owner asked "is the hand code correctly integrated?"):** NO, not
+  where it matters.  The interpreted islands bind in `development`, but the
+  **authoritative hand-recovered CPU-free corpus (`simant/native/cpuless_skin`)
+  was absent from the catalog entirely** — the detached/CPUless composition ran
+  100% generated skeleton, and the verify_interval I reported earlier verified
+  the GENERATED graph, not the hand code.
+- **Root cause = a dos_re 3.0 architectural gap (layer 3), traced to source.**
+  `dos_re/lift/emit_cpuless.py:2573` emits internal callee calls as DIRECT
+  PYTHON IMPORTS from one hardcoded corpus package
+  (`from {base}.func_X import func_X`).  So the ExecutionPlan's per-target
+  selection (`impl = overrides.get(addr, generated[addr])`) does NOT compose
+  into the generated call graph: a plan override of an internally-called
+  function is silently ignored.  Measured on the real corpus: **83 generated
+  modules internally call an overridden function → 83 call sites bypass the
+  plan.**  This contradicts dos_re's own boundary model (a cross-provider edge
+  should be an active boundary) and forces the dual-corpus workaround:
+  `cpuless_skin` is a FULL copy (669) with **273 byte-identical duplicated
+  generated bodies** — pure waste that exists only because of this limitation.
+  The real hand set is 396 (208 skin-only + 188 rewrites).
+- **Step 2 landed (get the hand code into the plan + a baseline):**
+  `cpuless-skin` is now an authored-faithful catalog entry (396 targets); the
+  planner **selects it OVER the generated skeleton at all 396 addresses**
+  (`{cpuless-corpus: 275, cpuless-skin: 396}`).  Pinned by
+  `simant/tests/test_execution_catalog.py` (dev binds 68 islands; skin wins in
+  the CPUless plan; the emitter-limitation diagnostic is live at 83).  The
+  hand code is now plan-visible and authoritative-by-selection.
+- **Step 1 next (the real fix, dos_re):** route the CPUless emitter's internal
+  calls through a plan-populated dispatch instead of a direct import, so
+  overrides compose per-target.  Regression: an override reaches an
+  internally-called target (fails on old emitter).  That makes `cpuless-skin`
+  an override-only entry (396, not 669) and lets the 273 duplicated modules be
+  deleted.  NOTE also carried: a full `verify_interval` of the CPUless-skin
+  composition isn't achievable yet (the CPUless closure is incomplete — open
+  frontier, tasks #55/#60), so the composition runs to its frontier; the
+  per-call oracles (test_hooks/verifyislands) remain the byte-exact proof.
+- Suites: simant 2329 (+4).  **Next:** step 1 (dos_re emitter fix).
+
 ## 2026-07-22 (cont.264) — Phase 5a: interactive recording writes ReplayArtifacts, and the win16 architecture-contract test lands
 - **Interactive recording is 3.0-native.**  `play.py --record NAME` / F11 now
   write a **ReplayArtifact** directory (`artifacts/replays/NAME`) via the new
