@@ -94,3 +94,49 @@ def test_decode_chunk_reports_clean_done_at_budget():
     assert bytes(out) == b"hello"
     assert st.code == lzss.CODE_DONE
     assert st.out_pos == 5
+
+
+def test_streaming_resume_matches_a_single_decode():
+    """Decoding a stream in tiny output budgets — which forces the decoder to
+    stop and RESUME through every code, including CODE_MATCH_COPY mid-match —
+    must reconstruct byte-for-byte what a single unbounded decode produces.
+    This is the pure-function guard behind the _Unpack island's resume path
+    (the logo-draw fix): the island decodes each continuation in Python instead
+    of punting to the interpreter."""
+    # Repetitive text compresses to real back-references, so small budgets land
+    # mid-match (CODE_MATCH_COPY) as well as on clean boundaries.
+    original = (b"the quick brown fox " * 8) + (b"ABCABCABCABC" * 6) + b"!"
+    comp = _lzss_compress(original)
+
+    def decode_full():
+        win = bytearray([lzss.SPACE]) * lzss.WINDOW_SIZE
+        out = bytearray(len(original))
+        st = lzss.decode_chunk(comp, 0, win, out, 0, lzss.WINDOW_START, 0,
+                               len(comp), len(original))
+        return bytes(out[:st.out_pos])
+
+    def decode_chunked(budget):
+        win = bytearray([lzss.SPACE]) * lzss.WINDOW_SIZE
+        out = bytearray(len(original))
+        r, flags, in_rem, src_pos, dx, cx = lzss.WINDOW_START, 0, len(comp), 0, 0, 0
+        resume, match_rem, total, seen = lzss.CODE_DONE, 0, 0, set()
+        while total < len(original):
+            st = lzss.decode_chunk(comp, src_pos, win, out, total, r, flags,
+                                   in_rem, budget, lzss.THRESHOLD, dx, cx,
+                                   resume=resume, match_rem=match_rem)
+            seen.add(st.code)
+            if st.out_pos == total and st.code != lzss.CODE_DONE:
+                break                                 # genuinely stuck (out of input)
+            total = st.out_pos
+            r, flags, in_rem, dx, cx = st.r, st.flags, st.in_rem, st.dx, st.cx
+            src_pos, resume, match_rem = st.src_pos, st.code, st.match_rem
+        return bytes(out[:total]), seen
+
+    full = decode_full()
+    assert full == original
+    for budget in (1, 2, 3, 4, 7, 13, len(original)):
+        chunked, seen = decode_chunked(budget)
+        assert chunked == full, f"budget={budget}: {chunked!r} != {full!r}"
+    # The tiniest budget must have exercised the mid-match resume.
+    _, seen1 = decode_chunked(1)
+    assert lzss.CODE_MATCH_COPY in seen1, f"resume path not hit: {sorted(seen1)}"

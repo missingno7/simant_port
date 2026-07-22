@@ -127,13 +127,7 @@ def _make_unpack_island(machine):
         u = UnpackState(SelectorBackend(m, dg), UNPACK_STATE_BASE)
 
         resume = u.resume
-        if resume != 0:
-            # Mid-operation resume — let the real routine handle it.  Emulate the
-            # hooked `push bp` and continue at A669 (mov bp,sp).
-            s.sp = (s.sp - 2) & 0xFFFF
-            ww(s.ss, s.sp, s.bp)
-            s.ip = (UNPACK_OFF + 1) & 0xFFFF
-            return
+        match_rem_in = u.match_rem if resume == lzss.CODE_MATCH_COPY else 0
 
         sp = s.sp
         ret_ip, ret_cs = rw(s.ss, sp), rw(s.ss, (sp + 2) & 0xFFFF)
@@ -164,7 +158,8 @@ def _make_unpack_island(machine):
             0,
             data[win_lin:win_lin + lzss.WINDOW_SIZE],     # 4KB sliding window
             data[out_lin:out_lin + budget],               # output (writes <= budget)
-            0, r, flags, in_rem, budget, thresh, dx, cx)
+            0, r, flags, in_rem, budget, thresh, dx, cx,
+            resume=resume, match_rem=match_rem_in)         # continue mid-token/mid-match
         code = st_.code
         count = st_.out_pos
         r, flags, in_rem, dx, cx = st_.r, st_.flags, st_.in_rem, st_.dx, st_.cx

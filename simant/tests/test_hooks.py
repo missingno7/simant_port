@@ -152,8 +152,14 @@ def _capture_unpack_output(with_island, max_calls, step_budget):
 def test_unpack_island_is_byte_exact_vs_asm():
     """The A/B decompression gate: booting with the _Unpack island must produce
     the IDENTICAL decompressed output and exit state, call for call, as the real
-    ASM routine — the byte-exact proof that the LZSS island is a recovery."""
-    CALLS, BUDGET = 30, 4_000_000
+    ASM routine — the byte-exact proof that the LZSS island is a recovery.
+
+    Covers a LOT of calls at a small budget so the streaming RESUME path is
+    exercised: a large decode hits its output budget mid-match and continues on
+    the next call (resume code CODE_MATCH_COPY), which the island must decode in
+    Python byte-for-byte rather than punting to the interpreter (the logo-draw
+    fix)."""
+    CALLS, BUDGET = 130, 8_000_000
     plain = _capture_unpack_output(False, CALLS, BUDGET)
     island = _capture_unpack_output(True, CALLS, BUDGET)
     assert len(plain) >= CALLS, f"only {len(plain)} _Unpack calls captured"
@@ -161,6 +167,13 @@ def test_unpack_island_is_byte_exact_vs_asm():
     for i, (p, k) in enumerate(zip(plain, island)):
         assert k[0] == p[0], f"call {i}: island output differs ({len(k[0])} vs {len(p[0])} bytes)"
         assert k[1] == p[1], f"call {i}: island exit state differs {k[1]} vs {p[1]}"
+    # Prove the resume path is actually covered: some call must both RESUME
+    # (enter with a non-zero code) and STOP mid-match — else this test would
+    # silently stop guarding the fix.
+    from simant.recovered import lzss
+    entry_codes = {p[1][6] for p in plain}            # B7D4 resume code at exit
+    assert lzss.CODE_MATCH_COPY in entry_codes, (
+        f"resume path not exercised (exit codes seen: {sorted(entry_codes)})")
 
 
 def test_install_refuses_wrong_code():
