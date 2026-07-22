@@ -1,5 +1,37 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.273) — AUDIT: silently-interpreted-despite-native + the 3.0 hooking coverage of the hand-recovered corpus
+- **Owner asked: any other cases like the _Unpack punt (native exists but
+  interpreted runs), and is the hand recovery correctly hooked after 3.0?**
+  Systematic audit — findings:
+- **(1) Punts — only _Unpack.**  Grepped every island for a
+  fall-back-to-interpreter path; `_Unpack`'s resume punt was the only one
+  (fixed cont.272).  All 69 islands are clean adapters that fully replace
+  their routine; the install-count + plan-binding invariants (69) are pinned
+  by test_hooks + test_execution_catalog.  Stale `_Unpack` comment corrected.
+- **(2) The recovered corpus is 310 functions; only 61 are islanded → 249 are
+  NOT hooked in DEVELOPMENT (interpreted) mode** (they run interpreted despite
+  a proven byte-exact `simant/recovered/` impl).  BUT hooking them is not a
+  quick wire-up: only **3** have a fully-clean scalar contract; **222 need
+  bridge-VIEW binding** (DGROUP/SIMANT_DATA_GROUP/PACK) and **175 call other
+  recovered functions** — the infrastructure the 69 hand-islands and the
+  detached graph's `adaptgen` adapters build per-entry.  A generic
+  view-aware + recovered-call-dispatch interpreted adapter is the systemic
+  fix (task filed).
+- **(3) Where the interpreter time ACTUALLY is (IR-exact profiles):**
+  recovered-but-not-hooked is only **0–4.3%** of every profiled workload
+  (nest-view 4.3%, logo 0.1%, boot/menu 0%).  The hot interpreter time is
+  either ALREADY islanded (e.g. __aFuldiv 25%, _win_IsWinOpen 9% at boot) or
+  **UN-recovered** (internal_6250 8.5%, _GBoxFill 5.9%, _DoBitmap/_DoMonoBitmap
+  8.6%, _font_MakeImage 3.5%, the wait loops).  So the dominant perf lever is
+  NEW recovery of hot draw code, not wiring the (mostly cold) unhooked corpus.
+- **Honest conclusion:** the "silently interpreted despite native" class had
+  exactly one real instance (_Unpack, fixed).  The 249 unhooked recovered
+  functions are a real completeness gap (worth closing with a generic
+  interpreted adapter, and it would help simulation-heavy play), but they are
+  NOT the current perf bottleneck — that is the un-recovered render hot path.
+
+
 ## 2026-07-22 (cont.272) — the slow LOGO DRAWING fixed: the _Unpack island now decodes stream RESUMES natively instead of punting to the interpreter
 - **Owner recorded the slow logo (`session_221404`) — it replayed cleanly
   (the cont.270 recorder fix works: 69 islands, faithful).** Profiled it:

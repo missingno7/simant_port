@@ -96,11 +96,13 @@ def _make_uldiv_island(entry_off: int):
 # native port calls it directly).  This island is a thin ADAPTER: it reads the
 # routine's state from the DGROUP globals + stack, drives `lzss.decode_chunk`
 # over memoryviews straight into VM memory, and writes back the exact ABI exit
-# state — gated byte-exact against the ASM by simant/tests/test_hooks.py.  On a
-# mid-operation resume (entry [B7D4] != 0) it passes through to the real routine
-# (keeps the delicate two-sided-streaming resume path authoritative).  Exit
-# codes written to [B7D4] mirror the ASM's own resume re-entry codes (see
-# lzss.CODE_*): 0 clean, 1-4 input-exhaust points, 5 mid-match.
+# state — gated byte-exact against the ASM by simant/tests/test_hooks.py.  A
+# mid-operation RESUME (entry [B7D4] != 0) is decoded natively too: the saved
+# resume code + match_rem are passed into decode_chunk, which re-enters at the
+# ASM's own [B7D4] dispatch point (430E:A692) — so a budget-chunked decode (the
+# logo) never falls back to the interpreter for its continuations.  Exit codes
+# written to [B7D4] mirror the ASM's resume re-entry codes (see lzss.CODE_*):
+# 0 clean, 1-4 input-exhaust points, 5 mid-match.
 UNPACK_SEG_INDEX = 7
 UNPACK_OFF = 0xA668
 UNPACK_SIG = bytes.fromhex("558bec83ec045756")   # push bp;mov bp,sp;sub sp,4;push di;push si
