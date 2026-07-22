@@ -1218,10 +1218,21 @@ class PlayApp:
         # reads sys.machine on the hot path (GetAsyncKeyState etc.), so an
         # unparked capture races it and crashes with 'NoneType has no api'.
         # take_snapshot uses the same pause/resume discipline.
-        if not self.driver.pause_at_boundary():
+        #
+        # The park must land at a RESUMABLE boundary: a chunk boundary reached
+        # via call_far can sit inside a nested callback whose API has
+        # Python-side post-work (UpdateWindow's WM_PAINT — the slow-drawing
+        # workload), and a base captured there fails deep into replay
+        # (OrphanReturnError).  Gate on the callback stack being resumable so
+        # the park waits for the next top-level / resumable boundary.
+        from win16.callback import callback_stack_resumable
+        cpu = self.machine.cpu
+        if not self.driver.pause_at_boundary(
+                ready=lambda: callback_stack_resumable(cpu)):
             print("[play] recording NOT started: the CPU did not reach a "
-                  "quiescent boundary (a modal dialog/box is open, or the VM "
-                  "halted)", file=sys.stderr)
+                  "quiescent RESUMABLE boundary within the timeout (a modal "
+                  "dialog/box is open, the VM halted, or it is stuck in a "
+                  "non-resumable paint)", file=sys.stderr)
             return
         try:
             stamp = time.strftime("%H%M%S")
