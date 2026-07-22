@@ -1,5 +1,31 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.259) — Phase 2 substantively done: the Atlas carries REPLAY evidence — 597 visited functions + 115 observed dispatch edges from the oracle artifact, joined to the static graph by identity construction
+- **Regenerated `recovery_ir.json`** under the 3.0 facts key
+  (`environment_wait_entries`): same 1904 functions, same single honest
+  refusal (`_DoInt3` grp5 invalid).  Rebuilt `artifacts/atlas` from it.
+- **`win16/evidence.py` (win16_re aae6154):** a coverage-telemetry probe over
+  an interpreted oracle replay — function-entry visits (entry-only, honestly
+  `incomplete`, TRUE invocation counts + first-entry replay point) and
+  observed dynamic-dispatch transfers (interpreted next-instruction binds a
+  guest target; a hook dispatch binds the API thunk BY NAME — the entry_probe
+  both-halves rule).  `finish()` emits identity keys that join the static
+  import by construction: sources = the unresolved `call_ind`/`jmp_ind`
+  sites' ExecutionPointIdentity, guest targets = FunctionIdentity, thunk
+  targets = the `platform-effect` BoundaryIdentity.
+- **Run + ingested:** `replay_artifact.py --evidence` over the cold_nohooks
+  artifact (digest still `bcfaad65...` — the probe is observation-only), then
+  `atlas.py ingest-replay`: **597 visited functions (the known closure
+  EXACTLY), 5,543,352 invocations, 115 observed edges / 28,814 transfers,
+  corpus delta +11 nodes +115 edges**; `validate` clean.  `best_replay` now
+  answers per-function: e.g. `_DoCalcTile` inv 536,464, first reached at
+  timeline ordinal 668; `_RestartSimulation` honestly uncovered (never ran
+  in that session).  NOTE: upstream tools/atlas.py `best-replay` does not
+  label-resolve (callers does) — pass the full identity, or fix upstream.
+- **Remaining in #66:** simant/facts -> `ingest-facts` JSON conversion
+  (mechanism identical, small tool).  Then Phase 3 (catalog + planner + ONE
+  player) is next — see cont.258's plan.
+
 ## 2026-07-22 (cont.258) — the dos_re 3.0 migration begins: seam ported and gate-verified, tick demos retired, the gate demo lives byte-identically as a ReplayArtifact, and SIMANTW projects into an Execution Atlas with ZERO new code
 - **The owner's directive: migrate `win16_re` + `simant_port` to the dos_re 3.0
   paradigm** — not a dependency bump; the full concept transfer (evidence
