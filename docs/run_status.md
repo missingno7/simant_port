@@ -1,5 +1,49 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.268) — the switch-dispatch frontier CLOSED statically: dos_re gains a bounded jump-table reader; SIMANTW coverage 1044→1525; the caste/behaviour sessions ingested
+- **Owner recorded two more sessions** (`session_170643` caste control,
+  `session_170653` behaviour control) — replayed faithfully under the hooks-on
+  composition (808/808, 1403/1403 arrivals), ingested as cited manual facts.
+  They fired `_ProcCasteEvent`'s + `_ProcModeEvent`'s switch arms and
+  re-confirmed the single-WndProc architecture (4 sessions total now).
+- **The big one (stress-test lens → missing dos_re capability, fixed
+  upstream):** investigating those switches showed the whole `jmp_ind`
+  frontier is mostly the MSC BOUNDED CS-RELATIVE jump-table idiom
+  (`cmp ax,N; jbe/ja; shl ax,1; xchg; jmp cs:[bx+TABLE]`) — statically
+  readable from the image, contrary to `dos_re.lift.dispatch`'s "unresolvable
+  statically" position.  New `static_switch_targets` in dos_re (strict,
+  refuse-on-doubt), wired through `irgen_core` (annotates each site with
+  `static_targets`/`static_table`) and the Atlas importer (resolved site→arm
+  edges).  On SIMANTW: **106 of 130 `jmp_ind` sites resolve, 632 resolved arm
+  edges, `jmp_ind` unresolved 130→24** (21 CRT dispatchers + the 3 below),
+  and **development coverage 1044→1525 reachable** (+481 functions proven
+  reachable through the resolved dispatch — `MAINWNDPROC`'s message switch,
+  `_win_DrawObjectI`'s object switch, the caste/mode event switches).
+- **Soundness catch (the census closure worked as defense-in-depth):** the
+  first reader over-read `_GBoxFill`/`_GPatBox`/`_CreateMonoSolidBrush` — a
+  DIFFERENT idiom (`and ax,70h; shr ax,3; cmp; ja; jmp cs:[bx+T]`) bounds an
+  ALREADY-SCALED byte offset, so bound+1 words walked past the real 7-entry
+  table into code bytes (phantom `case_006A` refused to decode → loud).  The
+  post-guard `shl` is now REQUIRED (it proves the bound counts entries);
+  those 3 ROP-dispatch sites stay an honest dynamic frontier, pinned by a
+  dos_re regression test + `simant/tests/test_static_dispatch.py`.
+- **Cross-validation everywhere:** every replay-OBSERVED arm must lie inside
+  its site's static table — enforced fail-loud in `scripts/atlas_build.py`
+  (99/99 confirmed) and pinned as a test.  `scripts/irgen.py`'s census now
+  closes over static arms mechanically (no facts file; 0 new entries needed —
+  the 2.0 observed dispatch facts had already enumerated all 526 arms, which
+  the static reader now proves complete).
+- **Corrected map fact (docs/rendering_map.md §4):** the object-window
+  EVENT/scroll path (`_win_GetEvent`/`_ScrollEditWindow`) contains NO
+  `jmp_ind` — it dispatches far-indirect through the seg-0060 gateway
+  (`window_records` far pointers), i.e. task #60's far-call frontier, not the
+  switch frontier.  Next presentation step: resolve those far pointers
+  (targeted quick-game/Black-Nest sessions per the owner's priority, or
+  static extraction of `_win_Open` caller arguments).
+- Suites: dos_re 1291 (+6 new), win16_re 433, simant green incl. the new
+  static-dispatch pins.
+
+
 ## 2026-07-22 (cont.267) — F11 recording crash fixed: the 3.0 recorder dropped the CPU-park before capturing the base continuation (a race), + the rendering-subsystem map from Atlas evidence
 - **Owner hit a freeze recording a rendering session** (`play.py`, F11):
   `AttributeError: 'NoneType' object has no attribute 'api'` in

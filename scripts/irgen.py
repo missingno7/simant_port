@@ -140,23 +140,27 @@ def add_dispatch_entries(entries, names, segs) -> int:
 
 
 def close_static_call_targets(machine, entries, names, segs,
-                              build) -> int:
-    """Static-call census closure: fixpoint over near/far CALL targets that
-    land inside the code segments but are not census entries yet (the
-    CRT-internal labels).  ``build`` runs a STATIC-only build_ir over the
-    current entry list; discovered targets join the census as
-    ``internal_<OFF>`` and the scan repeats until no new target appears.
-    Mechanically derived — no fact file (docs/dos_re_2.0.md: facts are only
-    for what tooling cannot derive)."""
+                              build) -> tuple[int, int]:
+    """Static census closure: fixpoint over (a) near/far CALL targets and
+    (b) statically-read SWITCH-TABLE arms (the irgen ``static_targets``
+    annotation — dos_re.lift.dispatch.static_switch_targets) that land inside
+    the code segments but are not census entries yet.  ``build`` runs a
+    STATIC-only build_ir over the current entry list; discovered call targets
+    join as ``internal_<OFF>``, switch arms as ``case_<OFF>`` (the same
+    identity the observed dispatch facts use), and the scan repeats until no
+    new address appears.  Mechanically derived — no fact file
+    (docs/dos_re_2.0.md: facts are only for what tooling cannot derive).
+    Returns ``(n_internal, n_static_case)``."""
     seg_of_para = {machine.seg_bases[i]: i
                    for i in range(1, len(machine.seg_bases))
                    if machine.seg_bases[i]}
     mod_of = _module_of_seg()
     known = set(names)
-    total = 0
+    n_internal = n_case = 0
     while True:
         doc = build(entries)
         missing: set[tuple[int, int]] = set()
+        missing_arms: set[tuple[int, int]] = set()
         for entry, rec in doc["functions"].items():
             if not rec.get("liftable"):
                 continue                      # refused scans carry no reliable edges
@@ -173,15 +177,28 @@ def close_static_call_targets(machine, entries, names, segs,
                 pair = (far_seg, int(off_hex, 16))
                 if pair[0] in segs and pair not in known:
                     missing.add(pair)
-        if not missing:
-            return total
+            for block in rec.get("blocks", ()):
+                for ins in block["instructions"]:
+                    for tgt in ins.get("static_targets", ()):
+                        pair = (ne_seg, int(tgt, 16))
+                        if pair[0] in segs and pair not in known:
+                            missing_arms.add(pair)
+        if not missing and not missing_arms:
+            return n_internal, n_case
         for seg, off in sorted(missing):
             entries.append((seg, off))
             names[(seg, off)] = {"symbol": f"internal_{off:04X}",
                                  "module": mod_of[seg],
                                  "entry_origin": "static-call-closure"}
             known.add((seg, off))
-            total += 1
+            n_internal += 1
+        for seg, off in sorted(missing_arms - missing):
+            entries.append((seg, off))
+            names[(seg, off)] = {"symbol": f"case_{off:04X}",
+                                 "module": mod_of[seg],
+                                 "entry_origin": "static-switch-table"}
+            known.add((seg, off))
+            n_case += 1
 
 
 def main(argv=None) -> int:
@@ -225,7 +242,7 @@ def main(argv=None) -> int:
 
     t0 = time.perf_counter()
     n_dispatch = add_dispatch_entries(entries, names, segs)
-    n_internal = close_static_call_targets(
+    n_internal, n_static_case = close_static_call_targets(
         machine, entries, names, segs,
         build=lambda ents: build_ir(machine, ents, machine_factory=None,
                                     names=names, **sym_kw))
@@ -243,6 +260,7 @@ def main(argv=None) -> int:
     n_unsupported_fns = len({u["entry"] for u in unsupported})
     print(f"recovery IR v{doc['ir_version']}: {n_syms} SYM entries "
           f"+ {n_dispatch} dispatch-fact case entries "
+          f"+ {n_static_case} static-switch-table case entries "
           f"+ {n_internal} static-call-closure entries -> "
           f"{len(functions)} functions ({n_liftable} liftable, "
           f"{n_unsupported_fns} unsupported over {len(unsupported)} refusal "

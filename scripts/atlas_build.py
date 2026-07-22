@@ -134,6 +134,37 @@ def main() -> int:
         print(f"[atlas] observed-point containment: {len(edges)} point(s) "
               f"attributed to their IR functions")
 
+    # Cross-check: STATIC switch tables vs OBSERVED dispatch.  Every arm a
+    # replay ever observed at a statically-annotated jmp_ind site must lie
+    # inside that site's statically-read table — a contradiction means either
+    # the table reader or the evidence probe is wrong, and the Atlas must not
+    # be built on top of it.  (Fail loud, never fake.)
+    from urllib.parse import unquote as _unq
+    static_by_site: dict[str, set[str]] = {}
+    for key, fn in ir["functions"].items():
+        cs = key.split(":")[0].upper()
+        for blk in fn.get("blocks", ()):
+            for ins in blk["instructions"]:
+                if ins.get("static_targets"):
+                    static_by_site[f"{cs}:{ins['ip'].upper()}"] = {
+                        t.upper() for t in ins["static_targets"]}
+    checked = 0
+    for edge in atlas.edges():
+        if edge.kind != "jmp_ind" or edge.status != "observed":
+            continue
+        s_addr = _unq(edge.source.rsplit(":", 1)[-1]).upper()
+        arms = static_by_site.get(s_addr)
+        if arms is None:
+            continue
+        t_ip = _unq(edge.target.rsplit(":", 1)[-1]).upper().split(":")[-1]
+        if t_ip not in arms:
+            raise SystemExit(
+                f"[atlas] static/observed CONTRADICTION at {s_addr}: observed "
+                f"arm {t_ip} is not in the statically-read table {sorted(arms)}")
+        checked += 1
+    print(f"[atlas] static-table cross-check: {checked} observed arm(s) "
+          f"confirmed inside their static tables")
+
     # Roots: the NE entry plus every observed callback entry.  A Win16
     # program is message-driven — its WndProcs are entry points the OS calls;
     # conservative coverage without them cannot reach anything dispatched

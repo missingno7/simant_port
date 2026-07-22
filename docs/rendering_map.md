@@ -82,14 +82,32 @@ natural seam for hi-res / smooth presentation.  Similarly
 `_win_DrawEditWindow → _DrawEditGraphs`, and `_UpdateEdit → _ScrollEditArrays,
 _DrawEditGraphs` (the last two resolved by the menu session, §6).
 
-What is NOT yet resolved is the object-window **event/scroll dispatch**, not
-the draw dispatch: `_win_GetEvent` and `_ScrollEditWindow` tail through an
-indirect jump (`jmp_ind` at e.g. `430E:B7B6`) into a per-window event routine
-(`window_records` is `FarPtr[256]` @ `0xCE9A` — each object carries its
-draw/event routine).  **240 indirect dispatch edges remain unresolved**
-across the binary; resolving the presentation ones is the far-call-evidence
-widening (task #60) applied here, needing sessions that drive each window
-type's event path.  The DRAW side, though, is already legible.
+The **switch dispatch is now STATICALLY RESOLVED**: the bounded cs-relative
+jump tables (the MSC `cmp/jbe/shl/xchg/jmp cs:[bx+T]` idiom) are read
+directly from the code segments by `dos_re.lift.dispatch
+.static_switch_targets` (irgen annotates each site with its arm set; the
+Atlas imports them as resolved edges).  106 of 130 `jmp_ind` sites resolve
+this way — 632 resolved arm edges, every one of the 99 replay-observed arms
+confirmed inside its static table (the atlas_build cross-check).  That
+includes `_win_DrawObjectI`'s object switch, `MAINWNDPROC`'s message switch,
+and `_ProcCasteEvent`/`_ProcModeEvent` (whose arms the caste/behaviour
+sessions had just confirmed dynamically).  The only unresolved GAME `jmp_ind`
+sites left are the three pre-scaled **ROP dispatchers**
+(`_CreateMonoSolidBrush`/`_GBoxFill`/`_GPatBox`: `and ax,70h; shr ax,3;
+cmp; ja; jmp cs:[bx+T]` — the bound is a byte offset, refused by design);
+the rest are C-runtime dispatchers in seg `275F`.
+
+What remains genuinely DYNAMIC is the object-window **event/scroll path**:
+`_win_GetEvent` and `_ScrollEditWindow` contain no `jmp_ind` at all — they
+reach the per-window event routine through **far-indirect calls via the
+seg-`0060` platform gateway** (`window_records` is `FarPtr[256]` @ `0xCE9A`;
+each object carries its draw/event routine as a runtime-stored far pointer).
+That is the far-call-evidence frontier (task #60): 940 `call-far` frontier
+edges + 110 `call_ind` sites (the sound-driver pointers, the FileSelect
+dialog cases, `_win_DrawWindow`'s two draw-pointer sites, CRT).  Resolving
+the presentation slice needs sessions that drive each window type's event
+path — or the static extraction of the far-pointer arguments callers pass to
+`_win_Open`.
 
 ## 5. The drawing categories (static-reachable / observed)
 
@@ -113,23 +131,28 @@ big gaps are `gdi-object` (31 unobserved) and `invalidation`/`window-geom`
 
 ## 6. Evidence base + next steps
 
-Two independent sessions are ingested: `cold_nohooks` (oracle, quick-play,
-199M instr, 597 fns) and `session_165418` (a candidate menu session recorded
-with hooks on — the owner interacting with windows, 91M instr, 472 fns, ingested
-as CITED manual facts via `replay_artifact.py --hooks --evidence-out` +
-`atlas_build.py --render-evidence`, because a candidate capture is not
-oracle-trusted but its observed transfers are real evidence).  Together:
-development coverage 1036 reachable; the menu session added the edit-window
-draw edges and CONFIRMED — across two independent sessions — that only two
-guest procedures are ever dispatched (`MAINWNDPROC`, `MYTIMERFUNC`): SimAnt's
-single-WndProc architecture is now evidence-backed, not assumed.
+Four independent sessions are ingested: `cold_nohooks` (oracle, quick-play,
+199M instr, 597 fns) plus three candidate sessions recorded with hooks on
+(`session_165418` menus/windows 91M instr 472 fns, `session_170643` caste
+control 33M instr 213 fns, `session_170653` behaviour control 56M instr
+220 fns — ingested as CITED manual facts via `replay_artifact.py --hooks
+--evidence-out` + `atlas_build.py --render-evidence`, because a candidate
+capture is not oracle-trusted but its observed transfers are real evidence).
+The caste/behaviour sessions fired `_ProcCasteEvent`'s and `_ProcModeEvent`'s
+switch arms; ALL FOUR sessions dispatch only `MAINWNDPROC` + `MYTIMERFUNC` —
+the single-WndProc architecture is thoroughly evidence-backed.  With the
+static switch tables (§4) the development coverage is **1525 reachable**
+(was 1036 on observation alone: +481 functions proven reachable through the
+statically-resolved dispatch).
 
 Next:
 
-1. **Resolve the event/scroll dispatch (§4)**: record sessions that drive each
-   window type's event path (scroll the edit/map view, open the nest/lab
-   views, use the caste/mode windows) so the `jmp_ind` object-window event
-   routines resolve — the presentation slice of task #60.
+1. **Resolve the event/scroll far-pointer dispatch (§4)**: the per-window
+   event routines are far pointers in `window_records`, reached through the
+   seg-`0060` gateway — either targeted sessions driving each window type
+   (the owner's quick-game / Black Nest View priority), or static extraction
+   of the far-pointer arguments callers pass to `_win_Open` (task #60's
+   presentation slice).
 2. **Hook at the stable DRAW boundaries the map already identifies** — the
    fast bitmap blitters (`_DoFastBitmap`/`_DoFastMonoBitmap`) are the map's
    hot path and the seam for hi-res/smooth presentation; `_GBoxFill`/
