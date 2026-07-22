@@ -1212,8 +1212,22 @@ class PlayApp:
         if self.recorder is not None:
             self._stop_recording()
             return
-        stamp = time.strftime("%H%M%S")
-        self.recorder = self._start_recording(f"session_{stamp}")
+        # PARK THE CPU before capturing the base continuation.  The base
+        # capture pickles the OS object graph, which momentarily detaches
+        # sysobj.machine (win16.vmsnap.pickle_system); the running CPU thread
+        # reads sys.machine on the hot path (GetAsyncKeyState etc.), so an
+        # unparked capture races it and crashes with 'NoneType has no api'.
+        # take_snapshot uses the same pause/resume discipline.
+        if not self.driver.pause_at_boundary():
+            print("[play] recording NOT started: the CPU did not reach a "
+                  "quiescent boundary (a modal dialog/box is open, or the VM "
+                  "halted)", file=sys.stderr)
+            return
+        try:
+            stamp = time.strftime("%H%M%S")
+            self.recorder = self._start_recording(f"session_{stamp}")
+        finally:
+            self.driver.resume()
 
     # -- screenshots (F10) ---------------------------------------------------------
     def take_screenshot(self) -> None:

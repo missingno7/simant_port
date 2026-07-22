@@ -1,5 +1,38 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.267) — F11 recording crash fixed: the 3.0 recorder dropped the CPU-park before capturing the base continuation (a race), + the rendering-subsystem map from Atlas evidence
+- **Owner hit a freeze recording a rendering session** (`play.py`, F11):
+  `AttributeError: 'NoneType' object has no attribute 'api'` in
+  `GetAsyncKeyState` (`sys.machine` is None), deep inside a live callback.
+  **Root cause (a regression I introduced at cont.264):** the new
+  `toggle_demo_record` captures the base continuation, which pickles the OS
+  graph via `win16.vmsnap.pickle_system` — momentarily nulling
+  `sysobj.machine` — WITHOUT parking the CPU thread first.  The running CPU
+  thread reads `sys.machine` on the hot path (GetAsyncKeyState etc.), so it
+  raced the detach window and crashed.  The old F11 path parked the CPU
+  (via the anchor `take_snapshot`); the 3.0 recorder rewrite dropped that.
+  The "0 events" was just the immediate crash.  **Fix:** `toggle_demo_record`
+  now `pause_at_boundary()` → capture → `resume()`, mirroring `take_snapshot`
+  exactly.  (`--record` from launch was already safe: it captures before the
+  worker thread starts.)
+- **Framework verdict (stress-test lens):** NOT a win16 flaw — the framework
+  was correctly fail-loud (a crash beats a silently torn snapshot from an
+  unparked capture).  The bug was caller discipline in play.py.
+  win16_re 68eca0a adds `test_vmsnap_contract.py` pinning the detach/restore
+  invariant the fix relies on.
+- **Rendering-subsystem MAP shipped (the phase's first deliverable),** all
+  evidence-based from the Execution Atlas — `scripts/render_map.py` +
+  `docs/rendering_map.md` (see that doc).  Headline findings: the Win16 API
+  boundary is NARROW (only 2 guest procs dispatched: `MAINWNDPROC`,
+  `MYTIMERFUNC`); SimAnt has its OWN object-window system (`_win_*`, seg 430E)
+  over the graphics primitives (seg 0E99: `_G*`/`_Do*Bitmap`/`_PaintStuff`)
+  and scene drawers (seg 18C0: `_DrawMap`/`_DrawYard`/`_ScrollEditWindow`);
+  the object-window draw dispatch is INDIRECT (per-window pointer in
+  `window_records`), so the map→drawer edges resolve only from replay
+  evidence (140 static rendering producers, 62 observed).  Next: a wider
+  rendering recording resolves them.
+- Suites: win16_re 433, simant 2329.
+
 ## 2026-07-22 (cont.266) — step 1 DONE: the dos_re CPUless emitter now routes internal calls through the plan override registry (upstreamed, regression-tested); the 273-module duplication is now fixable
 - **The fix, in dos_re (main 9d30fac; win16_re d6aeae9):**
   `emit_cpuless.py` bound internal callees by direct import from ONE corpus
