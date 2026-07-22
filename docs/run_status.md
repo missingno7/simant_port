@@ -1,5 +1,43 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.264) — Phase 5a: interactive recording writes ReplayArtifacts, and the win16 architecture-contract test lands
+- **Interactive recording is 3.0-native.**  `play.py --record NAME` / F11 now
+  write a **ReplayArtifact** directory (`artifacts/replays/NAME`) via the new
+  `win16.replay.ArtifactRecorder` — the interactive tap surface the driver +
+  dialog/message engines already call (arrival/clock_sample/dialog_event/
+  messagebox_result/quit) is unchanged, so only the recorder object swapped.
+  `simant.execution.artifact_recorder(machine, out, role=...)` captures the
+  base continuation + composition profile at record start (`--no-hooks` ⇒
+  oracle capture, else candidate).  The v4 `DemoRecorder` is no longer wired
+  anywhere.  Verified headless: recording from a real machine writes a
+  reopenable, replayable artifact (record↔replay round-trip pinned in
+  win16_re).
+- **`win16_re/tests/test_architecture_contract.py`** — the Win16 analogue of
+  dos_re's own guard: retired tick-demo paths + tokens stay gone, the
+  replay/continuation/driver layers stay acyclic, the CPU-free wall holds
+  (machine.py/cpuless.py must not import dos_re.cpu), the ReplayDriver keeps
+  its projection contract.  (Single-player + legacy-CLI-token guards belong
+  in THIS repo, where the scripts live — a simant architecture-contract test
+  is Phase 5b once the removals below land.)
+- **Deliberately NOT rushed — Phase 5b (the removals).**  The v4 READER
+  (`win16.demo.DemoDriver`) is still load-bearing for the byte-exact analysis
+  tools: `checkpoints.py`, `liftverify.py`, `verifyislands.py`,
+  `adaptverify.py`, `capture_ab.py`, and `replay.py`'s development path.
+  `Win16ReplayInputDriver` has the SAME interface (install/pump_get/pump_peek/
+  next_dialog_event/next_messagebox_result/tick_at), so each migrates
+  mechanically — but each is a byte-exact verifier that must be gate-verified
+  individually, not mass-deleted.  Likewise `play_vmless.py`/`play_cpuless.py`
+  are subsumed by `play.py --profile` but have real consumers
+  (deploy_vmless smoke, lint_vmless_independence, several tests) whose
+  migration is per-consumer.  checkpoints.py → verify_replay.py and
+  entry_probe.py → replay_artifact.py --evidence are already fully replaced;
+  they get DELETED in 5b with their test references updated.
+- Suites: win16_re 429, simant 2325.  **Next (5b):** migrate the byte-exact
+  analysis scripts to `input_driver_for(ReplayArtifact)`, delete the fully-
+  replaced tools + the v4 demo.py, retire play_vmless/play_cpuless, add the
+  simant architecture-contract test (single player, no legacy tokens), then
+  the docs rewrite and Phase 6 workflow validation + final report.
+
 ## 2026-07-22 (cont.263) — Phase 4: verify_interval proves the interpreted ORACLE ≡ the detached CANDIDATE over the whole gate replay (equivalent=True, one CanonicalState digest)
 - **The decisive 3.0 verification result.**  `scripts/verify_replay.py
   artifacts/replays/cold_nohooks` runs `dos_re.replay.verify_interval` over

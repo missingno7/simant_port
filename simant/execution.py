@@ -409,6 +409,43 @@ def detached_plan(machine, *, graph_dir: Path = VMLESS_GRAPH_DIR,
         coverage, catalog)
 
 
+def artifact_recorder(machine, out_dir, *, role="candidate", plan=None):
+    """Build an interactive ReplayArtifact recorder for a running machine.
+
+    The base continuation + the execution profile are captured HERE (the
+    machine state and composition at record start); the returned recorder's
+    tap surface (arrival/clock_sample/dialog_event/messagebox_result/quit)
+    is what the interactive driver + dialog/message engines already call.
+    ``role`` is an operator claim: ``oracle`` only for the untouched
+    interpreter (--no-hooks), else ``candidate`` (earns trust via verify).
+    """
+    from win16.continuation import CONTINUATION_SCHEMA, capture_continuation
+    from win16.replay import ArtifactRecorder
+    from win16.replay_driver import PROJECTION_SCHEMA
+    from dos_re.replay import ReplayExecutionIdentity
+
+    comp = "interpreted-cpu:no-hooks" if role == "oracle" else (
+        f"composition:{plan.plan_digest[:16]}" if plan is not None
+        else "interpreted-cpu:recorded")
+    profile = ReplayExecutionIdentity(
+        profile_id=f"win16-{role}-{Path(out_dir).name}",
+        role=role,
+        implementation=comp,
+        image=str(image_identity()),
+        runtime="win16-re",
+        devices="win16-api-surface",
+        continuation_schema=CONTINUATION_SCHEMA,
+        projection_schema=PROJECTION_SCHEMA,
+    )
+    start_instr = machine.cpu.instruction_count
+    base = capture_continuation(machine, event_cursor=0,
+                               note=f"interactive record start @{start_instr}")
+    return ArtifactRecorder(
+        out_dir, timeline_id=f"win16:{Path(out_dir).name}",
+        profile=profile, base_state=base, start_instruction=start_instr,
+        metadata={"recorded_role": role, "composition": comp})
+
+
 def boot_detached(boot_dir=None, *, graph_dir=None, game_root=None):
     """The detached composition, constructed the one canonical way: state-only
     boot-image load (inside the caller's EXE-access guard), the deterministic

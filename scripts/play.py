@@ -47,7 +47,7 @@ from PIL import Image, ImageTk
 # machine), and it ships in the standalone deploy (scripts/deploy_vmless.py)
 # where the NE-loader edge (simant.runtime / win16.app) does not exist.
 # Those are imported function-locally in the branches that boot from the EXE.
-from simant.vmless_boot import GAME_NAME, boundary_park_kinds, demo_out_path
+from simant.vmless_boot import GAME_NAME, boundary_park_kinds
 from win16.api.core import Win16ApiGap
 from win16.api.objects import Window
 from win16.api.system import Win16System
@@ -1030,18 +1030,12 @@ class PlayApp:
         self.crashed = False        # a VM stop (not a clean exit) happened
         self.snapshot_on_box = snapshot_on_box and snapshot_on_box.lower()
         self.recorder = None
+        # An interactive recording is an ORACLE capture only when the pure
+        # interpreter runs (--no-hooks); with islands or a detached graph
+        # bound it is a CANDIDATE capture that earns trust via verify later.
+        self._record_role = "oracle" if not hooks else "candidate"
         if record:
-            from win16.demo import DemoRecorder
-            # Anchor the demo to the resumed snapshot (if any) so replay.py
-            # can demand the same starting state — the bug-repro workflow.
-            anchor = Path(resume).name if resume else None
-            out = demo_out_path(record)
-            self.recorder = DemoRecorder(
-                out, self.machine.exe.path.name, snapshot=anchor,
-                instruction=self.machine.cpu.instruction_count)
-            self.machine.api.services["demo_recorder"] = self.recorder
-            print(f"[play] recording demo to {out}"
-                  + (f" (anchored to {anchor})" if anchor else ""), flush=True)
+            self.recorder = self._start_recording(record)
 
         # Host audio: square-wave synthesis of the SOUND.DRV voice stream, plus
         # the real MIDI soundtrack (the game's sound\*.mid via MMSYSTEM MCI).
@@ -1188,39 +1182,38 @@ class PlayApp:
         finally:
             self.driver.resume()
 
-    # -- demo recording (F11 toggle; --record-demo records from launch) ------------
+    # -- replay recording (F11 toggle; --record records from launch) ---------------
+    def _start_recording(self, name):
+        """Begin a ReplayArtifact recording of THIS session (dos_re 3.0).  The
+        base continuation + composition profile are captured now; the artifact
+        directory is written on close.  Returns the recorder."""
+        from simant.execution import artifact_recorder
+        out = Path("artifacts") / "replays" / str(name)
+        if out.exists():
+            import shutil
+            shutil.rmtree(out)
+        rec = artifact_recorder(self.machine, out, role=self._record_role)
+        self.machine.api.services["demo_recorder"] = rec
+        print(f"[play] recording {self._record_role} replay to {out}",
+              flush=True)
+        return rec
+
+    def _stop_recording(self) -> None:
+        self.machine.api.services.pop("demo_recorder", None)
+        artifact = self.recorder.close()
+        print(f"[play] replay saved: {self.recorder.path} "
+              f"({self.recorder.records} events)", flush=True)
+        print(f"[play] replay it:  python scripts/replay_artifact.py "
+              f"{self.recorder.path}", flush=True)
+        self.recorder = None
+
     def toggle_demo_record(self) -> None:
-        """Start/stop demo recording mid-session.  Starting one first saves an
-        anchor snapshot, so the demo is replayable out of the box:
-        replay.py <demo> --from-snapshot <anchor>."""
-        from win16.demo import DemoRecorder
+        """Start/stop replay recording mid-session (F11)."""
         if self.recorder is not None:
-            self.machine.api.services.pop("demo_recorder", None)
-            self.recorder.close()
-            print(f"[play] demo saved: {self.recorder.path} "
-                  f"({self.recorder.records} records)", flush=True)
-            print(f"[play] replay it:  python scripts/replay.py "
-                  f"{self.recorder.path}"
-                  + (f" --from-snapshot artifacts/snapshots/"
-                     f"{self.recorder.snapshot}" if self.recorder.snapshot
-                     else ""),
-                  flush=True)
-            self.recorder = None
-            return
-        anchor = self.take_snapshot(note="F11 demo-record anchor")
-        if anchor is None:
-            print("[play] demo recording NOT started (no anchor snapshot)",
-                  file=sys.stderr)
+            self._stop_recording()
             return
         stamp = time.strftime("%H%M%S")
-        out = Path("artifacts") / "demos" / f"demo_{stamp}.jsonl"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        self.recorder = DemoRecorder(
-            out, self.machine.exe.path.name, snapshot=anchor.name,
-            instruction=self.machine.cpu.instruction_count)
-        self.machine.api.services["demo_recorder"] = self.recorder
-        print(f"[play] recording demo to {out} (anchored to {anchor.name}) — "
-              f"F11 again to stop", flush=True)
+        self.recorder = self._start_recording(f"session_{stamp}")
 
     # -- screenshots (F10) ---------------------------------------------------------
     def take_screenshot(self) -> None:
@@ -1359,10 +1352,7 @@ class PlayApp:
             self.audio.close()
             self.audio = None
         if self.recorder is not None:
-            self.recorder.close()
-            print(f"[play] demo saved: {self.recorder.path} "
-                  f"({self.recorder.records} records)", flush=True)
-            self.recorder = None
+            self._stop_recording()
         # Release a CPU thread parked in a modal MessageBox loop.
         with self._box_lock:
             for box in self._box_reqs:
