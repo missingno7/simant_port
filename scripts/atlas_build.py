@@ -65,6 +65,45 @@ def main() -> int:
               f"{value['observed_edge_count']} observed edges "
               f"(+{len(report.new_node_ids)} nodes)")
 
+    # Containment for observed-only execution points: a replay-observed
+    # dispatch TARGET that is not an IR function entry (a jump-table arm
+    # interior to some function) has no static containment edge, so no
+    # implementation would own it at plan time.  The Recovery IR knows the
+    # exact instruction sets — attribute each such point to the function
+    # whose decoded instructions include its address, as a cited fact.
+    atlas.rematerialize()
+    ir = json.loads(Path(args.ir).read_text(encoding="utf-8"))
+    by_addr: dict[tuple[int, int], str] = {}
+    for key, fn in ir["functions"].items():
+        cs = int(key.split(":")[0], 16)
+        for blk in fn["blocks"]:
+            for i in blk["instructions"]:
+                by_addr[(cs, int(i["ip"], 16))] = key
+    from simant.execution import function_id
+    edges = []
+    for node in atlas.nodes(kind="execution-point"):
+        if not node.metadata.get("observed_only"):
+            continue
+        address = node.identity.rsplit(":", 1)[-1]
+        from urllib.parse import unquote
+        cs, ip = unquote(address).split(":")
+        owner_key = by_addr.get((int(cs, 16), int(ip, 16)))
+        if owner_key is not None:
+            ocs, oip = owner_key.split(":")
+            edges.append({
+                "source": function_id(int(ocs, 16), int(oip, 16)),
+                "target": node.identity, "kind": "contains",
+                "status": "containment"})
+    if edges:
+        atlas.add_manual_facts(
+            "observed-point-containment",
+            provenance={"source": "recovery_ir instruction sets (exact hit)",
+                        "ir_sha256": hashlib.sha256(
+                            Path(args.ir).read_bytes()).hexdigest()},
+            edges=tuple(edges))
+        print(f"[atlas] observed-point containment: {len(edges)} point(s) "
+              f"attributed to their IR functions")
+
     # Roots: the NE entry plus every observed callback entry.  A Win16
     # program is message-driven — its WndProcs are entry points the OS calls;
     # conservative coverage without them cannot reach anything dispatched
