@@ -1,5 +1,40 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-23 (cont.276) — the black-nest BLINK ROOT-CAUSED + fixed (frame-boundary presentation); NOT a cosmetic tkinter issue
+- **Owner: the blink is NOT fixed; investigate the real update path (session_235823).**
+  Instrumented the nest surface (513x277, GenericWindow:0148): per refresh it is
+  touch()ed 11x, and the host presented each intermediate.
+- **ROOT CAUSE (evidence, not cosmetic):** the nest refresh is one WM_PAINT =
+  `BeginPaint -> InvertRect x4 (XOR-erase old highlights) -> FillRect x2 ->
+  SetDIBitsToDevice (blit tiles) -> InvertRect x4 (XOR-draw new highlights) ->
+  EndPaint`.  Every GDI primitive calls Surface.touch() (bumps `version`), and
+  the host presented on `version` — so it showed the half-built, MID-XOR
+  intermediates and the inverted highlight regions FLICKERED.  Only the EndPaint
+  state is a complete frame.  (The cont.275 content-gate couldn't help: the
+  intermediates have genuinely different pixels.)
+- **FIX (win16_re f3cb51f; matches Win16 paint semantics, no suppression):**
+  add `Surface.present_version` that advances ONLY at a frame boundary —
+  touch() bumps it only OUTSIDE a paint session (a direct draw is its own
+  frame); inside BeginPaint..EndPaint the frame publishes once, via
+  end_paint().  compositor.tree_version sums present_version.  `version` (the
+  tearing-avoidance contract) unchanged.  Result: nest presents dropped from
+  ~per-primitive to 48 COMPLETE frames over the replay; the final frame (all
+  highlights present) is what shows -> no blink, nothing missing.
+- **BYTE-EXACT + no regression:** session_235823 replay digest 220c4b29… and
+  instruction count 10,102,976 UNCHANGED (only host present TIMING changed, not
+  pixels) — deterministic replay + headless unaffected.  win16_re 436, simant
+  696 (hooks+parks) green.
+- **Profile (session_235823) for the perf report:** interpreter — internal_6250
+  32.8%, _MapAreaEvent 16.0%, _StillDown 10.5%, internal_16D4 4.3%.  Boundary
+  crossings — 186k total, **~82% are INPUT POLLING** (GetAsyncKeyState 65.9k,
+  SwapMouseButton 43.5k, ScreenToClient 22k, GetCursorPos 21.8k) driven by the
+  _StillDown / _MapAreaEvent mouse-drag loop.  Islands ARE active: 28,621 fires
+  (_DoCalcTile 21.4k, _XferTileColor 1.4k, __aFuldiv 822, _win_IsWinOpen 1.6k…).
+  Next islands: the tile-render cluster (internal_6250 + scroll family, task
+  #3/#5) and the mouse-drag input-poll cluster (_StillDown/_MapAreaEvent + the
+  poll APIs — the biggest boundary-crossing source).
+
+
 ## 2026-07-22 (cont.275) — the nest-view BLINK diagnosed + fixed (host over-present); in-game perf profiled to the render cluster
 - **Owner: in-game still slow; nest view constantly refreshes + slightly
   blinks even when nothing changes; consider SDL vs tkinter.**  Recorded
