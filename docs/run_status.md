@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.271) — perf slice 1 LANDED: _CopyMaskBitmap2 islanded (verified byte-exact, 5.5x/call) + measurement methodology
+- **First render-perf island shipped (simant 5b7d0e4):** `_CopyMaskBitmap2`
+  (430E:B110) — a self-contained clipped masked 4bpp blit (balloons/spider/
+  animation compositing), 4.2% of interpreted instructions in the
+  session_170643 nest-view workload (106 calls, ~2929 interp instr/call), no
+  callees.  `recovered/render.py copy_mask_bitmap2` = the clipping sibling of
+  the recovered `xfer_life_tile_color` (unified sign clip, odd-dst_x nibble
+  straddle, dual __AHINCR huge ptrs).  A/B oracle vs ASM over 9 cases
+  (even/odd dst_x, all clip edges, negative origins, off-screen) — identical
+  dst bytes + register preservation.  EXPECTED_ISLAND_COUNT 68->69; the dev
+  plan auto-selects it.
+- **Measurement, done honestly:** the full-replay A/B is CONFOUNDED — adding a
+  69th island shifts instruction-count-keyed input, so the demo desyncs
+  (digest changes; NOT an island bug — the oracle proved byte-exactness;
+  [[demos-are-hook-config-specific]]).  So measured the UN-confounded thing:
+  per-call interpreted 33.3ms vs island 6.1ms = **5.5x** on a 32x24 blit;
+  106 calls/replay.  Flagged: cross-config full-replay diffing is unusable
+  for per-island E2E measurement — meter call-count × per-call cost instead.
+- **Sharpened perf model (corrects the earlier "104ms host repaint"):** the
+  repaint cost is ~85% INTERPRETER running guest draw code; host pixel APIs
+  are cheap (<2s).  The leaves `_XferTileColor`/`_DoCalcTile` were already
+  islanded; `_CopyMaskBitmap2` is now too.
+- **Next levers (toward ONE nest-view presentation island):** (1) NumPy-
+  vectorise copy_mask_bitmap2 on the same verified boundary — the selector
+  heap maps huge ptrs to CONTIGUOUS memory, so a flat array view is available
+  (target <1ms/call); (2) the bigger untapped slice: island the tile-loop
+  caller `internal_6250` (8.5%, still 100% interpreted) reusing the leaf
+  islands, converging the tile subtree into one native pass.
+
+
 ## 2026-07-22 (cont.270) — perf directive: recorder-resumability bug fixed (owner's slow-draw recording); the repaint bottleneck precisely diagnosed (interpreted draw code, NOT host pixels)
 - **Owner recorded the slow black-nest-view drawing (`session_181452`) — and
   it exposed a recorder bug.** The base continuation was captured mid-paint
