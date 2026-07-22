@@ -181,6 +181,23 @@ def main() -> int:
     atlas.rematerialize()
     print(f"[atlas] roots: __astart + {len(callback_roots)} callback entries")
 
+    # The window-object map (scripts/winmap.py): typed opens-window /
+    # draw-callback / event-routine facts, extracted by exact static
+    # patterns and cross-checked against the observed dispatch above.
+    import subprocess
+    proc = subprocess.run(
+        [sys.executable, str(REPO_ROOT / "scripts" / "winmap.py"),
+         "--ir", args.ir, "--atlas", str(atlas_dir), "--facts"],
+        capture_output=True, text=True)
+    if proc.returncode != 0:
+        raise SystemExit(f"[atlas] winmap facts FAILED:\n{proc.stdout}"
+                         f"{proc.stderr}")
+    for line in proc.stdout.splitlines():
+        if line.startswith("[winmap]"):
+            print(f"[atlas] {line}")
+    # the subprocess wrote + rematerialized on disk; re-open for the report
+    atlas = ExecutionAtlas.open(atlas_dir)
+
     coverage = atlas.coverage_for("development")
     print(f"[atlas] development coverage: {len(coverage.reachable)} "
           f"reachable, {len(coverage.unresolved_edges)} unresolved edges")

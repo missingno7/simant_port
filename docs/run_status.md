@@ -1,5 +1,53 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-22 (cont.269) — the window-object system FULLY MAPPED (winmap.py): draw hooks, event chain, lifecycle — typed facts in the Atlas; the presentation-island boundary identified
+- **A correction first (my cont.268 claim was wrong):** there is no
+  "seg-0060 gateway" — 0060 is the API import-thunk segment
+  (`loader.THUNK_SEG`); `_win_GetEvent`'s far calls into it are plain
+  PeekMessage/API calls.  The real dispatch mechanics, now proven statically
+  and cross-checked against all four recorded sessions:
+  - **Draw**: per-slot far-pointer table `seg[DGROUP:0xC6CC]:0x77B2+slot*4`
+    (slot = handle>>8, parallel to `window_records` @ DGROUP:0xCE9A).  ALL
+    11 registrations in ONE routine (`_InitApplicationWindows` →
+    `_win_SetWinDrawHook`), invoked at exactly TWO sites
+    (`430E:BBE2`/`BC83` in `_win_DrawWindow`, passes 1/2).  Observed
+    invocations (7 callbacks across the sessions) ⊆ registered — enforced.
+  - **Events**: NOT pointers.  `_DoEvent` compare-chains on the event-code
+    CLASS (mirrors the window slot) → static `_Proc*Event` calls; nine
+    bindings incl. the map/yard RIBBON pseudo-windows (0x22/0x23).  A
+    twin chain behind the help-mode flag (DGROUP:0x0010) routes the same
+    classes to WinHelp — SimAnt's context help, mapped for free.
+  - **Lifecycle**: `_win_LoadAllWindows` builds records; `_win_Open(handle)`
+    does CreateWindow/SetProp(hwnd→object)/menus/Show/Invalidate/Update;
+    `_win_Close` tears down; `MYTIMERFUNC` → `_DoAntSim` + `_UpdateWindows`
+    + `_myServiceSong`.  36 `_win_Open` call sites bound to slots (openers
+    like `_OpenMiniMapWin`→14, `_NewGame`→00-Edit).
+- **`scripts/winmap.py`**: exact-pattern static extractor (push-triplet
+  registrations; a strict path-walk of `_DoEvent`'s chain where an
+  equality survives ax mutation but delta/pending poison — refuse-on-doubt,
+  ambiguity raises).  `--facts` writes TYPED Atlas facts (21 window
+  regions; opens-window / closes-window / draw-callback / event-routine /
+  registers-callback edges; source `window-object-map`); `atlas_build.py`
+  runs it in the one-command rebuild.  Coverage 1525 → **1548**.
+- **The island boundary (docs/rendering_map.md §8):** the game itself
+  treats a window's renderer as a replaceable registered far pointer — so
+  the narrowest stable native-presentation seam is the DRAW-HOOK TABLE:
+  one island owning Edit(00)/Map(01)/MiniMap(14)/Yard(19) draw + the
+  `_UpdateEdit` scroll cluster, registered exactly where the game registers
+  its own renderers, one crossing per paint pass; `_DoAntSim` + `_Proc*Event`
+  (game logic) untouched.  `_ScrollEditWindow` has NO static caller and was
+  never executed in any session (dead or pointer-reached-only; the live
+  scroll driver is `_DoEditScroll` from the WM_*SCROLL arms).
+- **Generalization check (stress-test lens):** two candidate dos_re
+  capabilities surfaced but are single-consumer so far — (a) literal
+  push-argument recovery at call sites, (b) the equality-tracking compare
+  chain walk.  Left in `winmap.py` per "don't generalize before a second
+  real case"; noted here as candidates.
+- Tests: `simant/tests/test_winmap.py` pins the 11 registrations, the 9
+  unambiguous event bindings, quick-game slots fully bound, observed ⊆
+  registered, and the typed facts present in the Atlas.
+
+
 ## 2026-07-22 (cont.268) — the switch-dispatch frontier CLOSED statically: dos_re gains a bounded jump-table reader; SIMANTW coverage 1044→1525; the caste/behaviour sessions ingested
 - **Owner recorded two more sessions** (`session_170643` caste control,
   `session_170653` behaviour control) — replayed faithfully under the hooks-on
