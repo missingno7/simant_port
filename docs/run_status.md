@@ -1,5 +1,34 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-23 (cont.278) — `_ClearBuffer` recovered; `_font_MakeImage` island SCOPED (and re-costed)
+- **Recovered `_ClearBuffer`** (seg7:B0EF, SIMTWO) into `recovered/render.py`,
+  A/B-verified against the ASM over counts {0,1,2,3,7,8,16,31,64}.  Suite 2379.
+- The original zeroes `count>>1` words with `rep stosw`, then does ONE more
+  `stosb` whose address is fixed up by `adc di,-1` reading the carry that
+  `shr cx,1` left behind.  The final byte therefore lands at offset `count-1`
+  for BOTH parities — so **`count == 0` writes one byte BELOW the buffer**.
+  Reproduced (observable), not tidied; the test places the buffer at +0x40 so
+  the underrun is actually visible.
+- **`_font_MakeImage` (seg7:ADE0) scoped — structure is favourable:** it is not
+  the pure leaf cont.271 assumed.  It `enter 0x14`s a frame and calls exactly
+  two helpers, both now in hand:
+  * `_DrawChar` (seg7:B033) — ALREADY recovered (`render.draw_char`) and
+    islanded, so the island can call it directly in Python;
+  * `_ClearBuffer` (seg7:B0EF) — recovered above.
+  So it can become ONE coherent higher-level island absorbing the whole
+  glyph-building cluster, with no interpreter delegation needed.
+- **Re-costed, honestly: the win is smaller than the 3.4% profile line suggests.**
+  dos_re's interpreter already has bulk `rep stos/movs` fast paths, so the
+  `_ClearBuffer` half is ALREADY fast — islanding it standalone buys ~nothing.
+  The real cost in `_font_MakeImage` is the per-character `_DrawChar` loop, so
+  that loop is what an island must absorb.  (Contrast cont.277: the scroll
+  family was slow precisely because its >64K path is a MANUAL lodsw/stosw loop,
+  not a `rep`, so no interpreter fast path applied — hence 35.7x there.)
+- **Remaining work for the island:** ~200 instructions to decode over the font
+  struct (ES-relative fields at +06/+08/+18/+22/+24/+26/+28 plus DS globals at
+  0xB8E0/0xB8E2/0xB912), and an A/B harness that needs a REAL loaded font
+  (the struct comes from `_font_ReadFont`) rather than a synthetic one.
+
 ## 2026-07-23 (cont.277) — the edit-view SCROLL FAMILY recovered + islanded (4 routines, byte-exact incl. the >64K huge path)
 - **Recovered `_EditScroll{Right,Left,Down,Up}Color`** (seg4 275F:4C60/4D25/4E1A/4F10)
   into `simant/recovered/editscroll.py` — clean readable source, gated by an A/B

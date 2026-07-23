@@ -2926,3 +2926,41 @@ def test_editscroll_island_matches_asm_across_64k(name):
     isl = _run_editscroll_huge(True, name)
     for label, a, b in zip(("bits", "flags", "codes"), asm, isl):
         assert b == a, f"{name} (>64K): {label} bytes differ"
+
+
+# ---- _ClearBuffer (seg7:B0EF) — recovered/render.py ------------------------
+# The buffer clear _font_MakeImage runs before compositing glyphs.  We place a
+# non-zero buffer one byte INTO a scratch segment so the count==0 underrun (the
+# original's `adc di,-1` stepping below the buffer) is observable, and A/B the
+# whole segment window against the ASM.
+_CB_SEG, _CB_BASE, _CB_WIN = 0x2000, 0x40, 0x100
+
+
+def _run_clearbuffer(count):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    s = m.cpu.s
+    for i in range(_CB_WIN):
+        m.mem.wb(_CB_SEG, i, 0xA5)
+    s.cs, s.ip = m.seg_bases[7], 0xB0EF
+    sp = s.sp
+    for v in [count, _CB_SEG, _CB_BASE, SENT_CS, SENT_IP]:   # high-address first
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    for _ in range(2_000_000):
+        m.cpu.step()
+        if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+            break
+    else:
+        raise AssertionError("ASM _ClearBuffer did not return")
+    return bytes(m.mem.rb(_CB_SEG, i) for i in range(_CB_WIN))
+
+
+@pytest.mark.parametrize("count", [0, 1, 2, 3, 7, 8, 16, 31, 64])
+def test_clearbuffer_recovered_matches_asm(count):
+    from simant.recovered.render import clear_buffer
+    asm = _run_clearbuffer(count)
+    buf = bytearray(b"\xa5" * _CB_WIN)
+    clear_buffer(lambda off, v: buf.__setitem__(_CB_BASE + off, v), count)
+    assert bytes(buf) == asm, f"count={count}: recovered clear_buffer != ASM"

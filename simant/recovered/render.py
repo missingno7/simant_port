@@ -629,3 +629,29 @@ def move_text_to_balloon(pixels, src_width, src_height, dst_stride, x, y):
             di = (di + 1) & 0xFFFF
         di = (di + row_step) & 0xFFFF
     return out
+
+
+def clear_buffer(write_dst: Callable[[int, int], None], count: int) -> None:
+    """Zero `count` bytes of a buffer.  `write_dst(offset, value)` stores a byte.
+
+    Recovered from `_ClearBuffer` (SIMANTW.SYM seg7:B0EF, SIMTWO_MODULE), the
+    buffer clear `_font_MakeImage` runs before compositing glyphs.
+
+    The original zeroes `count >> 1` WORDS with `rep stosw`, then unconditionally
+    stores one more byte -- fixing up `di` with `adc di,-1`, which reads the carry
+    that `shr cx,1` left behind.  So for an odd count the trailing byte gets
+    zeroed, and for an even count the last byte is simply written twice (both
+    times zero, hence unobservable).
+
+    The `count == 0` case is NOT a no-op: `shr` clears the carry, `adc di,-1`
+    steps one byte *below* the buffer, and the trailing `stosb` zeroes it.  That
+    one-byte underrun is reproduced here because it is observable, not tidied
+    away.  (`rep stosw` also assumes DF is clear, as every caller leaves it.)
+    """
+    for i in range(count >> 1):                  # rep stosw
+        write_dst(i * 2, 0)
+        write_dst(i * 2 + 1, 0)
+    # `adc di,-1` reads the carry `shr cx,1` left behind, and lands the final
+    # stosb at offset count-1 for BOTH parities -- which is why count == 0
+    # writes at -1, one byte below the buffer.
+    write_dst(count - 1, 0)
