@@ -1,5 +1,35 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-23 (cont.279) — MEASURED: an islanded leaf under an interpreted caller is UNFINISHED work
+- **Owner: "when we rewrite a leaf we should go one level up and rewrite that as
+  well."  Measured on the `_DrawChar` island (8x12 glyph, CPython):**
+
+  | per call | us | note |
+  |---|---|---|
+  | interpreted ASM | 658.9 | |
+  | island (entry + body) | 19.3 | 34x vs ASM |
+  | island ENTRY overhead | 6.5 | **34% of every island call** |
+  | body, via closures | 12.7 | closure + `m.rw` bound |
+  | same body, FLAT access | 4.0 | 3x headroom in the body |
+
+- **Three costs, all removed by islanding one level up:**
+  1. the fixed per-call ENTRY tax (stack arg reads, `SelectorBackend` +
+     `DrawCharGlobals` allocation, building 4 closures) — 6.5us EVERY call;
+  2. the interpreted caller loop itself;
+  3. the body's per-element closure + selector translation — a cluster island
+     can share ONE flat buffer view instead (3x here).
+  Projected on the glyph cluster: 19.3us -> ~4.0us (~5x) BEFORE counting (2).
+- **Caveat, stated honestly:** the body win depends on whether the work collapses
+  to a BULK op.  cont.277's scroll family hit 35.7x because it became a single
+  memmove; per-word OR-compositing like `draw_char` stays a Python loop and only
+  gains ~3x.  Do NOT assume every cluster reaches memmove speed.
+- **Reprioritised:** `internal_6250` (task #3) is the prime instance — it is the
+  interpreted caller of `do_calc_tile` AND `xfer_tile`, both ALREADY islanded
+  leaves, at up to 35.8% of the redraw workload.  Promoted over
+  `_font_MakeImage` (whose own re-cost is in cont.278).
+- Working rule going forward: an islanded leaf whose caller is still interpreted
+  counts as unfinished, not a completed slice.
+
 ## 2026-07-23 (cont.278) — `_ClearBuffer` recovered; `_font_MakeImage` island SCOPED (and re-costed)
 - **Recovered `_ClearBuffer`** (seg7:B0EF, SIMTWO) into `recovered/render.py`,
   A/B-verified against the ASM over counts {0,1,2,3,7,8,16,31,64}.  Suite 2379.
