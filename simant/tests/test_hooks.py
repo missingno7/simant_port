@@ -2790,3 +2790,139 @@ def test_copymaskbitmap2_island_matches_asm(args):
     isl_dst, isl_regs = _run_copymask(True, args)
     assert isl_regs == asm_regs, f"{args}: exit regs differ {isl_regs} != {asm_regs}"
     assert isl_dst == asm_dst, f"{args}: destination bytes differ"
+
+# ---- _EditScroll{Right,Left,Down,Up}Color (seg4) — recovered/editscroll.py ---
+# The edit-view scrollers: a one-tile shift of the 4bpp DIB plus both per-tile
+# arrays, then the newly-exposed edge stamped invalid.  We lay out a
+# deterministic DIB + flags + codes in three scratch segments and A/B every
+# byte of all three, the exit registers, AND the direction flag -- the original
+# leaks its cld/std out of the call (pusha/popa does not restore flags), and
+# _EditScrollLeftColor genuinely returns with DF still set.
+_ES_BITS_SEG, _ES_FLAGS_SEG, _ES_CODES_SEG = 0x2000, 0x3000, 0x3800
+_ES_BITS_N, _ES_TILES_N = 0x1000, 0x100
+
+
+def _run_editscroll(with_island, name, geom):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    s = m.cpu.s
+    for i in range(_ES_BITS_N):                       # deterministic, non-uniform
+        m.mem.wb(_ES_BITS_SEG, i, (i * 7 + (i >> 5)) & 0xFF)
+    for i in range(_ES_TILES_N):
+        m.mem.wb(_ES_FLAGS_SEG, i, (i * 3) & 0xFF)
+        m.mem.ww(_ES_CODES_SEG, i * 2, (i * 1103) & 0xFFFF)
+
+    off, _sig, _which, _df = hooks.EDITSCROLL_VARIANTS[name]
+    s.cs = m.seg_bases[hooks.EDITSCROLL_SEG_INDEX]
+    s.ip = off
+    s.bx, s.cx, s.dx = 0x1111, 0x5555, 0x6666
+    s.si, s.di, s.bp = 0x2222, 0x3333, 0x4444
+    sp = s.sp
+    words = [geom["tileWidth"], geom["tileHeight"],            # pushed high-first
+             geom["editWidth"], geom["editHeight"],
+             _ES_CODES_SEG, 0, _ES_FLAGS_SEG, 0, _ES_BITS_SEG, 0,
+             SENT_CS, SENT_IP]
+    for v in words:
+        sp = (sp - 2) & 0xFFFF
+        m.mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(5_000_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError(f"ASM {name} did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    from dos_re.x86 import DF
+    out = (bytes(m.mem.rb(_ES_BITS_SEG, i) for i in range(_ES_BITS_N)),
+           bytes(m.mem.rb(_ES_FLAGS_SEG, i) for i in range(_ES_TILES_N)),
+           bytes(m.mem.rb(_ES_CODES_SEG, i) for i in range(_ES_TILES_N * 2)))
+    regs = dict(bx=s.bx, cx=s.cx, dx=s.dx, si=s.si, di=s.di, bp=s.bp,
+                sp=s.sp, cs=s.cs & 0xFFFF, ip=s.ip & 0xFFFF,
+                df=m.cpu.get_flag(DF))
+    return out, regs
+
+
+@pytest.mark.parametrize("name", sorted(hooks.EDITSCROLL_VARIANTS))
+@pytest.mark.parametrize("geom", [
+    dict(editWidth=8, editHeight=6, tileWidth=16, tileHeight=8),
+    dict(editWidth=5, editHeight=4, tileWidth=8, tileHeight=8),    # odd width
+    dict(editWidth=4, editHeight=3, tileWidth=32, tileHeight=16),  # wide tiles
+    # 2x2 is the smallest geometry inside the routines' domain.  At 1x1 the
+    # originals underflow their own tile counter to 0xFFFF and memmove 64K --
+    # genuine UB the game never reaches (an edit view is never one tile), so
+    # it is not a contract worth reproducing.
+    dict(editWidth=2, editHeight=2, tileWidth=8, tileHeight=8),
+])
+def test_editscroll_island_matches_asm(name, geom):
+    asm_bufs, asm_regs = _run_editscroll(False, name, geom)
+    isl_bufs, isl_regs = _run_editscroll(True, name, geom)
+    assert isl_regs == asm_regs, f"{name} {geom}: exit regs differ"
+    for label, a, b in zip(("bits", "flags", "codes"), asm_bufs, isl_bufs):
+        assert b == a, f"{name} {geom}: {label} bytes differ"
+
+
+# The real edit view is BIGGER than 64K (32x17 tiles of 16x16 => a 256-byte
+# stride over 272 rows = 0x11000 bytes), so in-game every one of these routines
+# takes its __AHINCR path: the manual lodsw/stosw loop that bumps the selector
+# by 8 each time an offset wraps.  The island instead treats the block as one
+# flat span -- valid only because a huge block's selectors map to CONSECUTIVE
+# 64K of linear memory.  This pins that equivalence on a real-sized buffer.
+_ES_HUGE_GEOM = dict(editWidth=32, editHeight=17, tileWidth=16, tileHeight=16)
+_ES_HUGE = {"bits": (0x8200, 0x100000, 0x30000),      # selector, linear, size
+            "flags": (0x9000, 0x200000, 0x10000),
+            "codes": (0x9800, 0x280000, 0x10000)}
+
+
+def _run_editscroll_huge(with_island, name):
+    m = runtime.create_machine()
+    m.cpu.trace_enabled = False
+    if with_island:
+        assert hooks.install(m) == hooks.EXPECTED_ISLAND_COUNT
+    mem, s = m.mem, m.cpu.s
+    for sel, lin, size in _ES_HUGE.values():           # map as GlobalAlloc does
+        for k in range(size // 0x10000):
+            mem.sel_base[(sel + 8 * k) & 0xFFFC] = lin + k * 0x10000
+    lb, lf, lc = (_ES_HUGE[k][1] for k in ("bits", "flags", "codes"))
+    for i in range(0x11000):
+        mem.data[lb + i] = (i * 7 + (i >> 5)) & 0xFF
+    for i in range(_ES_HUGE_GEOM["editWidth"] * _ES_HUGE_GEOM["editHeight"]):
+        mem.data[lf + i] = (i * 3) & 0xFF
+        mem.data[lc + i * 2] = i & 0xFF
+        mem.data[lc + i * 2 + 1] = (i >> 8) & 0xFF
+
+    off = hooks.EDITSCROLL_VARIANTS[name][0]
+    s.cs, s.ip = m.seg_bases[hooks.EDITSCROLL_SEG_INDEX], off
+    sp = s.sp
+    g = _ES_HUGE_GEOM
+    for v in [g["tileWidth"], g["tileHeight"], g["editWidth"], g["editHeight"],
+              _ES_HUGE["codes"][0], 0, _ES_HUGE["flags"][0], 0,
+              _ES_HUGE["bits"][0], 0, SENT_CS, SENT_IP]:
+        sp = (sp - 2) & 0xFFFF
+        mem.ww(s.ss, sp, v & 0xFFFF)
+    s.sp = sp
+    if with_island:
+        m.cpu.step()
+    else:
+        for _ in range(20_000_000):
+            m.cpu.step()
+            if (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP):
+                break
+        else:
+            raise AssertionError(f"ASM {name} (huge) did not return")
+    assert (s.cs & 0xFFFF, s.ip & 0xFFFF) == (SENT_CS, SENT_IP)
+    return (bytes(mem.data[lb:lb + 0x11000]),
+            bytes(mem.data[lf:lf + 0x400]), bytes(mem.data[lc:lc + 0x800]))
+
+
+@pytest.mark.parametrize("name", sorted(hooks.EDITSCROLL_VARIANTS))
+def test_editscroll_island_matches_asm_across_64k(name):
+    asm = _run_editscroll_huge(False, name)
+    isl = _run_editscroll_huge(True, name)
+    for label, a, b in zip(("bits", "flags", "codes"), asm, isl):
+        assert b == a, f"{name} (>64K): {label} bytes differ"

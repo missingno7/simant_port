@@ -3,7 +3,7 @@
 Pins that the hand-recovered code is a plan-selected authored-faithful
 implementation in every composition where it is authoritative:
 
-* development: the 69 islands bind over the interpreted baseline;
+* development: every hand island binds over the interpreted baseline;
 * CPUless: the hand-recovered CPU-free corpus (cpuless-skin) wins OVER the
   generated skeleton at the addresses it rewrites.
 
@@ -20,6 +20,7 @@ import pytest
 
 from simant.runtime import assets_present, create_machine
 from simant import execution as sx
+from simant import hooks
 from dos_re.execution import ProgramCoverage, plan_execution
 
 pytestmark = pytest.mark.skipif(not assets_present(),
@@ -36,7 +37,9 @@ def _bindings(plan):
 def test_development_plan_binds_the_hand_islands():
     m = create_machine()
     by = _bindings(sx.development_plan(m))
-    assert by.get("islands") == 69          # every hand island, plan-selected
+    # bind to the single source of truth, so adding an island touches only
+    # hooks.EXPECTED_ISLAND_COUNT (not this test as well)
+    assert by.get("islands") == hooks.EXPECTED_ISLAND_COUNT
     assert "interpreted-baseline" in by
 
 

@@ -2505,6 +2505,68 @@ def _make_docalctile_island(machine):
     return island
 
 
+# --- _EditScroll{Right,Left,Down,Up}Color (275F:4C60/4D25/4E1A/4F10) --------
+# The edit-view scrollers.  Each shifts the whole 4bpp DIB by exactly one tile
+# (a column for Right/Left, a row for Down/Up), shifts the two per-tile arrays
+# to match, and stamps the newly-exposed edge invalid.  The original walks the
+# DIB with lodsw/stosw + __AHINCR selector bumps; since a huge block's
+# selectors map to contiguous linear memory that is exactly a flat memmove,
+# which is where the speedup comes from.  See recovered/editscroll.py.
+# ABI (far, caller cleans the 20 arg bytes):
+#   entry SP -> [ret_ip][ret_cs] then, as words:
+#     +4 bits.off   +6 bits.seg     +8 flags.off  +0xA flags.seg
+#     +0xC codes.off +0xE codes.seg
+#     +0x10 editHeight +0x12 editWidth +0x14 tileHeight +0x16 tileWidth
+EDITSCROLL_SEG_INDEX = 4
+#: name -> (offset, signature, recovered variant, DF left set on return)
+EDITSCROLL_VARIANTS = {
+    "_EditScrollRightColor": (0x4C60, "558bec601e06fc8b4612f76616", "right", False),
+    "_EditScrollLeftColor":  (0x4D25, "558bec601e06fd8b4612f76616", "left", True),
+    "_EditScrollDownColor":  (0x4E1A, "558bec601e06fd8b4612f76616", "down", False),
+    "_EditScrollUpColor":    (0x4F10, "558bec601e06fc8b461248f76616", "up", False),
+}
+
+
+def _make_editscroll_island(machine, which, ends_df):
+    from dos_re.x86 import DF
+    from .recovered import editscroll as es
+
+    fn = {"right": es.edit_scroll_right_color,
+          "left":  es.edit_scroll_left_color,
+          "down":  es.edit_scroll_down_color,
+          "up":    es.edit_scroll_up_color}[which]
+
+    def island(cpu) -> None:
+        s, m = cpu.s, cpu.mem
+        ss, sp = s.ss, s.sp
+        ret_ip = m.rw(ss, sp)
+        ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
+        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+
+        def buf(off_o, seg_o):
+            return es.LinearBuffer(m.data, m._xlat(arg(seg_o), arg(off_o)))
+
+        fn(buf(4, 6), buf(8, 0x0A), buf(0x0C, 0x0E),
+           arg(0x10), arg(0x12), arg(0x14), arg(0x16))
+
+        # pusha/popa + push/pop ds/es restore every register -- but NOT the
+        # flags.  The original's cld/std therefore leaks out of the call:
+        # _EditScrollLeftColor genuinely returns with DF still set (it never
+        # clears it); the other three end on a cld.  Reproduced, not tidied.
+        cpu.set_flag(DF, ends_df)
+        s.sp = (sp + 4) & 0xFFFF      # retf pops ret_ip+ret_cs; caller cleans args
+        s.cs, s.ip = ret_cs, ret_ip
+
+    return island
+
+
+def _editscroll_entries():
+    def factory(which, ends_df):
+        return lambda machine, off: _make_editscroll_island(machine, which, ends_df)
+    return [(EDITSCROLL_SEG_INDEX, off, bytes.fromhex(sig), factory(which, df), name)
+            for name, (off, sig, which, df) in EDITSCROLL_VARIANTS.items()]
+
+
 _ISLANDS = [
     (RT_SEG_INDEX, AFULDIV_OFF, AFULDIV_SIG,
      lambda machine, off: _make_uldiv_island(off), "__aFuldiv"),
@@ -2650,12 +2712,14 @@ for _off, _name in SRAND_MASK_OFFS:
          + SRAND_MASK_SIG_SUFFIX,
          lambda machine, off: _make_srand_mask_island(machine, off), _name))
 
+_ISLANDS.extend(_editscroll_entries())
+
 
 # The number of islands install() is expected to place — the single source of
 # truth the A/B oracles assert against (so adding an island touches this line,
 # not every test).  install() returning a different count than this means the
 # _ISLANDS table drifted from expectation.
-EXPECTED_ISLAND_COUNT = 69
+EXPECTED_ISLAND_COUNT = 73
 
 
 def island_addresses(seg_bases) -> dict[tuple[int, int], str]:
