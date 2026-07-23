@@ -1,5 +1,53 @@
 # SimAnt — run status (newest on top)
 
+## 2026-07-23 (cont.277) — the edit-view SCROLL FAMILY recovered + islanded (4 routines, byte-exact incl. the >64K huge path)
+- **Recovered `_EditScroll{Right,Left,Down,Up}Color`** (seg4 275F:4C60/4D25/4E1A/4F10)
+  into `simant/recovered/editscroll.py` — clean readable source, gated by an A/B
+  oracle against the original ASM.  Islands wired in `hooks.py`
+  (EXPECTED_ISLAND_COUNT 69 -> 73).
+- **Signature pinned from the CALL SITE, not guessed.**  All four are called from
+  one dispatcher in GR_MODULE (0E99:FDFC/FE26/FE50/FE7A) with an identical
+  10-word arg list; SIMANTW.SYM confirms every operand:
+  `(bits huge*, flags far*, codes far*, editHeight=_editHeight,
+  editWidth=_editWidth, tileHeight=_tileHeight, tileWidth=_tileWidth)`.
+- **What they do:** one flat one-tile shift of the 4bpp DIB (a tile column for
+  Right/Left, a tile row for Down/Up) + the two per-tile arrays shifted to match
+  + the newly-exposed edge stamped 0xFF/0xFFFF ("needs redraw").
+- **The pixel DIB is BOTTOM-UP while the tile arrays are top-down** — that is why
+  the vertical scrollers move pixels and tile indices in OPPOSITE address
+  directions.  Resolved an apparent contradiction in the decode; both move
+  screen content the same way.
+- **Why an island is legitimate here (not a shortcut):** the original walks the
+  DIB with lodsw/stosw bumping the selector by __AHINCR on every 64K wrap.  A
+  huge block's selectors map to CONSECUTIVE linear 64K (hugeheap), so that walk
+  is *exactly* a flat memmove — which is where the speed comes from.
+- **Three original quirks reproduced verbatim, not tidied:**
+  1. `_EditScrollRightColor` subtracts its shift from the word count WITHOUT
+     propagating the borrow into the high word.
+  2. `_EditScrollLeftColor`'s tile shift `dec`s between `add di,ax` and
+     `mov cx,ax` — it moves w*h-2 tiles into [2..w*h-1], leaving index 1
+     unshifted.  (Caught by the oracle, not by reading.)
+  3. x86 `loop` decrements BEFORE testing, so a first-pass count of cx == 0 means
+     a full 65536 iterations.  At the real geometry `_EditScrollUpColor` lands
+     exactly there and moves 0x18000 words.  (Caught by the >64K oracle.)
+- **`_EditScrollLeftColor` returns with DF STILL SET** — it executes `std` and
+  never clears it, and pusha/popa does not restore flags.  Observable, so the
+  island reproduces it; the other three end on a cld.
+- **Oracle: 20 A/B cases, all byte-exact** (all three buffers + exit registers +
+  DF).  16 small geometries, plus 4 at the REAL in-game geometry (32x17 tiles of
+  16x16 = a 256-byte stride over 272 rows = 0x11000 bytes) which is >64K and so
+  exercises the __AHINCR path the game actually takes.  Suite 2370 green.
+- **Perf at the real geometry: 35.7x** (ASM 2063ms -> island 58ms across the four).
+  A LOWER BOUND — both sides carry identical fixed harness setup, which dominates
+  the island side.  End-to-end gain depends on scroll frequency; not re-measured
+  against the recorded demos because adding islands shifts instruction counts and
+  v4 demos are hook-config-specific.
+- **Domain note:** at a 1x1 edit view the originals underflow their own tile
+  counter to 0xFFFF and memmove 64K — genuine UB the game never reaches (an edit
+  view is never one tile).  The oracle covers 2x2 upward, not that.
+- Also: `test_execution_catalog` had a hard-coded `69`; rebound to
+  `hooks.EXPECTED_ISLAND_COUNT` so adding an island touches one line, as intended.
+
 ## 2026-07-23 (cont.276) — the black-nest BLINK ROOT-CAUSED + fixed (frame-boundary presentation); NOT a cosmetic tkinter issue
 - **Owner: the blink is NOT fixed; investigate the real update path (session_235823).**
   Instrumented the nest surface (513x277, GenericWindow:0148): per refresh it is
