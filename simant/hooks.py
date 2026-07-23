@@ -25,12 +25,39 @@ ABI of __aFuldiv (far, callee-cleans — verified by live trace):
 """
 from __future__ import annotations
 
+import struct
+
 from . import _env  # noqa: F401  — puts win16_re on sys.path
 import win16  # noqa: F401  — win16/_env in turn puts the dos_re submodule on sys.path
 
 from dos_re.cpu import AF, CF, OF, PF, SF, ZF
 
 from .recovered import lzss
+
+
+def _stack_args(mem, ss: int, sp: int, count: int) -> tuple:
+    """The `count` word arguments of a far call, read as one bulk unpack.
+
+    An island's argument frame is the single biggest fixed cost in its
+    prologue: reading it as `count` separate 16-bit accesses measured 1.60us
+    for eight words, versus 0.15us unpacked straight off the flat backing
+    store — 10x.  Since every island pays this on EVERY call, it is worth
+    doing once, here, rather than per island.
+
+    Falls back to word-at-a-time when the frame would run past the end of the
+    64K segment, because the flat read cannot model the 16-bit offset wrap.
+    """
+    start = (sp + 4) & 0xFFFF
+    if start + count * 2 <= 0x10000:
+        st = _ARG_STRUCTS.get(count)
+        if st is None:                       # precompiled: rebuilding the
+            st = _ARG_STRUCTS[count] = struct.Struct("<%dH" % count)
+        return st.unpack_from(mem.data, mem._xlat(ss, start))
+    return tuple(mem.rw(ss, (start + 2 * i) & 0xFFFF) for i in range(count))
+
+
+#: precompiled argument-frame unpackers, keyed by word count
+_ARG_STRUCTS: dict[int, struct.Struct] = {}
 
 _ARITH = CF | PF | AF | ZF | SF | OF
 
@@ -2337,10 +2364,8 @@ def _make_drawchar_island(machine):
         ss, sp = s.ss, s.sp
         ret_ip = m.rw(ss, sp)
         ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
-        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
-        src_off, src_seg = arg(4), arg(6)
-        dst_off, dst_seg = arg(8), arg(0x0A)
-        width, height, x, y = arg(0x0C), arg(0x0E), arg(0x10), arg(0x12)
+        (src_off, src_seg, dst_off, dst_seg,
+         width, height, x, y) = _stack_args(m, ss, sp, 8)
 
         x_sub, y_sub = x & 7, y & 7
         si_base = (src_off + (x >> 3)) & 0xFFFF
@@ -2434,12 +2459,8 @@ def _make_copymaskbitmap2_island(machine):
         ss, sp = s.ss, s.sp
         ret_ip = m.rw(ss, sp)
         ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
-        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
-        dst_off, dst_seg = arg(4), arg(6)
-        src_off, src_seg = arg(8), arg(0x0A)
-        clip_bottom, clip_right = arg(0x0C), arg(0x0E)
-        tile_h, tile_w = arg(0x10), arg(0x12)
-        dst_x, dst_y = arg(0x14), arg(0x16)
+        (dst_off, dst_seg, src_off, src_seg, clip_bottom, clip_right,
+         tile_h, tile_w, dst_x, dst_y) = _stack_args(m, ss, sp, 10)
 
         def _addr(base_seg, base_off, off):
             full = base_off + off
@@ -2541,13 +2562,15 @@ def _make_editscroll_island(machine, which, ends_df):
         ss, sp = s.ss, s.sp
         ret_ip = m.rw(ss, sp)
         ret_cs = m.rw(ss, (sp + 2) & 0xFFFF)
-        arg = lambda o: m.rw(ss, (sp + o) & 0xFFFF)
+        (bits_off, bits_seg, flags_off, flags_seg, codes_off, codes_seg,
+         editHeight, editWidth, tileHeight, tileWidth) = _stack_args(m, ss, sp, 10)
 
-        def buf(off_o, seg_o):
-            return es.LinearBuffer(m.data, m._xlat(arg(seg_o), arg(off_o)))
+        def buf(off, seg):
+            return es.LinearBuffer(m.data, m._xlat(seg, off))
 
-        fn(buf(4, 6), buf(8, 0x0A), buf(0x0C, 0x0E),
-           arg(0x10), arg(0x12), arg(0x14), arg(0x16))
+        fn(buf(bits_off, bits_seg), buf(flags_off, flags_seg),
+           buf(codes_off, codes_seg),
+           editHeight, editWidth, tileHeight, tileWidth)
 
         # pusha/popa + push/pop ds/es restore every register -- but NOT the
         # flags.  The original's cld/std therefore leaks out of the call:
